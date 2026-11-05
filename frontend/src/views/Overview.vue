@@ -64,7 +64,8 @@
           <div class="kp-section-title">近期事件
             <el-button link type="primary" size="small" @click="jump('events')">查看全部</el-button>
           </div>
-          <el-table :data="data.events || []" size="small" border stripe max-height="330">
+          <el-table :data="data.events || []" size="small" border stripe max-height="330"
+            :empty-text="activeNs ? `最近 1 小时 ${activeNs} 没有事件` : '最近 1 小时没有事件'">
             <el-table-column label="类型" width="80">
               <template #default="{ row }">
                 <el-tag :type="row.type === 'Warning' ? 'warning' : 'success'" size="small">{{ row.type }}</el-tag>
