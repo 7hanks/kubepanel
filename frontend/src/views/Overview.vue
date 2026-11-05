@@ -28,6 +28,11 @@
       </div>
     </div>
 
+    <div v-if="activeNs" class="kp-muted" style="margin:-4px 0 14px;font-size:12.5px">
+      当前只统计命名空间 <el-tag size="small" type="info" effect="plain">{{ activeNs }}</el-tag> 的 Pod / Deployment / Service / 事件
+      <el-button link type="primary" size="small" @click="store.setNamespace('all')">查看全部命名空间</el-button>
+    </div>
+
     <el-row :gutter="16">
       <el-col :xs="24" :lg="14">
         <div class="kp-card" style="margin-bottom:16px">
@@ -65,7 +70,12 @@
                 <el-tag :type="row.type === 'Warning' ? 'warning' : 'success'" size="small">{{ row.type }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="namespace" label="命名空间" width="120" show-overflow-tooltip />
+            <el-table-column label="命名空间" width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.namespace && row.namespace !== '-'" class="ns-link" @click.stop="pickNamespace(row.namespace)">{{ row.namespace }}</span>
+                <span v-else class="kp-muted">-</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="reason" label="原因" width="130" show-overflow-tooltip />
             <el-table-column prop="object" label="对象" width="150" show-overflow-tooltip />
             <el-table-column prop="message" label="消息" min-width="220" show-overflow-tooltip />
@@ -151,6 +161,7 @@ const loading = ref(false)
 const data = ref({})
 const cluster = computed(() => store.cluster)
 const stat = computed(() => data.value.stat || {})
+const activeNs = computed(() => (store.namespace && store.namespace !== 'all' ? store.namespace : ''))
 
 const phaseRows = computed(() => {
   const dist = data.value.podPhases || {}
@@ -183,7 +194,7 @@ async function fetchPhase(phase) {
   phasePods.value = []
   phaseError.value = ''
   try {
-    const r = await api.list(CORE, 'v1', 'pods', { namespace: 'all', fieldSelector: `status.phase=${phase}` })
+    const r = await api.list(CORE, 'v1', 'pods', { namespace: activeNs.value || 'all', fieldSelector: `status.phase=${phase}` })
     const rows = (r.items || []).map(i => normalizeRow('Pod', i))
     phaseCache.set(phase, rows)
     phasePods.value = rows
@@ -209,7 +220,7 @@ function goPodLogs(row) {
 
 async function load() {
   loading.value = true
-  try { data.value = await api.overview() }
+  try { data.value = await api.overview(activeNs.value || 'all') }
   catch (e) { data.value = {} }
   finally { loading.value = false }
   // 分布数字变了，下钻缓存一并失效
@@ -217,14 +228,28 @@ async function load() {
   if (expandedPhase.value) fetchPhase(expandedPhase.value).catch(() => {})
 }
 
+/** 点表格里的命名空间 → 切成全局命名空间过滤（顶部下拉框同步） */
+function pickNamespace(ns) {
+  if (!ns || ns === '-') return
+  store.setNamespace(ns)
+}
+
 onMounted(() => {
   load()
   window.addEventListener('kp:refresh', load)
 })
+watch(() => store.namespace, () => load())
 onUnmounted(() => window.removeEventListener('kp:refresh', load))
 </script>
 
 <style scoped>
+.ns-link {
+  color: var(--kp-brand);
+  cursor: pointer;
+  border-bottom: 1px dashed transparent;
+}
+.ns-link:hover { border-bottom-color: currentColor; }
+
 .phase-row {
   margin-bottom: 10px; padding: 6px 8px; margin-left: -8px; margin-right: -8px;
   border-radius: var(--kp-r-sm); transition: background .14s;

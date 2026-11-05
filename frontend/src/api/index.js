@@ -56,7 +56,7 @@ export const api = {
 
   // ---- 当前集群信息与资源 ----
   cluster: () => http.get('/v1/cluster'),
-  overview: () => http.get('/v1/overview'),
+  overview: (namespace) => http.get('/v1/overview', { params: { namespace } }),
   discovery: () => http.get('/v1/resources'),
 
   // ---- 通用资源 CRUD ----

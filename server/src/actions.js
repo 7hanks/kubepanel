@@ -53,14 +53,16 @@ function age(ts) {
   return `${Math.floor(s / 86400)}d`
 }
 
-/** GET /api/v1/overview */
-export async function overview(clusterId) {
+/** GET /api/v1/overview —— namespace 不为空时，Pod / Deployment / Service / 事件只统计该命名空间 */
+export async function overview(clusterId, namespace) {
+  const ns = namespace && namespace !== 'all' && namespace !== '_all' ? String(namespace) : ''
+  const prefix = ns ? `/namespaces/${encodeURIComponent(ns)}` : ''
   const [nodes, pods, deps, svcs, events, metrics, nsRes, discovery] = await Promise.all([
     safe(() => kubeRequest('GET', '/api/v1/nodes', { clusterId })),
-    safe(() => kubeRequest('GET', '/api/v1/pods', { clusterId })),
-    safe(() => kubeRequest('GET', '/apis/apps/v1/deployments', { clusterId })),
-    safe(() => kubeRequest('GET', '/api/v1/services', { clusterId })),
-    safe(() => kubeRequest('GET', '/api/v1/events?limit=100', { clusterId })),
+    safe(() => kubeRequest('GET', `/api/v1${prefix}/pods`, { clusterId })),
+    safe(() => kubeRequest('GET', `/apis/apps/v1${prefix}/deployments`, { clusterId })),
+    safe(() => kubeRequest('GET', `/api/v1${prefix}/services`, { clusterId })),
+    safe(() => kubeRequest('GET', `/api/v1${prefix}/events?limit=100`, { clusterId })),
     safe(() => kubeRequest('GET', '/apis/metrics.k8s.io/v1beta1/nodes', { timeout: 5000, clusterId })),
     safe(() => kubeRequest('GET', '/api/v1/namespaces', { clusterId })),
     safe(() => discoverResources(false, clusterId)),
@@ -105,6 +107,7 @@ export async function overview(clusterId) {
     }))
 
   return {
+    namespace: ns || 'all',
     stat: {
       nodes: nodeRows.length,
       namespaces: (nsRes?.data?.items || []).length,

@@ -132,7 +132,7 @@ router.use((req, res, next) => {
 
 // ---------------- 集群信息 ----------------
 router.get('/v1/cluster', wrap(async (req, res) => res.json(await clusterInfo(req.clusterId))))
-router.get('/v1/overview', wrap(async (req, res) => res.json(await overview(req.clusterId))))
+router.get('/v1/overview', wrap(async (req, res) => res.json(await overview(req.clusterId, String(req.query.namespace || 'all')))))
 router.get('/v1/resources', wrap(async (req, res) => {
   const force = String(req.query.refresh) === '1'
   res.json(await discoverResources(force, req.clusterId))
