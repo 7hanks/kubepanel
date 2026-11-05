@@ -53,7 +53,7 @@
               <el-table-column label="Pod" min-width="200" show-overflow-tooltip>
                 <template #default="{ row }">
                   <div class="pod-cell-name">{{ row.name }}</div>
-                  <div class="pod-cell-ns">{{ row.namespace }}</div>
+                  <div v-if="!activeNs" class="pod-cell-ns">{{ row.namespace }}</div>
                 </template>
               </el-table-column>
               <el-table-column prop="cpuText" label="CPU 用量" width="100" align="right" />
