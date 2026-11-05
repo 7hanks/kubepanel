@@ -38,22 +38,22 @@
         <div class="kp-card" style="margin-bottom:16px">
           <div class="kp-section-title">节点状态</div>
           <el-table :data="data.nodes || []" size="small" border stripe @row-click="row => goNode(row)">
-            <el-table-column prop="name" label="节点" min-width="130" show-overflow-tooltip />
-            <el-table-column label="状态" width="100">
+            <el-table-column prop="name" label="节点" min-width="110" show-overflow-tooltip />
+            <el-table-column label="状态" width="90">
               <template #default="{ row }">
                 <el-tag :type="row.ready ? 'success' : 'danger'" size="small">{{ row.ready ? 'Ready' : 'NotReady' }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="可调度" width="100">
+            <el-table-column label="可调度" width="85">
               <template #default="{ row }">
                 <el-tag :type="row.unschedulable ? 'warning' : 'info'" size="small">{{ row.unschedulable ? '已封锁' : '是' }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="version" label="Kubelet" width="110" />
-            <el-table-column prop="cpu" label="CPU" width="90" />
-            <el-table-column prop="memory" label="内存" width="100" />
-            <el-table-column prop="pods" label="Pod" width="70" />
-            <el-table-column prop="age" label="运行时间" width="110" />
+            <el-table-column prop="version" label="Kubelet" width="100" />
+            <el-table-column prop="cpu" label="CPU" width="85" />
+            <el-table-column prop="memory" label="内存" width="95" />
+            <el-table-column prop="pods" label="Pod" width="60" />
+            <el-table-column prop="age" label="运行时间" width="95" />
           </el-table>
           <div v-if="!data.metricsAvailable" class="kp-muted" style="margin-top:10px;font-size:12px">
             未检测到 metrics-server，CPU / 内存用量显示为容量配额。安装 metrics-server 后自动显示实时用量。
@@ -65,21 +65,21 @@
             <el-button link type="primary" size="small" @click="jump('events')">查看全部</el-button>
           </div>
           <el-table :data="data.events || []" size="small" border stripe max-height="330">
-            <el-table-column label="类型" width="90">
+            <el-table-column label="类型" width="80">
               <template #default="{ row }">
                 <el-tag :type="row.type === 'Warning' ? 'warning' : 'success'" size="small">{{ row.type }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="命名空间" width="130" show-overflow-tooltip>
+            <el-table-column label="命名空间" width="145" show-overflow-tooltip>
               <template #default="{ row }">
                 <span v-if="row.namespace && row.namespace !== '-'" class="ns-link" @click.stop="pickNamespace(row.namespace)">{{ row.namespace }}</span>
                 <span v-else class="kp-muted">-</span>
               </template>
             </el-table-column>
-            <el-table-column prop="reason" label="原因" width="130" show-overflow-tooltip />
-            <el-table-column prop="object" label="对象" width="150" show-overflow-tooltip />
-            <el-table-column prop="message" label="消息" min-width="220" show-overflow-tooltip />
-            <el-table-column prop="age" label="时间" width="100" />
+            <el-table-column prop="reason" label="原因" width="100" show-overflow-tooltip />
+            <el-table-column prop="object" label="对象" width="115" show-overflow-tooltip />
+            <el-table-column prop="message" label="消息" min-width="150" show-overflow-tooltip />
+            <el-table-column prop="age" label="时间" width="80" />
           </el-table>
         </div>
       </el-col>
