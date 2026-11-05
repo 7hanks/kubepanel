@@ -8,9 +8,10 @@ metadata:
   namespace: kube-system
 type: Opaque
 stringData:
-  # 生产环境请务必修改
-  DASHBOARD_PASSWORD: "Kp@2026ChangeMe"
-  DASHBOARD_SECRET: "6f2a9c4e8b1d7053a9e4c8f2b6d0a1735e9c4b8f2a6d0e1735c9b4a8f2d6"
+  # 换成你自己的强密码（≥12 位），或用 kubectl create secret 生成后删掉这段
+  DASHBOARD_PASSWORD: "change-me-please"
+  # 可留空：容器首次启动会在数据目录生成 .jwt-secret 并复用（多副本共享会话时才需要显式指定）
+  DASHBOARD_SECRET: ""
 ---
 apiVersion: apps/v1
 kind: Deployment

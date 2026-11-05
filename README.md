@@ -69,127 +69,135 @@ D:\dashboard\
 
 ---
 
-## 2. 本次部署环境（已实测）
+## 2. 环境要求
 
-| 项 | 值 |
+| 项 | 要求 |
 |---|---|
-| 目标机 | `root@117.72.115.79` |
-| Docker | 29.0.0 |
-| 集群 | k8s v1.33.7，单节点 `dev`，context `kubernetes-admin@kubernetes` |
-| 凭据目录 | `/opt/kubepanel/clusters/`（属主 10001、700；`dev.yaml` 600） |
-| 数据目录 | `/opt/kubepanel/data/`（属主 10001、700；`auth.json` 600，存界面改过的密码哈希） |
-| 镜像仓库 | Harbor `harbor` 命名空间，NodePort `https://172.16.0.3:30003`（API v2.0 匿名可读） |
-| 监控 | 集群内暂无 Grafana；页面已支持配置对接，未配置时用「内置指标」（metrics-server 已装） |
-| 端口 | **9090**（该机 80 / 8080 已被 traefik 占用，8000 被 blueops 占用） |
-| 访问地址 | `http://117.72.115.79:9090` → 登录后进入 `/clusters` |
-| 部署状态 | 容器 `kubepanel` 运行中，镜像 `kubepanel:1.4.0` |
-| 当前账号 | `admin` / `Kp@2026ChangeMe`（示例值，**上线请立即修改**） |
+| 主机 | 任意能跑 Docker 的 Linux（本文以 `/opt/kubepanel` 为安装目录，可自行替换） |
+| Docker | 20.10+，带 compose 插件（`docker compose version` 能出结果） |
+| 集群 | Kubernetes v1.24+，需要一个能读写的 kubeconfig（k3s / kubeadm / 云托管集群都行） |
+| 端口 | 容器内 8080；宿主机默认映射 **9090**，被占用就换（如 `-p 18080:8080`） |
+| 目录 | `/opt/kubepanel/clusters`（kubeconfig，**可写**）、`/opt/kubepanel/data`（账号与配置，**可写**），属主都要是 `10001` |
+| 访问 | 浏览器打开 `http://<服务器IP或域名>:9090` |
+
+> 下文所有命令都不含真实地址和密码：`<服务器IP>`、`<你的密码>` 这类占位符替换成自己的值即可。
+> 密码和密钥只写在服务器的 `.env` 里（`.gitignore` 已排除），不要写进 README、截图或提交记录。
+
 
 ---
 
-## 3. 快速开始：docker run（命令可直接复制）
+## 3. 快速开始
+
+三步：准备目录 → 填 `.env` → `docker compose up -d --build`。
+密码和密钥只在 `.env` 里填一次，不写进命令行（`docker run -e` 的明文会留在 shell history 和 `docker inspect` 里）。
 
 ### 3.1 准备集群凭据目录
 
 容器以固定 UID `10001` 非 root 运行。目录必须**可写**且属主 10001，界面才能导入新集群：
 
 ```bash
-mkdir -p /opt/kubepanel/clusters
+mkdir -p /opt/kubepanel/clusters /opt/kubepanel/data
 install -o 10001 -g 10001 -m 600 /root/.kube/config /opt/kubepanel/clusters/dev.yaml
 chown 10001:10001 /opt/kubepanel/clusters
 chmod 700 /opt/kubepanel/clusters
+chown 10001:10001 /opt/kubepanel/data
+chmod 700 /opt/kubepanel/data
 ls -la /opt/kubepanel/clusters
 ```
 
 > 多个集群：直接把其他 kubeconfig 复制成 `prod.yaml`、`test.yaml` 放进同一个目录，刷新页面即可出现；一个 kubeconfig 里有多个 context 时，每个 context 会各注册为一个集群。
 > 相对路径证书先展平：`kubectl config view --raw --flatten > /opt/kubepanel/clusters/prod.yaml`
 
-### 3.2 构建镜像
+### 3.2 取源码
 
 ```bash
-cd /opt/kubepanel/app
-docker build -t kubepanel:1.4.0 .
+mkdir -p /opt/kubepanel/app
+git clone https://github.com/<你的账号>/kubepanel.git /opt/kubepanel/app
+# 或者：tar -xzf kubepanel-src.tar.gz -C /opt/kubepanel/app
 ```
 
-### 3.3 启动
-
-```bash
-docker run -d --name kubepanel --restart unless-stopped \
-  -p 9090:8080 \
-  -e DASHBOARD_USERNAME=admin \
-  -e DASHBOARD_PASSWORD='Kp@2026ChangeMe' \
-  -e DASHBOARD_SECRET='6f2a9c4e8b1d7053a9e4c8f2b6d0a1735e9c4b8f2a6d0e1735c9b4a8f2d6' \
-  -e DATA_DIR=/app/data \
-  -v /opt/kubepanel/clusters:/app/kube/clusters \
-  -v /opt/kubepanel/data:/app/data \
-  kubepanel:1.4.0
-```
-
-**注意 `-v` 不要加 `:ro`**，否则界面无法导入/移除集群。上线前务必改掉密码与 `DASHBOARD_SECRET`（后者用 `openssl rand -hex 32` 生成）。
-
-第二个挂载 `/opt/kubepanel/data` 存放界面改过的登录密码（`auth.json`）；不挂它，重建容器会退回 `DASHBOARD_PASSWORD`。宿主机目录需 `chown 10001:10001`、`chmod 700`。
-
-### 3.4 验证
-
-```bash
-curl -s http://127.0.0.1:9090/healthz
-bash /opt/kubepanel/smoke-test.sh
-docker logs --tail 30 kubepanel
-```
-
-浏览器打开 `http://117.72.115.79:9090`，登录后先看到集群列表，点「进入控制台」再操作资源。
-
-### 3.5 docker compose（替代方案）
+### 3.3 写 .env（唯一需要手填密码的地方）
 
 ```bash
 cd /opt/kubepanel/app
 cp .env.example .env
 vi .env
-docker compose up -d --build
-docker compose logs -f
 ```
 
-### 3.6 部署 / 启动 / 停止 / 更新（运维手册，命令可直接复制）
+```ini
+# 换成你自己的强密码，≥12 位，建议含大小写/数字/符号
+DASHBOARD_PASSWORD=<你的密码>
+# 留空即可，首次启动自动生成并复用，详见 3.6
+DASHBOARD_SECRET=
+```
 
-> 一条铁律：`docker run` 的那串参数就是唯一「事实来源」。重建容器时必须原样带上 **2 个 `-v` + 3 个 `-e`**，少一个就会丢集群或丢密码。
+`.env` 已在 `.gitignore` 里，不会进仓库。
 
-#### ① 首次部署（在一台新机器上从零开始）
+### 3.4 构建并启动
 
 ```bash
-# 1) 集群凭据目录（容器以 UID 10001 非 root 运行，必须可写）
-mkdir -p /opt/kubepanel/clusters /opt/kubepanel/data
-install -o 10001 -g 10001 -m 600 /root/.kube/config /opt/kubepanel/clusters/dev.yaml
-chown 10001:10001 /opt/kubepanel/clusters && chmod 700 /opt/kubepanel/clusters
-chown 10001:10001 /opt/kubepanel/data && chmod 700 /opt/kubepanel/data
+cd /opt/kubepanel/app
+docker compose up -d --build
+docker compose logs -f --tail 50
+```
 
-# 2) 源码 + 构建
-mkdir -p /opt/kubepanel/app
-tar -xzf kubepanel-src.tar.gz -C /opt/kubepanel/app     # 或用下面的「本机同步」方式
+端口、两个挂载、重启策略、健康检查都写在 `docker-compose.yml` 里；换机器时只需要改里面的宿主机端口（默认 `9090:8080`）。
+
+### 3.5 不用 compose 时：docker run
+
+```bash
 cd /opt/kubepanel/app && docker build -t kubepanel:1.4.0 .
 
-# 3) 启动
 docker run -d --name kubepanel --restart unless-stopped \
   -p 9090:8080 \
-  -e DASHBOARD_USERNAME=admin -e DASHBOARD_PASSWORD='Kp@2026ChangeMe' \
-  -e DASHBOARD_SECRET='6f2a9c4e8b1d7053a9e4c8f2b6d0a1735e9c4b8f2a6d0e1735c9b4a8f2d6' \
+  --env-file /opt/kubepanel/app/.env \
   -e DATA_DIR=/app/data \
   -v /opt/kubepanel/clusters:/app/kube/clusters \
   -v /opt/kubepanel/data:/app/data \
   kubepanel:1.4.0
-
-# 4) 验证
-curl -s http://127.0.0.1:9090/healthz
-bash /opt/kubepanel/smoke-test.sh
 ```
 
-| 参数 | 作用 | 少了会怎样 |
-|---|---|---|
-| `-p 9090:8080` | 宿主机 9090 → 容器 8080 | 打不开页面 |
-| `-e DASHBOARD_SECRET` | JWT 签名密钥 | 每次重启所有人被踢下线 |
-| `-v .../clusters` | 集群凭据（可写，界面导入写这里） | 页面无集群 |
-| `-v .../data` | 账号数据（密码哈希、镜像仓库配置、Grafana 配置） | 改过的密码/新加的仓库全丢 |
+**注意 `-v` 不要加 `:ro`**，否则界面无法导入/移除集群。
 
-#### ② 启动 / 停止 / 重启
+第二个挂载 `/opt/kubepanel/data` 存放界面改过的登录密码（`auth.json`）；不挂它，重建容器会退回 `DASHBOARD_PASSWORD`。宿主机目录需 `chown 10001:10001`、`chmod 700`。
+
+> 老版本 Docker 的 `--env-file` 可能不接受文件里的 `#` 注释；报错就把注释行删掉，或改用 compose。
+
+### 3.6 DASHBOARD_SECRET 是什么？必须加吗？
+
+它是**登录令牌（JWT）的签名密钥**：用户登录后拿到的 token 用这把密钥签名，之后每次请求都用它校验。所以
+
+- 改了它 = 所有已登录的人立刻掉线，需要重新登录；
+- 它不需要是「强密码」，但必须是**随机且不外泄**的值；泄露了别人就能伪造登录态。
+
+**不是必须加的。** 不设置时后端首次启动会随机生成一把，写在数据目录的 `/app/data/.jwt-secret`（0600），之后重启复用。所以：
+
+| 场景 | 要不要显式设置 `DASHBOARD_SECRET` |
+|---|---|
+| 单容器 + 挂了 `/app/data`（默认推荐） | 不用，自动生成并持久化 |
+| 多副本 / 多个容器要共享登录态 | 要，且每个副本用同一个值 |
+| 数据目录是临时的（没挂卷、或用 `--rm`） | 要，否则重启后所有人掉线 |
+| 想自己轮换密钥 | 要，改成 `openssl rand -hex 32` 的结果再重建容器 |
+
+**绝对不要**把它写在 README、issue、聊天记录、`docker run -e` 明文里，也别提交进 git。放 `.env` 或 docker secret 即可。
+
+### 3.7 验证
+
+```bash
+curl -s http://127.0.0.1:9090/healthz
+DASHBOARD_PASSWORD='<你的密码>' bash /opt/kubepanel/smoke-test.sh
+docker logs --tail 30 kubepanel
+```
+
+浏览器打开 `http://<服务器IP>:9090`，登录后先看到集群列表，点「进入控制台」再操作资源。
+
+### 3.8 运维手册：启动 / 停止 / 更新 / 回滚
+
+> 一条铁律：容器的运行参数就是唯一「事实来源」。重建时必须原样带上 **2 个 `-v`** ——
+> 少 `clusters` 会丢集群，少 `data` 会丢改过的密码、镜像仓库和监控配置。
+> 用 compose 的话这些都在 `docker-compose.yml` 里，不用每次手打；用 `docker run` 的话把命令存成脚本，别凭记忆重敲。
+
+#### ① 启停
 
 ```bash
 docker ps --filter name=kubepanel            # 看状态：要出现 (healthy)
@@ -203,35 +211,31 @@ docker restart kubepanel   # 重启（改了挂载的 kubeconfig、或忘了密�
 
 > 设置了 `--restart unless-stopped`，服务器重启后容器会自动拉起，不用手工 `start`。
 
-#### ③ 更新（三种场景）
+#### ② 更新代码
 
 ```bash
-# 场景 A：本机改完同步（推荐，源码在 D:\dashboard）
+# 场景 A：本机改完同步到服务器
 cd /d/dashboard
 tar --exclude='./frontend/node_modules' --exclude='./server/node_modules' \
     --exclude='./frontend/dist' --exclude='./.git' --exclude='./server/data' \
-    -czf - . | ssh root@117.72.115.79 'tar -xzf - -C /opt/kubepanel/app'
-ssh root@117.72.115.79 'cd /opt/kubepanel/app && docker build -t kubepanel:1.4.0 .'
-# 然后执行下面的「重建容器」
-```
+    -czf - . | ssh root@<服务器IP> 'tar -xzf - -C /opt/kubepanel/app'
+ssh root@<服务器IP> 'cd /opt/kubepanel/app && docker compose up -d --build'
 
-```bash
 # 场景 B：直接在服务器上改
-ssh root@117.72.115.79
+ssh root@<服务器IP>
 cd /opt/kubepanel/app && vi server/src/xxx.js
-docker build -t kubepanel:1.4.0 .        # 有层缓存，通常 20~60 秒
+docker compose up -d --build            # 有层缓存，通常 20~60 秒
 ```
 
+不用 compose 时，把最后一行换成：
+
 ```bash
-# 重建容器（A / B 之后都要做这一步，否则还是跑旧镜像）
-docker rm -f kubepanel && docker run -d --name kubepanel --restart unless-stopped \
-  -p 9090:8080 \
-  -e DASHBOARD_USERNAME=admin -e DASHBOARD_PASSWORD='Kp@2026ChangeMe' \
-  -e DASHBOARD_SECRET='6f2a9c4e8b1d7053a9e4c8f2b6d0a1735e9c4b8f2a6d0e1735c9b4a8f2d6' \
-  -e DATA_DIR=/app/data \
+docker build -t kubepanel:1.4.0 . && docker rm -f kubepanel
+docker run -d --name kubepanel --restart unless-stopped \
+  -p 9090:8080 --env-file /opt/kubepanel/app/.env -e DATA_DIR=/app/data \
   -v /opt/kubepanel/clusters:/app/kube/clusters -v /opt/kubepanel/data:/app/data \
   kubepanel:1.4.0
-bash /opt/kubepanel/smoke-test.sh        # 更新后必跑（31 项）
+DASHBOARD_PASSWORD='<你的密码>' bash /opt/kubepanel/smoke-test.sh   # 更新后必跑
 ```
 
 ```bash
@@ -243,35 +247,35 @@ docker restart kubepanel                 # 或直接在页面点刷新
 - **前端改动同样要重建镜像**：`frontend` 在 Dockerfile 第一阶段编译进 `/app/public`，改完源码不构建等于没改。
 - **别用 `docker exec` 进容器改代码**：容器层一重建就丢，改 `/opt/kubepanel/app` 再 build。
 
-#### ④ 回滚 / 卸载
+#### ③ 回滚 / 卸载
 
 ```bash
 docker images kubepanel                          # 看还留着哪些版本
-docker rm -f kubepanel && docker run -d --name kubepanel ... kubepanel:1.4.0   # 换回旧 tag 即可回滚
+docker rm -f kubepanel                           # 换回旧 tag 重新 run 即可回滚
 
-docker rm -f kubepanel                           # 停止并删除容器
 rm -rf /opt/kubepanel/app                        # 删源码与构建上下文
 # 保留 /opt/kubepanel/clusters 与 /opt/kubepanel/data 就还有集群与账号配置
 ```
 
-### 3.7 修改 / 重置登录密码
+### 3.9 修改 / 重置登录密码
 
 **界面上改**：右上角用户菜单 → 修改密码 → 输入当前密码 + 新密码（至少 8 位，且含大写/小写/数字/符号中至少两类）→ 保存后自动退回登录页。
 
 - 密码以 **scrypt + 随机盐**存在 `/opt/kubepanel/data/auth.json`（权限 600），不存明文。
 - 一旦改过，`DASHBOARD_PASSWORD` 就**不再生效**；启动日志会打印「已在界面上自定义」。
-- 想恢复成环境变量里的密码：删掉该文件再重启。
+- 想恢复成 `.env` 里的密码：删掉该文件再重启。
 
 ```bash
-# 忘记密码：清掉自定义密码，回落到 -e DASHBOARD_PASSWORD
+# 忘记密码：清掉自定义密码，回落到 .env 里的 DASHBOARD_PASSWORD
 rm -f /opt/kubepanel/data/auth.json && docker restart kubepanel
 
-# 换用户名 / 换初始密码：先删 auth.json，再用新的 -e 重建容器
+# 换用户名 / 换初始密码：删 auth.json，改 .env 后重建容器
 rm -f /opt/kubepanel/data/auth.json
-docker rm -f kubepanel && docker run -d ... -e DASHBOARD_USERNAME=admin -e DASHBOARD_PASSWORD='新密码' ...
+vi /opt/kubepanel/app/.env               # 改 DASHBOARD_USERNAME / DASHBOARD_PASSWORD
+cd /opt/kubepanel/app && docker compose up -d
 ```
 
-> 冒烟脚本硬编码了 `Kp@2026ChangeMe`；改过密码后这样跑：`DASHBOARD_PASSWORD='新密码' bash /opt/kubepanel/smoke-test.sh`
+> 冒烟脚本不再内置密码，必须显式传入：`DASHBOARD_PASSWORD='<你的密码>' bash /opt/kubepanel/smoke-test.sh`
 
 ---
 
@@ -323,7 +327,7 @@ docker rm -f kubepanel && docker run -d ... -e DASHBOARD_USERNAME=admin -e DASHB
 
 **镜像仓库（Harbor）**：左侧「镜像仓库」页面，后端代理 Harbor API v2.0，浏览器不直连仓库、也不落任何凭据到前端。
 
-- 添加方式：① 「从集群发现」——扫描集群里带 NodePort 的 Service，用「节点 IP + nodePort」拼地址（本机实测自动认出 `harbor` → `https://172.16.0.3:30003`）；② 手动填地址；③ 私有项目填用户名/密码（只保存在服务端的 `/app/data/registries.json`，600 权限）。
+- 添加方式：① 「从集群发现」——扫描集群里带 NodePort 的 Service，用「节点 IP + nodePort」拼地址（会自动认出 `harbor` 这类仓库，拼成 `https://<节点IP>:<nodePort>`）；② 手动填地址；③ 私有项目填用户名/密码（只保存在服务端的 `/app/data/registries.json`，600 权限）。
 - 浏览：选项目 → 仓库列表（制品数 / 拉取次数 / 更新时间）→ 展开看标签与大小 → 「复制」得到 `docker pull <host>/<project>/<repo>:<tag>`。
 - 自签证书：用 IP + NodePort 访问 Harbor 时证书一般对不上，保持「跳过 TLS 证书校验」开启即可。
 
@@ -346,7 +350,7 @@ docker rm -f kubepanel && docker run -d ... -e DASHBOARD_USERNAME=admin -e DASHB
 | `PORT` | `8080` | 容器内监听端口，用 `-p 9090:8080` 映射 |
 | `DASHBOARD_USERNAME` | `admin` | 登录用户名 |
 | `DASHBOARD_PASSWORD` | 随机生成 | **未设置时自动生成并打印在 `docker logs` 里** |
-| `DASHBOARD_SECRET` | 随机生成 | JWT 密钥；不固定则重启后已登录会话失效 |
+| `DASHBOARD_SECRET` | 自动生成并落盘 | JWT 密钥；不填时首次启动生成到 `DATA_DIR/.jwt-secret`（0600）并复用。多副本共享会话时才需显式指定 |
 | `DASHBOARD_TOKEN_TTL` | `12h` | 登录有效期 |
 | `DASHBOARD_AUTH_ENABLED` | `true` | 设为 `false` 关闭登录（仅限本地调试） |
 | `KUBE_CLUSTERS_DIR` | `/app/kube/clusters` | **可写**集群凭据目录 |
@@ -364,7 +368,7 @@ docker rm -f kubepanel && docker run -d ... -e DASHBOARD_USERNAME=admin -e DASHB
 
 | 项 | dev / 内网试用 | prod / 长期可用 |
 |---|---|---|
-| 密码 | 可用示例值 | 必须改，≥12 位，配合固定 `DASHBOARD_SECRET` |
+| 密码 | 必须改，≥12 位 | 同左；`DASHBOARD_SECRET` 用自动生成并落盘的那把即可 |
 | 传输 | HTTP 内网 | 前置 Nginx / traefik 做 HTTPS + 访问白名单，**不要把 9090 直接暴露公网** |
 | 集群凭据目录 | 700 / 属主 10001 | 同左，宿主机磁盘加密更好；定期清理不再使用的 kubeconfig |
 | K8s 权限 | admin kubeconfig 可接受 | 建专用 ServiceAccount，按最小权限收敛 `deploy/rbac.yaml` |
@@ -387,7 +391,7 @@ docker rm -f kubepanel && docker run -d ... -e DASHBOARD_USERNAME=admin -e DASHB
 7. **metrics-server 未安装**：概览 CPU / 内存显示容量配额而非实时用量，不是故障。
 8. **日志流不实时**：前置 Nginx 需 `proxy_buffering off;`（后端已发 `X-Accel-Buffering: no`）。
 9. **Web 终端连不上**：需要 `pods/exec` 的 `create` 权限，且反代允许 WebSocket 升级。
-10. **端口冲突**：该机 80/8080 被 traefik 占用、8000 被 blueops 占用，固定用 9090；换机器前先 `ss -ltnp | grep 9090`。
+10. **端口冲突**：先 `ss -ltnp | grep 9090` 确认空闲；被占用就把 compose 里的 `9090:8080` 改成别的宿主机端口，容器内 8080 不用动。
 11. **JWT 在 URL 里**：SSE / WebSocket 无法自定义请求头，token 走 query，会进反代 access log，避免日志外泄。
 12. **集群级资源详情**：Node / PV / StorageClass / Namespace / ClusterRole 等没有命名空间，列表显示为 `-`。前后端已统一把 `-` / `all` 归一为 `_all`（后端会去掉 `/namespaces/...` 段）；若自行拼 API 时把 `-` 当真实命名空间，会得到 404。详情页加载失败现在会明确报错，不再静默显示空白。
 13. **重启 Pod ≠ 原地重启**：它是删除后由控制器重建，会有短暂中断；裸 Pod 会被拒绝。生产环境对关键业务 Pod 操作前先确认控制器存在，必要时用 `?dryRun=1` 预检。
@@ -406,7 +410,7 @@ curl -s http://127.0.0.1:9090/healthz
 # 登录
 curl -s -X POST http://127.0.0.1:9090/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"Kp@2026ChangeMe"}'
+  -d '{"username":"admin","password":"<你的密码>"}'
 
 # 集群列表（把 <TOKEN> 换成上一步的 token）
 curl -s -H "Authorization: Bearer <TOKEN>" http://127.0.0.1:9090/api/v1/clusters
@@ -474,8 +478,8 @@ KubePanel 的「监控」页不自带存储与时序库，它的定位是**对�
 | Chart | `kube-prometheus-stack` **92.18.0**（Prometheus Operator v0.94.2） |
 | Release / 命名空间 | `kps` / `monitoring` |
 | 目录 | chart 与 values 在 `/opt/kube-prom/`（`values.yaml`、`kube-prometheus-stack-92.18.0.tgz`） |
-| Grafana | `http://117.72.115.79:30300`（NodePort），管理密码在 `/opt/kube-prom/grafana-admin.txt`（600） |
-| Prometheus | `http://117.72.115.79:30090`（NodePort，无认证） |
+| Grafana | `http://<服务器IP>:30300`（NodePort），管理密码在 `/opt/kube-prom/grafana-admin.txt`（600） |
+| Prometheus | `http://<服务器IP>:30090`（NodePort，无认证） |
 | 存储 | Prometheus 6Gi / Grafana 1Gi，storageClass `local-path`，均 Bound |
 | 抓取 | 16 个 target 全 up（API Server / etcd / controller-manager / scheduler / kube-proxy / coredns / kubelet / node-exporter / kube-state-metrics / operator 等） |
 | 仪表盘 | 28 个（Kubernetes 系列 + CoreDNS / etcd / Grafana Overview），由 sidecar 自动导入 |
@@ -483,7 +487,7 @@ KubePanel 的「监控」页不自带存储与时序库，它的定位是**对�
 ### 12.2 从零重装（可复制）
 
 ```bash
-# 1) 取 chart（该机 github.io 被墙，走 ghproxy 下载 release 包）
+# 1) 取 chart（github.io / raw.githubusercontent 不通时，用 ghproxy 中转下载 release 包）
 mkdir -p /opt/kube-prom && cd /opt/kube-prom
 curl -sSL -o kube-prometheus-stack-92.18.0.tgz \
   "https://ghproxy.net/https://github.com/prometheus-community/helm-charts/releases/download/kube-prometheus-stack-92.18.0/kube-prometheus-stack-92.18.0.tgz"
@@ -528,9 +532,9 @@ grafana.grafana.ini:
 ```bash
 # 在 Grafana 建一个 Viewer 服务账号并签发 Token
 curl -u admin:<密码> -X POST -H 'Content-Type: application/json' \
-  -d '{"name":"kubepanel","role":"Viewer"}' http://172.16.0.3:30300/api/serviceaccounts
+  -d '{"name":"kubepanel","role":"Viewer"}' http://<节点IP>:30300/api/serviceaccounts
 curl -u admin:<密码> -X POST -H 'Content-Type: application/json' \
-  -d '{"name":"kubepanel"}' http://172.16.0.3:30300/api/serviceaccounts/<id>/tokens | grep -o '"key":"[^"]*"'
+  -d '{"name":"kubepanel"}' http://<节点IP>:30300/api/serviceaccounts/<id>/tokens | grep -o '"key":"[^"]*"'
 ```
 
 ### 12.5 安全提示（务必看）

@@ -8,3 +8,7 @@ server/data/
 .workbuddy/
 .codebuddy/
 .multica/
+# 运行时自动生成、含部署机信息的本地说明，不入库
+CODEBUDDY.md
+.local/
+attachments/

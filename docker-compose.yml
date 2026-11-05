@@ -13,8 +13,9 @@ services:
       NODE_ENV: production
       TZ: Asia/Shanghai
       DASHBOARD_USERNAME: admin
-      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?请在 .env 中设置 DASHBOARD_PASSWORD}
-      DASHBOARD_SECRET: ${DASHBOARD_SECRET:?请在 .env 中设置 DASHBOARD_SECRET}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      # 留空即可：后端首次启动会自动生成并保存在数据卷 /app/data/.jwt-secret，重启后复用
+      DASHBOARD_SECRET: ${DASHBOARD_SECRET:-}
       DASHBOARD_TOKEN_TTL: 12h
     volumes:
       # 可写目录：每个 kubeconfig 文件 = 一个（或多个 context）集群。

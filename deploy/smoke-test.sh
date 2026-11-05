@@ -8,9 +8,12 @@ set -uo pipefail
 BASE="http://127.0.0.1:9090"
 API="$BASE/api/v1"
 USER_NAME="admin"
-# 界面上改过密码后，用 DASHBOARD_PASSWORD 环境变量传入新密码即可：
-#   DASHBOARD_PASSWORD='新密码' bash /opt/kubepanel/smoke-test.sh
-PASSWORD="${DASHBOARD_PASSWORD:-Kp@2026ChangeMe}"
+# 用法：DASHBOARD_PASSWORD='你的登录密码' bash /opt/kubepanel/smoke-test.sh
+PASSWORD="${DASHBOARD_PASSWORD:-}"
+if [ -z "$PASSWORD" ]; then
+  echo "缺少 DASHBOARD_PASSWORD：请用 DASHBOARD_PASSWORD='你的登录密码' bash $0 运行" >&2
+  exit 2
+fi
 PASS=0
 FAIL=0
 

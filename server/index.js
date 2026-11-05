@@ -113,7 +113,11 @@ server.listen(config.port, config.host, () => {
     }
   }
   if (config.secretGenerated) {
-    console.log('  提示          : 未设置 DASHBOARD_SECRET，本次使用临时密钥；重启后已登录会话会失效')
+    console.log(
+      config.secretPersisted
+        ? `  提示          : 未设置 DASHBOARD_SECRET，已自动生成密钥并保存在数据目录（重启后复用）`
+        : '  提示          : 未设置 DASHBOARD_SECRET 且数据目录不可写，本次使用临时密钥；重启后已登录会话会失效',
+    )
   }
   console.log('')
 })
