@@ -3,6 +3,7 @@ import {
   kubeRequest, resRequest, apiPath, KUBE_HEADERS, KubeError,
   discoverResources, findResource, kubeContext,
 } from './kube.js'
+import { parseCpu, parseMem, fmtCpu as fmtUsageCpu, fmtBytes } from './monitorService.js'
 
 /** 把并发请求统一转成「失败不抛、值为 null」，保证概览页部分可用 */
 async function safe(fn) {
@@ -53,17 +54,58 @@ function age(ts) {
   return `${Math.floor(s / 86400)}d`
 }
 
+/** Pod 资源使用率汇总：用量来自 metrics-server，分母是同一范围内 Pod 声明的 requests */
+function podUsageSummary(metricsItems, podList) {
+  const usage = { cpu: 0, mem: 0 }
+  for (const m of metricsItems) {
+    for (const c of m.containers || []) {
+      usage.cpu += parseCpu(c.usage?.cpu)
+      usage.mem += parseMem(c.usage?.memory)
+    }
+  }
+  const requests = { cpu: 0, mem: 0 }
+  const limits = { cpu: 0, mem: 0 }
+  for (const p of podList) {
+    for (const c of p.spec?.containers || []) {
+      requests.cpu += parseCpu(c.resources?.requests?.cpu)
+      requests.mem += parseMem(c.resources?.requests?.memory)
+      limits.cpu += parseCpu(c.resources?.limits?.cpu)
+      limits.mem += parseMem(c.resources?.limits?.memory)
+    }
+  }
+  // 没声明 requests 时没有有意义的分母，返回 null 让前端显示「—」
+  const pct = (used, base) => (base > 0 ? Math.round((used / base) * 100) : null)
+  return {
+    sampled: metricsItems.length,
+    total: podList.length,
+    timestamp: metricsItems[0]?.timestamp || null,
+    cpu: {
+      usage: usage.cpu, usageText: fmtUsageCpu(usage.cpu),
+      requests: requests.cpu, requestsText: fmtUsageCpu(requests.cpu),
+      limits: limits.cpu, limitsText: fmtUsageCpu(limits.cpu),
+      percent: pct(usage.cpu, requests.cpu),
+    },
+    memory: {
+      usage: usage.mem, usageText: fmtBytes(usage.mem),
+      requests: requests.mem, requestsText: fmtBytes(requests.mem),
+      limits: limits.mem, limitsText: fmtBytes(limits.mem),
+      percent: pct(usage.mem, requests.mem),
+    },
+  }
+}
+
 /** GET /api/v1/overview —— namespace 不为空时，Pod / Deployment / Service / 事件只统计该命名空间 */
 export async function overview(clusterId, namespace) {
   const ns = namespace && namespace !== 'all' && namespace !== '_all' ? String(namespace) : ''
   const prefix = ns ? `/namespaces/${encodeURIComponent(ns)}` : ''
-  const [nodes, pods, deps, svcs, events, metrics, nsRes, discovery] = await Promise.all([
+  const [nodes, pods, deps, svcs, events, metrics, podMetrics, nsRes, discovery] = await Promise.all([
     safe(() => kubeRequest('GET', '/api/v1/nodes', { clusterId })),
     safe(() => kubeRequest('GET', `/api/v1${prefix}/pods`, { clusterId })),
     safe(() => kubeRequest('GET', `/apis/apps/v1${prefix}/deployments`, { clusterId })),
     safe(() => kubeRequest('GET', `/api/v1${prefix}/services`, { clusterId })),
     safe(() => kubeRequest('GET', `/api/v1${prefix}/events?limit=100`, { clusterId })),
     safe(() => kubeRequest('GET', '/apis/metrics.k8s.io/v1beta1/nodes', { timeout: 5000, clusterId })),
+    safe(() => kubeRequest('GET', `/apis/metrics.k8s.io/v1beta1${prefix}/pods`, { timeout: 5000, clusterId })),
     safe(() => kubeRequest('GET', '/api/v1/namespaces', { clusterId })),
     safe(() => discoverResources(false, clusterId)),
   ])
@@ -119,6 +161,9 @@ export async function overview(clusterId, namespace) {
     nodes: nodeRows,
     events: eventRows,
     podPhases,
+    podUsage: podMetrics
+      ? { available: true, ...podUsageSummary(podMetrics.data?.items || [], podList) }
+      : { available: false, sampled: 0, total: podList.length },
     metricsAvailable: !!metrics,
     resourceTypes: discovery?.length || 0,
     partial: !nodes || !pods,

@@ -213,12 +213,12 @@ export async function topPods(clusterId, limit = 10) {
   }
 }
 
-function fmtCpu(milli) {
+export function fmtCpu(milli) {
   if (!milli) return '0'
   return milli >= 1000 ? `${(milli / 1000).toFixed(2)} core` : `${milli.toFixed(1)}m`
 }
 
-function parseCpu(v) {
+export function parseCpu(v) {
   const s = String(v || '0')
   if (s.endsWith('n')) return Number(s.slice(0, -1)) / 1e6
   if (s.endsWith('u')) return Number(s.slice(0, -1)) / 1e3
@@ -226,7 +226,7 @@ function parseCpu(v) {
   return Number(s) * 1000 || 0
 }
 
-function parseMem(v) {
+export function parseMem(v) {
   const s = String(v || '0')
   const units = { Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4, K: 1e3, M: 1e6, G: 1e9 }
   const m = s.match(/^([\d.]+)([A-Za-z]*)$/)
@@ -234,7 +234,7 @@ function parseMem(v) {
   return Number(m[1]) * (units[m[2]] || 1)
 }
 
-function fmtBytes(n) {
+export function fmtBytes(n) {
   if (!n) return '0'
   if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(2)} GiB`
   if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(0)} MiB`
