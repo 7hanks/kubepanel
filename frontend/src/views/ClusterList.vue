@@ -10,7 +10,7 @@
           <h1 style="margin:0;font-size:22px;font-weight:650">集群列表</h1>
           <p class="kp-muted" style="margin:6px 0 0;font-size:13px">选择一个集群进入控制台；也可以导入新的 kubeconfig 纳管更多集群</p>
         </div>
-        <el-button type="primary" :icon="Plus" @click="openAdd">导入集群</el-button>
+        <el-button v-if="canAdd" type="primary" :icon="Plus" @click="openAdd">导入集群</el-button>
       </div>
 
       <div class="kp-stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
@@ -26,7 +26,7 @@
           <p class="kp-muted" style="margin:0 0 18px;font-size:13px">
             点「导入集群」粘贴 kubeconfig，或把 kubeconfig 文件放进服务器的集群目录后刷新
           </p>
-          <el-button type="primary" @click="openAdd">导入第一个集群</el-button>
+          <el-button v-if="canAdd" type="primary" @click="openAdd">导入第一个集群</el-button>
         </div>
 
         <div v-else class="cluster-grid">
@@ -58,7 +58,7 @@
                 <el-button type="primary" style="flex:1" :disabled="!c.healthy" @click="enter(c)">进入控制台</el-button>
                 <el-button @click="openDetail(c)">详情</el-button>
                 <el-button :loading="testing === c.id" @click="test(c)">测试</el-button>
-                <el-button v-if="c.removable" type="danger" plain @click="remove(c)"><el-icon><Delete /></el-icon></el-button>
+                <el-button v-if="c.removable && canRemove" type="danger" plain @click="remove(c)"><el-icon><Delete /></el-icon></el-button>
               </div>
             </div>
         </div>
@@ -211,6 +211,7 @@ import { Plus, Refresh, Delete, OfficeBuilding } from '@element-plus/icons-vue'
 import api from '../api'
 import { store } from '../store'
 import { cpath } from '../utils/path'
+import { canCreate, canDelete } from '../utils/perm'
 import PlatformLayout from '../layout/PlatformLayout.vue'
 
 const router = useRouter()
@@ -219,7 +220,8 @@ const adding = ref(false)
 const testing = ref('')
 const addVisible = ref(false)
 const clusters = ref([])
-const username = localStorage.getItem('kp_user') || 'admin'
+const canAdd = computed(() => canCreate('cluster'))
+const canRemove = computed(() => canDelete('cluster'))
 const form = reactive({ name: '', kubeconfig: '' })
 const clustersDirHint = '/app/kube/clusters'
 const detailVisible = ref(false)

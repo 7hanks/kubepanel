@@ -1,15 +1,19 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Layout from '../layout/Layout.vue'
 import { store } from '../store'
+import { canAny, landingPath, refreshSession, clearSession } from '../utils/perm'
 
 // 两级信息架构：/clusters（平台级集群列表） → /c/:clusterId/...（单个集群的资源控制台）
 const routes = [
   { path: '/login', name: 'login', component: () => import('../views/Login.vue'), meta: { public: true } },
-  { path: '/clusters', name: 'clusters', component: () => import('../views/ClusterList.vue'), meta: { title: '集群列表' } },
-  { path: '/registries', name: 'registries', component: () => import('../views/Registries.vue'), meta: { title: '镜像仓库' } },
-  { path: '/monitor', name: 'monitor', component: () => import('../views/Monitor.vue'), meta: { title: '监控' } },
+  { path: '/clusters', name: 'clusters', component: () => import('../views/ClusterList.vue'), meta: { title: '集群列表', perm: ['cluster:list', 'cluster:detail'] } },
+  { path: '/registries', name: 'registries', component: () => import('../views/Registries.vue'), meta: { title: '镜像仓库', perm: ['registry:list', 'registry:detail'] } },
+  { path: '/monitor', name: 'monitor', component: () => import('../views/Monitor.vue'), meta: { title: '监控', perm: ['monitor:list', 'monitor:detail'] } },
+  // 用户管理：一级菜单，下面挂「用户」和「角色」两个子页面
+  { path: '/users', name: 'users', component: () => import('../views/Users.vue'), meta: { title: '用户', perm: ['user:list', 'user:detail'] } },
+  { path: '/roles', name: 'roles', component: () => import('../views/Roles.vue'), meta: { title: '角色', perm: ['user:list', 'user:detail'] } },
   {
-    path: '/c/:clusterId', component: Layout,
+    path: '/c/:clusterId', component: Layout, meta: { perm: ['cluster:list', 'cluster:detail'] },
     children: [
       { path: '', redirect: to => ({ name: 'overview', params: { clusterId: to.params.clusterId } }) },
       { path: 'overview', name: 'overview', component: () => import('../views/Overview.vue'), meta: { title: '集群概览' } },
@@ -21,16 +25,30 @@ const routes = [
       { path: 'workbench', name: 'workbench', component: () => import('../views/YamlWorkbench.vue'), meta: { title: 'YAML 工作台' } },
     ],
   },
-  { path: '/', redirect: '/clusters' },
-  { path: '/:pathMatch(.*)*', redirect: '/clusters' },
+  { path: '/', redirect: () => landingPath() },
+  { path: '/:pathMatch(.*)*', redirect: () => landingPath() },
 ]
 
 const router = createRouter({ history: createWebHistory(), routes })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const authed = !!localStorage.getItem('kp_token')
   if (!to.meta.public && !authed) return { path: '/login', query: { redirect: to.fullPath } }
-  if (to.path === '/login' && authed) return { path: '/clusters' }
+  if (to.path === '/login') return authed ? landingPath() : true
+
+  // 登录后权限快照可能还没落盘（老会话/换浏览器），先取一次；账号被禁用会在这里被挡回登录页
+  if (authed && !localStorage.getItem('kp_perms')) {
+    try {
+      await refreshSession()
+    } catch (e) {
+      clearSession()
+      return { path: '/login', query: { redirect: to.fullPath } }
+    }
+  }
+  if (to.meta.perm && !canAny(to.meta.perm)) {
+    const target = landingPath()
+    if (target !== to.path) return target
+  }
   // 必须在组件挂载前同步 clusterId：Vue 子组件的 onMounted 早于父级 Layout，
   // 否则首屏请求会带着上一个集群的 id 打到错误的 API Server
   if (to.params.clusterId) {

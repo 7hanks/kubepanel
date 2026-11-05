@@ -5,13 +5,13 @@
       <span style="font-size:16px;font-weight:600">{{ meta.kind }} / {{ name }}</span>
       <el-tag :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
       <span class="spacer" />
-      <el-button v-if="meta.kind === 'Pod'" type="warning" plain :loading="restarting" @click="doRestartPod">重启 Pod</el-button>
+      <el-button v-if="meta.kind === 'Pod' && (canUpdateRes || canDeleteRes)" type="warning" plain :loading="restarting" @click="doRestartPod">重启 Pod</el-button>
       <el-button v-if="meta.kind === 'Pod'" type="primary" plain @click="goLogs">查看日志</el-button>
-      <el-button v-if="meta.kind === 'Pod'" type="primary" plain @click="goTerminal">进入终端</el-button>
-      <el-button v-if="scalable" @click="doScale">扩缩容</el-button>
-      <el-button v-if="restartable" @click="doRestart">重启</el-button>
-      <el-button @click="editYaml">编辑 YAML</el-button>
-      <el-button type="danger" plain @click="doDelete">删除</el-button>
+      <el-button v-if="meta.kind === 'Pod' && canUpdateRes" type="primary" plain @click="goTerminal">进入终端</el-button>
+      <el-button v-if="scalable && canUpdateRes" @click="doScale">扩缩容</el-button>
+      <el-button v-if="restartable && canUpdateRes" @click="doRestart">重启</el-button>
+      <el-button v-if="canUpdateRes" @click="editYaml">编辑 YAML</el-button>
+      <el-button v-if="canDeleteRes" type="danger" plain @click="doDelete">删除</el-button>
     </div>
 
     <el-alert v-if="loadError" type="error" show-icon :closable="false" style="margin-bottom:14px">
@@ -84,12 +84,12 @@
       <!-- YAML -->
       <el-tab-pane label="YAML" name="yaml">
         <div style="margin-bottom:10px;display:flex;gap:10px">
-          <el-button type="primary" size="small" :loading="saving" @click="saveYaml">保存</el-button>
+          <el-button v-if="canUpdateRes" type="primary" size="small" :loading="saving" @click="saveYaml">保存</el-button>
           <el-button size="small" @click="copyYaml">复制</el-button>
           <el-button size="small" @click="downloadYaml">下载</el-button>
           <span class="kp-muted" style="align-self:center;font-size:12px">保存等价于 kubectl replace，API Server 会校验字段合法性</span>
         </div>
-        <textarea v-model="yamlText" class="kp-yaml" style="min-height:520px" spellcheck="false" />
+        <textarea v-model="yamlText" class="kp-yaml" style="min-height:520px" spellcheck="false" :readonly="!canUpdateRes" />
       </el-tab-pane>
 
       <!-- 事件 -->
@@ -159,6 +159,7 @@ import api from '../api'
 import { metaFromRoute, statusTag, CORE } from '../config/resources'
 import { normalizeRow, phaseOf, ago, fmtTime } from '../config/columns'
 import { cpath, nsPath } from '../utils/path'
+import { canUpdate, canDelete } from '../utils/perm'
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
 
@@ -174,6 +175,9 @@ const hasSelector = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet', 'R
 
 const loading = ref(false)
 const saving = ref(false)
+const canUpdateRes = computed(() => canUpdate('cluster'))
+const canDeleteRes = computed(() => canDelete('cluster'))
+const writable = computed(() => canUpdateRes.value)
 const restarting = ref(false)
 const yamlDialogVisible = ref(false)
 const yamlDialogText = ref('')

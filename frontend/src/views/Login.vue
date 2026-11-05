@@ -29,6 +29,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { User, Lock } from '@element-plus/icons-vue'
 import api from '../api'
+import { saveSession, landingPath, canSee } from '../utils/perm'
 
 const route = useRoute()
 const router = useRouter()
@@ -41,12 +42,24 @@ async function submit() {
   try {
     const data = await api.login(form.username, form.password)
     localStorage.setItem('kp_token', data.token)
-    localStorage.setItem('kp_user', data.username || form.username)
-    router.push(route.query.redirect || '/clusters')
+    saveSession(data)
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+    // 目标页越权时退回该账号的落地页，避免登录后立刻 403
+    const target = redirect && canForPath(redirect) ? redirect : landingPath()
+    router.push(target)
   } catch (e) {
     // 拦截器已提示
   } finally {
     loading.value = false
   }
+}
+
+/** 粗略判断跳转目标是否在权限范围内 */
+function canForPath(path) {
+  if (path.startsWith('/clusters') || path.startsWith('/c/')) return canSee('cluster')
+  if (path.startsWith('/registries')) return canSee('registry')
+  if (path.startsWith('/users') || path.startsWith('/roles')) return canSee('user')
+  if (path.startsWith('/monitor')) return canSee('monitor')
+  return true
 }
 </script>

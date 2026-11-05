@@ -41,9 +41,9 @@
                   </el-form-item>
                 </el-form>
                 <div style="display:flex;gap:8px">
-                  <el-button type="primary" size="small" :loading="saving" @click="save">保存</el-button>
-                  <el-button size="small" :loading="testing" @click="test">测试连接</el-button>
-                  <el-button size="small" @click="clearToken">清除 Token</el-button>
+                  <el-button type="primary" size="small" :loading="saving" :disabled="!writable" @click="save">保存</el-button>
+                  <el-button size="small" :loading="testing" :disabled="!writable" @click="test">测试连接</el-button>
+                  <el-button size="small" :disabled="!writable" @click="clearToken">清除 Token</el-button>
                 </div>
                 <div v-if="cfg.updatedAt" class="kp-muted" style="font-size:11.5px;margin-top:10px">
                   上次保存：{{ fmtTime(cfg.updatedAt) }}
@@ -166,9 +166,11 @@ import { ElMessage } from 'element-plus'
 import {
   Refresh, DataLine, TopRight, TrendCharts, Cpu, Coin, Odometer, Histogram,
 } from '@element-plus/icons-vue'
+import { can } from '../utils/perm'
 import PlatformLayout from '../layout/PlatformLayout.vue'
 import api from '../api'
 
+const writable = computed(() => can('monitor:update') || can('monitor:create'))
 const tab = ref('grafana')
 const loading = ref(false)
 const saving = ref(false)

@@ -23,13 +23,25 @@
         </template>
 
         <div class="kp-group-title">平台</div>
-        <div class="kp-nav-item" :title="collapsed ? '集群列表' : ''" @click="router.push('/clusters')">
+        <div v-if="canReadCluster" class="kp-nav-item" :title="collapsed ? '集群列表' : ''" @click="router.push('/clusters')">
           <el-icon><OfficeBuilding /></el-icon><span>集群列表</span>
         </div>
-        <div class="kp-nav-item" :title="collapsed ? '镜像仓库' : ''" @click="router.push('/registries')">
+        <div v-if="canReadUsers" class="kp-nav-item" :class="{ open: showUserNav }" :title="collapsed ? '用户管理' : ''" @click="showUserNav = !showUserNav">
+          <el-icon><User /></el-icon><span>用户管理</span>
+          <el-icon class="kp-nav-caret"><ArrowDown /></el-icon>
+        </div>
+        <template v-if="canReadUsers && showUserNav">
+          <div class="kp-nav-item kp-subnav-item" :title="collapsed ? '用户' : ''" @click="router.push('/users')">
+            <span>用户</span>
+          </div>
+          <div class="kp-nav-item kp-subnav-item" :title="collapsed ? '角色' : ''" @click="router.push('/roles')">
+            <span>角色</span>
+          </div>
+        </template>
+        <div v-if="canReadRegistry" class="kp-nav-item" :title="collapsed ? '镜像仓库' : ''" @click="router.push('/registries')">
           <el-icon><Box /></el-icon><span>镜像仓库</span>
         </div>
-        <div class="kp-nav-item" :title="collapsed ? '监控' : ''" @click="router.push('/monitor')">
+        <div v-if="canReadMonitor" class="kp-nav-item" :title="collapsed ? '监控' : ''" @click="router.push('/monitor')">
           <el-icon><TrendCharts /></el-icon><span>监控</span>
         </div>
       </div>
@@ -94,6 +106,7 @@
             <span class="kp-header-action"><el-icon><UserFilled /></el-icon>{{ username }}<el-icon><ArrowDown /></el-icon></span>
             <template #dropdown>
               <el-dropdown-menu>
+                <el-dropdown-item v-if="roleLabel" disabled>{{ roleLabel }}</el-dropdown-item>
                 <el-dropdown-item command="clusters">集群列表</el-dropdown-item>
                 <el-dropdown-item command="password" divided>修改密码</el-dropdown-item>
                 <el-dropdown-item command="about">关于</el-dropdown-item>
@@ -127,21 +140,45 @@
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, OfficeBuilding, Refresh, Timer, QuestionFilled, UserFilled, ArrowDown } from '@element-plus/icons-vue'
+import {
+  Search, OfficeBuilding, Refresh, Timer, QuestionFilled, UserFilled, ArrowDown, User, Box, TrendCharts,
+} from '@element-plus/icons-vue'
 import { store } from '../store'
 import { navGroups } from '../config/resources'
 import { cpath, CLUSTERS_PATH } from '../utils/path'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
+import {
+  canReadCluster as permitCluster, canReadUsers as permitUsers,
+  canReadRegistry as permitRegistry, canReadMonitor as permitMonitor,
+  refreshSession, clearSession, roleName,
+} from '../utils/perm'
 
 const route = useRoute()
 const router = useRouter()
 const reloading = ref(false)
 const menuFilter = ref('')
-const username = localStorage.getItem('kp_user') || 'admin'
+const username = ref(localStorage.getItem('kp_user') || 'admin')
+const roleLabel = ref(roleName())
+const showUserNav = ref(true)
+const tick = ref(0)
 const collapsed = ref(localStorage.getItem('kp_side_collapsed') === '1')
 const autoRefresh = ref(Number(localStorage.getItem('kp_auto_refresh') || 0))
 const pwdVisible = ref(false)
 let refreshTimer = null
+
+const allow = computed(() => {
+  void tick.value
+  return {
+    cluster: permitCluster(),
+    users: permitUsers(),
+    registry: permitRegistry(),
+    monitor: permitMonitor(),
+  }
+})
+const canReadCluster = computed(() => allow.value.cluster)
+const canReadUsers = computed(() => allow.value.users)
+const canReadRegistry = computed(() => allow.value.registry)
+const canReadMonitor = computed(() => allow.value.monitor)
 
 const autoLabel = computed(() => autoRefresh.value ? `${autoRefresh.value}s 刷新` : '自动刷新')
 
@@ -198,7 +235,7 @@ function changeNs(ns) { store.setNamespace(ns) }
 
 /** 改完密码旧 token 仍然有效，但一律要求重新登录，避免“改了却没生效”的困惑 */
 function afterPasswordChanged() {
-  localStorage.removeItem('kp_token')
+  clearSession()
   router.push('/login')
 }
 
@@ -212,7 +249,7 @@ async function reload() {
 
 async function onCommand(cmd) {
   if (cmd === 'logout') {
-    localStorage.removeItem('kp_token')
+    clearSession()
     router.push('/login')
   } else if (cmd === 'password') {
     pwdVisible.value = true
@@ -231,6 +268,12 @@ onMounted(async () => {
   try { await store.loadClusters() } catch (e) { /* 顶部仍可手动切换 */ }
   store.init().catch(() => {})
   applyAutoRefresh()
+  try {
+    const p = await refreshSession()
+    username.value = p.username
+    roleLabel.value = p.roleName
+    tick.value++
+  } catch (e) { /* 拦截器已处理 401 */ }
 })
 onUnmounted(() => clearInterval(refreshTimer))
 
@@ -250,4 +293,8 @@ watch(() => route.params.clusterId, id => {
   padding: 5px 8px; border-radius: var(--kp-r-sm); transition: background .14s;
 }
 .kp-header-action:hover { background: var(--kp-side-hover); color: var(--kp-text); }
+.kp-nav-caret { margin-left: auto; font-size: 12px !important; transition: transform .16s; }
+.kp-nav-item.open .kp-nav-caret { transform: rotate(180deg); }
+.kp-subnav-item { padding-left: 36px; font-size: 12.5px; }
+.kp-side.is-collapsed .kp-nav-caret { display: none; }
 </style>

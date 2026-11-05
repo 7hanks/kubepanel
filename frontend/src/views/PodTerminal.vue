@@ -21,14 +21,16 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import api, { execWsUrl } from '../api'
+import { can } from '../utils/perm'
 
 const route = useRoute()
+const router = useRouter()
 const namespace = route.params.namespace
 const name = route.params.name
 
@@ -129,6 +131,11 @@ function disconnect(write = true) {
 watch(container, () => disconnect(false))
 
 onMounted(async () => {
+  if (!can('cluster:update') && !can('cluster:create')) {
+    ElMessage.error('当前账号只有查看权限，不能进入容器终端')
+    router.back()
+    return
+  }
   await nextTick()
   makeTerm()
   term.write('\x1b[36mKubePanel Web Terminal\x1b[0m\r\n点击右上角「连接」进入容器。\r\n\r\n')

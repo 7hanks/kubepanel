@@ -50,9 +50,9 @@ app.get('/healthz', async (req, res) => {
   })
 })
 
-// 一个集群都没有时，除「平台级」接口（集群/仓库/监控/账号）外的接口给出明确提示
+// 一个集群都没有时，除「平台级」接口（集群/仓库/监控/账号/用户角色）外的接口给出明确提示
 app.use('/api/v1', (req, res, next) => {
-  const platform = ['/v1/clusters', '/v1/auth', '/v1/registries', '/v1/monitor']
+  const platform = ['/v1/clusters', '/v1/auth', '/v1/registries', '/v1/monitor', '/v1/users', '/v1/roles']
   if (listClusters().length === 0 && !platform.some(p => req.originalUrl.includes(p))) {
     return res.status(503).json({ message: '尚未配置任何集群，请先在集群列表页导入 kubeconfig' })
   }

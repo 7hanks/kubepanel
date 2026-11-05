@@ -1,20 +1,42 @@
 <template>
   <div class="plat-shell">
-    <!-- 平台级左侧导航：集群列表 / 镜像仓库 / 监控 -->
+    <!-- 平台级左侧导航：集群列表 / 用户管理 / 镜像仓库 / 监控 -->
     <aside class="kp-side" :class="{ 'is-collapsed': collapsed }">
       <div class="kp-brand" @click="go('/clusters')">
         <span class="mark">K</span><span class="kp-brand-text">KubePanel</span>
       </div>
       <div class="kp-side-scroll">
         <div class="kp-group-title">平台</div>
-        <div
-          v-for="n in navs" :key="n.key"
-          class="kp-nav-item" :class="{ active: active === n.key }"
-          :title="collapsed ? n.label : ''" @click="go(n.path)"
-        >
-          <el-icon><component :is="n.icon" /></el-icon>
-          <span>{{ n.label }}</span>
-        </div>
+        <template v-for="n in navs" :key="n.key">
+          <!-- 带子页面的一级菜单（用户管理 → 用户 / 角色） -->
+          <template v-if="n.children">
+            <div
+              class="kp-nav-item" :class="{ active: isGroupActive(n), open: opened[n.key] }"
+              :title="collapsed ? n.label : ''" @click="toggleGroup(n)"
+            >
+              <el-icon><component :is="n.icon" /></el-icon>
+              <span>{{ n.label }}</span>
+              <el-icon class="kp-nav-caret"><ArrowDown /></el-icon>
+            </div>
+            <div v-show="opened[n.key] && !collapsed" class="kp-subnav">
+              <div
+                v-for="c in n.children" :key="c.key"
+                class="kp-nav-item kp-subnav-item" :class="{ active: active === c.key }"
+                @click="go(c.path)"
+              >
+                <span>{{ c.label }}</span>
+              </div>
+            </div>
+          </template>
+          <div
+            v-else
+            class="kp-nav-item" :class="{ active: active === n.key }"
+            :title="collapsed ? n.label : ''" @click="go(n.path)"
+          >
+            <el-icon><component :is="n.icon" /></el-icon>
+            <span>{{ n.label }}</span>
+          </div>
+        </template>
       </div>
       <div class="ps-foot">
         <div class="kp-nav-item" :title="collapsed ? '展开菜单' : ''" @click="toggleCollapse">
@@ -36,10 +58,13 @@
           <slot name="actions" />
           <span class="ps-divider" />
           <el-dropdown @command="onCommand">
-            <span class="plat-user"><el-icon><UserFilled /></el-icon>{{ username }}<el-icon><ArrowDown /></el-icon></span>
+            <span class="plat-user">
+              <el-icon><UserFilled /></el-icon>{{ username }}<el-icon><ArrowDown /></el-icon>
+            </span>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="password">修改密码</el-dropdown-item>
+                <el-dropdown-item v-if="roleLabel" disabled>{{ roleLabel }}</el-dropdown-item>
+                <el-dropdown-item command="password" divided>修改密码</el-dropdown-item>
                 <el-dropdown-item command="about">关于</el-dropdown-item>
                 <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
               </el-dropdown-menu>
@@ -58,43 +83,85 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import {
-  OfficeBuilding, Box, TrendCharts, UserFilled, ArrowDown,
+  OfficeBuilding, Box, TrendCharts, UserFilled, ArrowDown, User,
 } from '@element-plus/icons-vue'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import { CLUSTERS_PATH } from '../utils/path'
+import {
+  canReadCluster, canReadUsers, canReadRegistry, canReadMonitor,
+  refreshSession, clearSession, roleName,
+} from '../utils/perm'
 
 const props = defineProps({ active: { type: String, default: 'clusters' } })
 
 const router = useRouter()
-const username = localStorage.getItem('kp_user') || 'admin'
+const username = ref(localStorage.getItem('kp_user') || 'admin')
+const roleLabel = ref(roleName())
+const tick = ref(0)                               // 权限快照刷新后重算菜单
 const pwdVisible = ref(false)
 const collapsed = ref(localStorage.getItem('kp_plat_side_collapsed') === '1')
+const opened = ref({ 'user-mgmt': true })
 
-const navs = [
-  { key: 'clusters', label: '集群列表', icon: OfficeBuilding, path: CLUSTERS_PATH },
-  { key: 'registries', label: '镜像仓库', icon: Box, path: '/registries' },
-  { key: 'monitor', label: '监控', icon: TrendCharts, path: '/monitor' },
-]
-const currentLabel = computed(() => navs.find(n => n.key === props.active)?.label || '平台')
+const navs = computed(() => {
+  void tick.value
+  return [
+    { key: 'clusters', label: '集群列表', icon: OfficeBuilding, path: CLUSTERS_PATH, hidden: !canReadCluster() },
+    {
+      key: 'user-mgmt', label: '用户管理', icon: User, hidden: !canReadUsers(),
+      children: [
+        { key: 'users', label: '用户', path: '/users' },
+        { key: 'roles', label: '角色', path: '/roles' },
+      ].filter(c => canReadUsers()),
+    },
+    { key: 'registries', label: '镜像仓库', icon: Box, path: '/registries', hidden: !canReadRegistry() },
+    { key: 'monitor', label: '监控', icon: TrendCharts, path: '/monitor', hidden: !canReadMonitor() },
+  ].filter(n => !n.hidden)
+})
 
+const allLabels = computed(() => {
+  const out = {}
+  for (const n of navs.value) {
+    out[n.key] = n.label
+    for (const c of n.children || []) out[c.key] = c.label
+  }
+  return out
+})
+const currentLabel = computed(() => allLabels.value[props.active] || '平台')
+
+function isGroupActive(n) {
+  return (n.children || []).some(c => c.key === props.active)
+}
+function toggleGroup(n) {
+  if (collapsed.value) return go(n.children?.[0]?.path || '/')
+  opened.value[n.key] = !opened.value[n.key]
+}
 function toggleCollapse() {
   collapsed.value = !collapsed.value
   localStorage.setItem('kp_plat_side_collapsed', collapsed.value ? '1' : '0')
 }
 function go(path) { if (router.currentRoute.value.path !== path) router.push(path) }
 function onCommand(cmd) {
-  if (cmd === 'logout') { localStorage.removeItem('kp_token'); router.push('/login') }
+  if (cmd === 'logout') { clearSession(); router.push('/login') }
   else if (cmd === 'password') pwdVisible.value = true
-  else ElMessageBox.alert('KubePanel v1.4.0 · 多集群 Kubernetes 控制台。', '关于', { confirmButtonText: '知道了' })
+  else if (cmd === 'about') ElMessageBox.alert('KubePanel v1.4.0 · 多集群 Kubernetes 控制台。', '关于', { confirmButtonText: '知道了' })
 }
 function afterPasswordChanged() {
-  localStorage.removeItem('kp_token')
+  clearSession()
   router.push('/login')
 }
+
+onMounted(async () => {
+  try {
+    const p = await refreshSession()
+    username.value = p.username
+    roleLabel.value = p.roleName
+    tick.value++
+  } catch (e) { /* 拦截器已处理 401 */ }
+})
 </script>
 
 <style scoped>
@@ -122,11 +189,19 @@ function afterPasswordChanged() {
 .plat-user:hover { background: var(--kp-side-hover); color: var(--kp-text); }
 .plat-content { flex: 1; overflow-y: auto; }
 
+.kp-nav-caret { margin-left: auto; font-size: 12px !important; transition: transform .16s; }
+.kp-nav-item.open .kp-nav-caret { transform: rotate(180deg); }
+.kp-subnav { padding: 2px 0 6px; }
+.kp-subnav-item { padding-left: 36px; font-size: 12.5px; }
+.kp-subnav-item.active { background: var(--kp-side-active); color: var(--kp-brand); font-weight: 600; }
+.kp-side.is-collapsed .kp-nav-caret { display: none; }
+
 @media (max-width: 860px) {
   .plat-shell :deep(.kp-side) { width: 62px; }
   .plat-shell :deep(.kp-side .kp-nav-item span),
   .plat-shell :deep(.kp-brand-text) { display: none; }
   .plat-shell :deep(.kp-side .kp-nav-item) { justify-content: center; padding: 9px 0; }
   .plat-shell :deep(.kp-group-title) { height: 1px; padding: 0; margin: 10px 12px 6px; font-size: 0; background: var(--kp-border); }
+  .kp-subnav { display: none; }
 }
 </style>

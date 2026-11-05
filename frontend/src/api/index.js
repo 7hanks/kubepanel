@@ -44,6 +44,16 @@ export const api = {
   changePassword: (currentPassword, newPassword) =>
     http.post('/v1/auth/password', { currentPassword, newPassword }),
 
+  // ---- 用户与角色管理（平台级） ----
+  roles: () => http.get('/v1/roles'),
+  createRole: body => http.post('/v1/roles', body),
+  updateRole: (id, body) => http.patch(`/v1/roles/${encodeURIComponent(id)}`, body),
+  removeRole: id => http.delete(`/v1/roles/${encodeURIComponent(id)}`),
+  users: () => http.get('/v1/users'),
+  createUser: body => http.post('/v1/users', body),
+  updateUser: (username, body) => http.patch(`/v1/users/${encodeURIComponent(username)}`, body),
+  removeUser: username => http.delete(`/v1/users/${encodeURIComponent(username)}`),
+
   // ---- 集群管理（平台级） ----
   clusters: (refresh = false) => http.get('/v1/clusters', { params: { refresh: refresh ? 1 : 0 } }),
   addCluster: (name, kubeconfig) => http.post('/v1/clusters', { name, kubeconfig }),

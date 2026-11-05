@@ -2,7 +2,8 @@ import { PassThrough } from 'node:stream'
 import { Exec } from '@kubernetes/client-node'
 import wsLib from 'ws'
 import { getKubeConfig } from './kube.js'
-import { verifyWsToken } from './auth.js'
+import { accountFromWsToken } from './auth.js'
+import { can } from './permissions.js'
 
 const { WebSocketServer, WebSocket } = wsLib
 
@@ -18,8 +19,15 @@ export function attachTerminal(server) {
     let url
     try { url = new URL(req.url, 'http://localhost') } catch (e) { socket.destroy(); return }
     if (url.pathname !== '/api/v1/ws/exec') return // 交给其它 upgrade 处理器
-    if (!verifyWsToken(url)) {
+    const account = accountFromWsToken(url)
+    if (!account) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    // 容器内执行命令属于集群对象的写操作，只读角色不允许
+    if (!can(account, 'cluster:update') && !can(account, 'cluster:create')) {
+      socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return
     }

@@ -7,7 +7,7 @@
       <span class="spacer" />
       <el-button @click="validate">校验 YAML</el-button>
       <el-button @click="text = ''">清空</el-button>
-      <el-button type="primary" :loading="applying" @click="apply">应用 (apply)</el-button>
+      <el-button type="primary" :loading="applying" :disabled="!writable" @click="apply">应用 (apply)</el-button>
     </div>
 
     <el-row :gutter="16">
@@ -35,11 +35,14 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as yaml from 'js-yaml'
 import api from '../api'
 import { store } from '../store'
+import { canAny } from '../utils/perm'
+
+const writable = computed(() => canAny('cluster:create', 'cluster:update'))
 
 const text = ref(`# 示例：创建一个 Nginx Deployment（可直接点"应用"体验）
 apiVersion: apps/v1

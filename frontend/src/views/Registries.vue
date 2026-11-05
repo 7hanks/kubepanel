@@ -14,8 +14,8 @@
           </p>
         </div>
         <div style="display:flex;gap:8px">
-          <el-button :icon="MagicStick" @click="openDiscover">从集群发现</el-button>
-          <el-button type="primary" :icon="Plus" @click="openAdd">添加仓库</el-button>
+          <el-button v-if="canCreateReg" :icon="MagicStick" @click="openDiscover">从集群发现</el-button>
+          <el-button v-if="canCreateReg" type="primary" :icon="Plus" @click="openAdd">添加仓库</el-button>
         </div>
       </div>
 
@@ -69,8 +69,8 @@
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="browse(row)">浏览</el-button>
               <el-button link type="primary" size="small" :loading="testing === row.id" @click="test(row)">测试</el-button>
-              <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="danger" size="small" @click="remove(row)">移除</el-button>
+              <el-button link type="primary" size="small" :disabled="!canUpdateReg" @click="openEdit(row)">编辑</el-button>
+              <el-button link type="danger" size="small" :disabled="!canDeleteReg" @click="remove(row)">移除</el-button>
             </template>
           </el-table-column>
           <template #empty>
@@ -205,9 +205,13 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Box, CircleCheck, Warning, MagicStick } from '@element-plus/icons-vue'
+import { canCreate, canUpdate, canDelete } from '../utils/perm'
 import PlatformLayout from '../layout/PlatformLayout.vue'
 import api from '../api'
 
+const canCreateReg = computed(() => canCreate('registry'))
+const canUpdateReg = computed(() => canUpdate('registry'))
+const canDeleteReg = computed(() => canDelete('registry'))
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref('')
