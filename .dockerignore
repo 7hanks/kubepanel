@@ -1,0 +1,15 @@
+# 依赖与构建产物不进构建上下文，由 Dockerfile 各阶段自行安装/生成
+**/node_modules
+**/dist
+**/.vite
+server/data
+data
+deploy/screenshots
+*.png
+.git
+.gitignore
+.workbuddy
+*.log
+*.md.bak
+.env
+.env.local

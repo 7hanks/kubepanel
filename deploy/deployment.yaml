@@ -1,0 +1,88 @@
+# 可选：把 KubePanel 直接跑在 K8s 集群里（ServiceAccount 认证，无需挂载 kubeconfig）
+# 前置：镜像需先推送到集群可拉取的仓库，或改成本地已有镜像名。
+# 应用顺序：kubectl apply -f rbac.yaml && kubectl apply -f deployment.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kubepanel-auth
+  namespace: kube-system
+type: Opaque
+stringData:
+  # 生产环境请务必修改
+  DASHBOARD_PASSWORD: "Kp@2026ChangeMe"
+  DASHBOARD_SECRET: "6f2a9c4e8b1d7053a9e4c8f2b6d0a1735e9c4b8f2a6d0e1735c9b4a8f2d6"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubepanel
+  namespace: kube-system
+  labels:
+    app: kubepanel
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubepanel
+  template:
+    metadata:
+      labels:
+        app: kubepanel
+    spec:
+      serviceAccountName: kubepanel
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: kubepanel
+          image: kubepanel:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: kubepanel-auth
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "8080"
+            - name: TZ
+              value: Asia/Shanghai
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kubepanel
+  namespace: kube-system
+spec:
+  type: NodePort
+  selector:
+    app: kubepanel
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30090
+      protocol: TCP

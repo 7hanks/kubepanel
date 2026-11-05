@@ -1,0 +1,37 @@
+# 在 K8s 集群内部署 KubePanel 时使用（可选）
+# 方式 A：docker 单机运行 —— 只需挂载 kubeconfig，不需要本文件
+# 方式 B：集群内运行 —— 应用下面的 RBAC + deployment.yaml，走 ServiceAccount，无需挂载任何凭据
+#
+# 安全提示：为了方便「点几下完成所有操作」，这里授予了较宽的读写权限。
+# 生产环境请按最小权限收敛 apiGroups / resources / verbs，并配合网络策略限制来源。
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubepanel
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubepanel
+rules:
+  # 所有内置资源与 CRD 的读写（含 pods/log、pods/exec 等子资源）
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+  # /version、/apis、/api 等非资源端点，供版本信息与 API 发现使用
+  - nonResourceURLs: ["*"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubepanel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubepanel
+subjects:
+  - kind: ServiceAccount
+    name: kubepanel
+    namespace: kube-system

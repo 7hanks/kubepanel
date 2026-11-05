@@ -1,0 +1,37 @@
+services:
+  kubepanel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kubepanel:1.4.0
+    container_name: kubepanel
+    restart: unless-stopped
+    # 宿主机 9090 已被选为对外端口（该机 80/8080 被 traefik 占用）
+    ports:
+      - "9090:8080"
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Shanghai
+      DASHBOARD_USERNAME: admin
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?请在 .env 中设置 DASHBOARD_PASSWORD}
+      DASHBOARD_SECRET: ${DASHBOARD_SECRET:?请在 .env 中设置 DASHBOARD_SECRET}
+      DASHBOARD_TOKEN_TTL: 12h
+    volumes:
+      # 可写目录：每个 kubeconfig 文件 = 一个（或多个 context）集群。
+      # 界面「导入集群」会把新凭据写进这里，重启后依然有效；宿主机目录属主需为 10001。
+      # 注意不要加 :ro，否则只能查看、不能导入或删除集群。
+      - /opt/kubepanel/clusters:/app/kube/clusters
+      # 账号数据：界面上「修改密码」后的 scrypt 哈希写在 /app/data/auth.json，
+      # 不挂这个卷的话重建容器密码会被重置回环境变量里的初始密码。
+      - /opt/kubepanel/data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
