@@ -39,31 +39,38 @@
           <div class="kp-section-title">
             Pod 资源使用率
             <span v-if="podUsage.available" class="kp-muted usage-meta">
-              {{ podUsage.sampled }}/{{ podUsage.total }} 个 Pod 有指标
+              共 {{ podUsage.total }} 个 Pod · {{ podUsage.sampled }} 个有指标
             </span>
           </div>
 
           <div v-if="loaded && !podUsage.available" class="kp-muted" style="font-size:12.5px">
-            未检测到 metrics-server，无法读取 Pod 实时用量。安装 metrics-server 后此卡片自动出现。
+            未检测到 metrics-server，无法读取 Pod 实时用量。安装 metrics-server 后此表自动出现。
           </div>
 
           <template v-else-if="podUsage.available">
-            <div class="usage-grid">
-              <div v-for="u in usageRows" :key="u.key" class="usage-item">
-                <div class="usage-head">
-                  <span class="usage-label">{{ u.label }}</span>
-                  <span class="usage-value">{{ u.usageText }}</span>
-                </div>
-                <el-progress :percentage="u.barPercent" :color="u.color" :show-text="false" :stroke-width="9" />
-                <div class="usage-sub">
-                  <span>申请 {{ u.requestsText }}</span>
-                  <span>限制 {{ u.limitsText }}</span>
-                  <span class="usage-pct" :style="{ color: u.color }">使用率 {{ u.percentText }}</span>
-                </div>
-              </div>
-            </div>
+            <el-table :data="podUsage.items" size="small" border stripe max-height="360"
+              empty-text="当前范围没有 Pod" @row-click="goPod">
+              <el-table-column label="Pod" min-width="200" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <div class="pod-cell-name">{{ row.name }}</div>
+                  <div class="pod-cell-ns">{{ row.namespace }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="cpuText" label="CPU 用量" width="100" align="right" />
+              <el-table-column label="CPU 使用率" width="100" align="right">
+                <template #default="{ row }">
+                  <span :class="pctClass(row.cpuPercent)">{{ pctText(row.cpuPercent) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="memoryText" label="内存用量" width="105" align="right" />
+              <el-table-column label="内存使用率" width="100" align="right">
+                <template #default="{ row }">
+                  <span :class="pctClass(row.memoryPercent)">{{ pctText(row.memoryPercent) }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
             <div class="kp-muted usage-note">
-              用量来自 metrics-server（最近一次采样），使用率 = 用量 ÷ 当前范围内 Pod 声明的 requests；未声明 requests 时显示「—」。
+              用量来自 metrics-server 最近一次采样；使用率 = 用量 ÷ 该 Pod 的 requests（未声明显示「—」）。点击行查看详情。
             </div>
           </template>
         </div>
@@ -198,29 +205,16 @@ const cluster = computed(() => store.cluster)
 const stat = computed(() => data.value.stat || {})
 const activeNs = computed(() => (store.namespace && store.namespace !== 'all' ? store.namespace : ''))
 
-/* ---- Pod 资源使用率：用量 ÷ requests，用量含 CPU 与内存 ---- */
-const podUsage = computed(() => data.value.podUsage || { available: false })
+/* ---- 每个 Pod 的资源使用率：用量 ÷ 该 Pod 的 requests ---- */
+const podUsage = computed(() => data.value.podUsage || { available: false, items: [] })
 
-const usageRows = computed(() => {
-  const u = podUsage.value
-  if (!u.available) return []
-  const rows = [
-    { key: 'cpu', label: 'CPU 用量', ...u.cpu },
-    { key: 'memory', label: '内存用量', ...u.memory },
-  ]
-  return rows.map(r => {
-    let color = '#94a3b8'
-    if (r.percent != null) color = r.percent >= 100 ? '#dc2626' : r.percent >= 85 ? '#d97706' : '#16a34a'
-    return {
-      ...r,
-      color,
-      percentText: r.percent == null ? '—' : `${r.percent}%`,
-      barPercent: Math.min(100, Math.max(0, r.percent || 0)),
-      requestsText: r.requests > 0 ? r.requestsText : '未声明',
-      limitsText: r.limits > 0 ? r.limitsText : '未声明',
-    }
-  })
-})
+function pctText(percent) {
+  return percent == null ? '—' : `${percent}%`
+}
+function pctClass(percent) {
+  if (percent == null) return 'kp-muted'
+  return percent >= 100 ? 'kp-danger' : percent >= 85 ? 'kp-warn' : 'kp-ok'
+}
 
 const phaseRows = computed(() => {
   const dist = data.value.podPhases || {}
@@ -309,22 +303,11 @@ onUnmounted(() => window.removeEventListener('kp:refresh', load))
 }
 .ns-link:hover { border-bottom-color: currentColor; }
 
-/* Pod 资源使用率 */
+/* Pod 资源使用率（按 Pod 逐个列出） */
 .usage-meta { font-size: 12px; font-weight: 400; margin-left: auto; }
-.usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
-.usage-item {
-  border: 1px solid var(--kp-border); border-radius: var(--kp-r-sm);
-  padding: 12px 14px; background: var(--kp-surface-2);
-}
-.usage-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
-.usage-label { font-size: 12px; color: var(--kp-muted); }
-.usage-value { font-size: 19px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
-.usage-sub {
-  display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 9px;
-  font-size: 11.5px; color: var(--kp-muted);
-}
-.usage-pct { margin-left: auto; font-weight: 600; }
-.usage-note { margin-top: 12px; font-size: 11.5px; line-height: 1.6; }
+.pod-cell-name { font-size: 12.5px; color: var(--kp-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pod-cell-ns { font-size: 11px; color: var(--kp-muted); margin-top: 1px; }
+.usage-note { margin-top: 10px; font-size: 11.5px; line-height: 1.6; }
 
 .phase-row {
   margin-bottom: 10px; padding: 6px 8px; margin-left: -8px; margin-right: -8px;

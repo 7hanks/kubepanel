@@ -54,43 +54,49 @@ function age(ts) {
   return `${Math.floor(s / 86400)}d`
 }
 
-/** Pod 资源使用率汇总：用量来自 metrics-server，分母是同一范围内 Pod 声明的 requests */
-function podUsageSummary(metricsItems, podList) {
-  const usage = { cpu: 0, mem: 0 }
+/** 每个 Pod 的资源使用率：用量来自 metrics-server，分母是该 Pod 自己声明的 requests */
+function podUsageRows(metricsItems, podList) {
+  const usageByPod = new Map()
   for (const m of metricsItems) {
+    const key = `${m.metadata?.namespace}/${m.metadata?.name}`
+    let cpu = 0
+    let mem = 0
     for (const c of m.containers || []) {
-      usage.cpu += parseCpu(c.usage?.cpu)
-      usage.mem += parseMem(c.usage?.memory)
+      cpu += parseCpu(c.usage?.cpu)
+      mem += parseMem(c.usage?.memory)
     }
+    usageByPod.set(key, { cpu, mem })
   }
-  const requests = { cpu: 0, mem: 0 }
-  const limits = { cpu: 0, mem: 0 }
-  for (const p of podList) {
-    for (const c of p.spec?.containers || []) {
-      requests.cpu += parseCpu(c.resources?.requests?.cpu)
-      requests.mem += parseMem(c.resources?.requests?.memory)
-      limits.cpu += parseCpu(c.resources?.limits?.cpu)
-      limits.mem += parseMem(c.resources?.limits?.memory)
+
+  const rows = podList.map(p => {
+    const usage = usageByPod.get(`${p.metadata?.namespace}/${p.metadata?.name}`)
+    const requests = (p.spec?.containers || []).reduce((acc, c) => {
+      acc.cpu += parseCpu(c.resources?.requests?.cpu)
+      acc.mem += parseMem(c.resources?.requests?.memory)
+      return acc
+    }, { cpu: 0, mem: 0 })
+    // 没声明 requests 时没有有意义的分母，返回 null 让前端显示「—」
+    const pct = (used, base) => (base > 0 ? Math.round((used / base) * 100) : null)
+    return {
+      namespace: p.metadata?.namespace,
+      name: p.metadata?.name,
+      measured: !!usage,
+      cpu: usage ? usage.cpu : null,
+      cpuText: usage ? fmtUsageCpu(usage.cpu) : '—',
+      cpuPercent: usage ? pct(usage.cpu, requests.cpu) : null,
+      memory: usage ? usage.mem : null,
+      memoryText: usage ? fmtBytes(usage.mem) : '—',
+      memoryPercent: usage ? pct(usage.mem, requests.mem) : null,
     }
-  }
-  // 没声明 requests 时没有有意义的分母，返回 null 让前端显示「—」
-  const pct = (used, base) => (base > 0 ? Math.round((used / base) * 100) : null)
+  })
+
+  // 用量高的排前面；没有指标的排最后
+  rows.sort((a, b) => (b.cpu ?? -1) - (a.cpu ?? -1))
   return {
-    sampled: metricsItems.length,
+    sampled: usageByPod.size,
     total: podList.length,
     timestamp: metricsItems[0]?.timestamp || null,
-    cpu: {
-      usage: usage.cpu, usageText: fmtUsageCpu(usage.cpu),
-      requests: requests.cpu, requestsText: fmtUsageCpu(requests.cpu),
-      limits: limits.cpu, limitsText: fmtUsageCpu(limits.cpu),
-      percent: pct(usage.cpu, requests.cpu),
-    },
-    memory: {
-      usage: usage.mem, usageText: fmtBytes(usage.mem),
-      requests: requests.mem, requestsText: fmtBytes(requests.mem),
-      limits: limits.mem, limitsText: fmtBytes(limits.mem),
-      percent: pct(usage.mem, requests.mem),
-    },
+    items: rows,
   }
 }
 
@@ -162,8 +168,8 @@ export async function overview(clusterId, namespace) {
     events: eventRows,
     podPhases,
     podUsage: podMetrics
-      ? { available: true, ...podUsageSummary(podMetrics.data?.items || [], podList) }
-      : { available: false, sampled: 0, total: podList.length },
+      ? { available: true, ...podUsageRows(podMetrics.data?.items || [], podList) }
+      : { available: false, sampled: 0, total: podList.length, items: [] },
     metricsAvailable: !!metrics,
     resourceTypes: discovery?.length || 0,
     partial: !nodes || !pods,
