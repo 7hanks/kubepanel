@@ -74,7 +74,7 @@ D:\dashboard\
 | 项 | 要求 |
 |---|---|
 | 主机 | 任意能跑 Docker 的 Linux（本文以 `/opt/kubepanel` 为安装目录，可自行替换） |
-| Docker | 20.10+，带 compose 插件（`docker compose version` 能出结果） |
+| Docker | 20.10+；compose 可选，插件版 `docker compose` 或独立版 `docker-compose` 都行，下文按你机器上的命令替换 |
 | 集群 | Kubernetes v1.24+，需要一个能读写的 kubeconfig（k3s / kubeadm / 云托管集群都行） |
 | 端口 | 容器内 8080；宿主机默认映射 **9090**，被占用就换（如 `-p 18080:8080`） |
 | 目录 | `/opt/kubepanel/clusters`（kubeconfig，**可写**）、`/opt/kubepanel/data`（账号与配置，**可写**），属主都要是 `10001` |
@@ -88,7 +88,7 @@ D:\dashboard\
 
 ## 3. 快速开始
 
-三步：准备目录 → 填 `.env` → `docker compose up -d --build`。
+三步：准备目录 → 填 `.env` → `docker compose up -d --build`（没有 compose 插件就用 `docker-compose`，或直接看 3.5 的 `docker run`）。
 密码和密钥只在 `.env` 里填一次，不写进命令行（`docker run -e` 的明文会留在 shell history 和 `docker inspect` 里）。
 
 ### 3.1 准备集群凭据目录
@@ -142,6 +142,8 @@ docker compose logs -f --tail 50
 ```
 
 端口、两个挂载、重启策略、健康检查都写在 `docker-compose.yml` 里；换机器时只需要改里面的宿主机端口（默认 `9090:8080`）。
+
+> 上面写的是 compose 插件版命令（`docker compose`）；机器上装的是独立版时，把空格换成连字符：`docker-compose up -d --build`。
 
 ### 3.5 不用 compose 时：docker run
 
