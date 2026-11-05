@@ -159,6 +159,65 @@ export async function podMetrics(clusterId, namespace) {
   }
 }
 
+/**
+ * 资源使用率 TOP N 的 Pod。
+ * 用量来自 metrics-server；使用率 = 用量 / 该 Pod 声明的 requests（没声明 requests 时为 null）。
+ */
+export async function topPods(clusterId, limit = 10) {
+  const [m, pods] = await Promise.all([
+    kubeRequest('GET', '/apis/metrics.k8s.io/v1beta1/pods', { clusterId, timeout: 6000 }),
+    kubeRequest('GET', '/api/v1/pods', { clusterId, timeout: 6000 }).catch(() => null),
+  ])
+
+  // 每个 Pod 的 requests 汇总，用来算「使用率」；拿不到 pods 列表时只显示用量
+  const requests = {}
+  for (const p of pods?.data?.items || []) {
+    const key = `${p.metadata?.namespace}/${p.metadata?.name}`
+    requests[key] = (p.spec?.containers || []).reduce((acc, c) => {
+      acc.cpu += parseCpu(c.resources?.requests?.cpu)
+      acc.mem += parseMem(c.resources?.requests?.memory)
+      return acc
+    }, { cpu: 0, mem: 0 })
+  }
+
+  const items = (m.data.items || []).map(p => {
+    const key = `${p.metadata?.namespace}/${p.metadata?.name}`
+    const usage = (p.containers || []).reduce((acc, c) => {
+      acc.cpu += parseCpu(c.usage?.cpu)
+      acc.mem += parseMem(c.usage?.memory)
+      return acc
+    }, { cpu: 0, mem: 0 })
+    const req = requests[key] || { cpu: 0, mem: 0 }
+    return {
+      namespace: p.metadata?.namespace,
+      name: p.metadata?.name,
+      cpu: usage.cpu,
+      cpuText: fmtCpu(usage.cpu),
+      cpuPercent: req.cpu > 0 ? Math.round((usage.cpu / req.cpu) * 100) : null,
+      memory: usage.mem,
+      memoryText: fmtBytes(usage.mem),
+      memoryPercent: req.mem > 0 ? Math.round((usage.mem / req.mem) * 100) : null,
+      requestsCpu: req.cpu,
+      requestsMemory: req.mem,
+      timestamp: p.timestamp,
+    }
+  })
+
+  items.sort((a, b) => b.cpu - a.cpu)
+  return {
+    items: items.slice(0, Math.max(1, Number(limit) || 10)),
+    total: items.length,
+    totalCpu: items.reduce((a, b) => a + b.cpu, 0),
+    totalMemory: items.reduce((a, b) => a + b.memory, 0),
+    timestamp: items[0]?.timestamp || null,
+  }
+}
+
+function fmtCpu(milli) {
+  if (!milli) return '0'
+  return milli >= 1000 ? `${(milli / 1000).toFixed(2)} core` : `${milli.toFixed(1)}m`
+}
+
 function parseCpu(v) {
   const s = String(v || '0')
   if (s.endsWith('n')) return Number(s.slice(0, -1)) / 1e6

@@ -294,7 +294,7 @@ cd /opt/kubepanel/app && docker compose up -d
 - 集群列表显示：状态、K8s 版本、节点数 / 命名空间数、认证方式、Context、来源；支持「测试连接」与「移除」。
 - 环境变量 / ServiceAccount / 只读挂载来源的集群不能在界面移除（会给出提示）。
 - 每个集群的资源发现缓存相互隔离；顶部下拉可直接切换集群，命名空间选择也会随之刷新。
-- **集群详情**：点卡片名称或「详情」按钮打开右侧抽屉，展示统计卡（节点 / 命名空间 / Pod / Deployment / Service / 异常 Pod）、基本信息（集群 ID、API Server、版本、平台、Context、认证方式、凭据来源、资源类型数、metrics-server 状态）、全部命名空间列表、节点状态表、API 组分布（按组统计资源类型数）与近期事件；底部可直接进入控制台 / 刷新详情 / 测试连接。该接口是平台级的，不会改变当前选中的集群。
+- **集群详情**：点卡片名称或「详情」按钮打开右侧抽屉，展示统计卡（节点 / 命名空间 / Pod / Deployment / Service / 异常 Pod）、基本信息（集群 ID、API Server、版本、平台、Context、认证方式、凭据来源、资源类型数、metrics-server 状态）、全部命名空间列表、节点状态表、资源使用率 TOP 10（实时用量取自 metrics-server，按 CPU 排序，使用率 = 用量 ÷ requests）与近期事件；底部可直接进入控制台 / 刷新详情 / 测试连接。该接口是平台级的，不会改变当前选中的集群。
 
 ---
 
@@ -304,7 +304,7 @@ cd /opt/kubepanel/app && docker compose up -d
 |---|---|---|
 | 切换集群 | `kubectl config use-context` | 集群列表点「进入控制台」，或顶部下拉直接切换 |
 | 改登录密码 | — | 右上角用户菜单 → 修改密码（校验当前密码；改完需重新登录，哈希存数据目录） |
-| 查看集群详情 | `kubectl cluster-info` + `get nodes` | 集群列表点卡片名称 /「详情」，抽屉里看容量统计、命名空间、节点、API 组分布、近期事件 |
+| 查看集群详情 | `kubectl cluster-info` + `get nodes` + `kubectl top pods` | 集群列表点卡片名称 /「详情」，抽屉里看容量统计、命名空间、节点、资源使用率 TOP 10、近期事件 |
 | 看集群状态 | `kubectl get nodes -o wide` | 集群概览：统计卡 + 节点状态 + 近期事件 + Pod 状态分布 |
 | 列资源 | `kubectl get pods -A` | 左侧菜单选 Pod，顶部切命名空间 / 标签筛选 / 名称搜索 |
 | 看详情 | `kubectl describe pod xxx` | 点名称进入详情：概览、标签注解、容器状态、Conditions、事件、关联 Pod |

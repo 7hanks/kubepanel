@@ -246,15 +246,6 @@ export async function clusterDetail(id) {
     discoverResources(false, c.id),
   ])
 
-  const groupCount = {}
-  for (const r of disc) {
-    const g = r.group || '(core / v1)'
-    groupCount[g] = (groupCount[g] || 0) + 1
-  }
-  const apiGroups = Object.entries(groupCount)
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
-
   return {
     id: c.id,
     name: c.name,
@@ -268,7 +259,6 @@ export async function clusterDetail(id) {
     platform: info.platform,
     resourceTypes: disc.length,
     namespaces: info.namespaces,
-    apiGroups,
     stat: ov.stat,
     nodes: ov.nodes,
     events: ov.events,

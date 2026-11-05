@@ -124,11 +124,41 @@
             <el-table-column prop="age" label="运行时间" width="100" />
           </el-table>
 
-          <div class="kp-section-title" style="margin-top:20px">API 组分布（{{ detail.apiGroups?.length || 0 }} 个组）</div>
-          <el-table :data="(detail.apiGroups || []).slice(0, 15)" size="small" border stripe>
-            <el-table-column prop="name" label="API 组" min-width="260" show-overflow-tooltip />
-            <el-table-column prop="count" label="资源类型数" width="130" />
-          </el-table>
+          <div class="kp-section-title" style="margin-top:20px">
+            资源使用率 TOP 10
+            <span v-if="top.timestamp" class="kp-muted" style="font-size:12px;font-weight:400;margin-left:8px">
+              {{ clock(top.timestamp) }} 采样 · 共 {{ top.total }} 个 Pod 有指标
+            </span>
+          </div>
+          <div v-loading="topLoading" style="min-height:72px">
+            <el-alert v-if="!topLoading && !top.available" type="info" show-icon :closable="false"
+              :title="top.message || '未安装 metrics-server，无法显示实时用量'" />
+            <el-table v-else :data="top.items" size="small" border stripe empty-text="暂无指标数据">
+              <el-table-column label="Pod" min-width="190" show-overflow-tooltip>
+                <template #default="{ row: p }"><span class="kp-mono">{{ p.name }}</span></template>
+              </el-table-column>
+              <el-table-column prop="namespace" label="命名空间" width="135" show-overflow-tooltip />
+              <el-table-column prop="cpuText" label="CPU 用量" width="105" align="right" />
+              <el-table-column label="CPU 使用率" width="105" align="right">
+                <template #default="{ row: p }">
+                  <span :class="p.cpuPercent == null ? 'kp-muted' : p.cpuPercent >= 100 ? 'kp-danger' : 'kp-ok'">
+                    {{ p.cpuPercent == null ? '—' : `${p.cpuPercent}%` }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="memoryText" label="内存用量" width="105" align="right" />
+              <el-table-column label="内存使用率" width="105" align="right">
+                <template #default="{ row: p }">
+                  <span :class="p.memoryPercent == null ? 'kp-muted' : p.memoryPercent >= 100 ? 'kp-danger' : 'kp-ok'">
+                    {{ p.memoryPercent == null ? '—' : `${p.memoryPercent}%` }}
+                  </span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <p v-if="!topLoading && top.available && top.items.length" class="kp-muted" style="font-size:12px;margin:8px 0 0">
+              用量来自 metrics-server（metrics.k8s.io）；使用率 = 用量 ÷ 该 Pod 声明的 requests，未声明 requests 显示「—」。
+            </p>
+          </div>
 
           <div class="kp-section-title" style="margin-top:20px">近期事件</div>
           <el-table :data="detail.events || []" size="small" border stripe max-height="240">
@@ -195,6 +225,14 @@ const clustersDirHint = '/app/kube/clusters'
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detail = ref(null)
+const top = ref({ available: true, items: [], total: 0 })
+const topLoading = ref(false)
+
+/** metrics-server 的时间戳转成本地时间 HH:mm:ss */
+function clock(ts) {
+  const d = new Date(ts)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('zh-CN', { hour12: false })
+}
 
 const healthyCount = computed(() => clusters.value.filter(c => c.healthy).length)
 
@@ -215,9 +253,16 @@ async function openDetail(c) {
   detailVisible.value = true
   detailLoading.value = true
   detail.value = null
+  top.value = { available: true, items: [], total: 0 }
+  topLoading.value = true
+  const topTask = api.topPods(c.id, 10)
+    .then(r => { top.value = r })
+    .catch(e => { top.value = { available: false, items: [], total: 0, message: e.message || '读取 metrics-server 失败' } })
+    .finally(() => { topLoading.value = false })
   try { detail.value = await api.clusterDetail(c.id) }
   catch (e) { detail.value = { name: c.name, error: e.message || '加载集群详情失败' } }
   finally { detailLoading.value = false }
+  await topTask
 }
 
 async function test(c) {

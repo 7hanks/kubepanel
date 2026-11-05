@@ -50,6 +50,9 @@ export const api = {
   removeCluster: id => http.delete(`/v1/clusters/${encodeURIComponent(id)}`),
   testCluster: id => http.post(`/v1/clusters/${encodeURIComponent(id)}/test`, {}),
   clusterDetail: id => http.get(`/v1/clusters/${encodeURIComponent(id)}/detail`),
+  // 平台级：集群详情抽屉里的资源使用率 TOP N（metrics-server）
+  topPods: (id, limit = 10) =>
+    http.get(`/v1/clusters/${encodeURIComponent(id)}/top-pods`, { params: { limit } }),
 
   // ---- 当前集群信息与资源 ----
   cluster: () => http.get('/v1/cluster'),

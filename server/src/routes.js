@@ -13,7 +13,7 @@ import {
   listRegistries, addRegistry, updateRegistry, removeRegistry, testRegistry,
   listProjects, listRepositories, listArtifacts, discoverRegistries,
 } from './registryService.js'
-import { monitorView, saveMonitor, testMonitor, listDashboards, podMetrics } from './monitorService.js'
+import { monitorView, saveMonitor, testMonitor, listDashboards, podMetrics, topPods } from './monitorService.js'
 
 const router = express.Router()
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
@@ -61,6 +61,15 @@ router.post('/v1/clusters/:id/test', wrap(async (req, res) => {
 }))
 router.get('/v1/clusters/:id/detail', wrap(async (req, res) => {
   res.json(await clusterDetail(req.params.id))
+}))
+// 平台级：集群详情抽屉里的「资源使用率 TOP 10」，走 metrics-server
+router.get('/v1/clusters/:id/top-pods', wrap(async (req, res) => {
+  const id = req.params.id
+  try {
+    res.json({ available: true, ...(await topPods(id, req.query.limit)) })
+  } catch (e) {
+    res.json({ available: false, items: [], total: 0, message: '未安装 metrics-server 或无访问权限' })
+  }
 }))
 router.delete('/v1/clusters/:id', wrap(async (req, res) => {
   res.json(removeCluster(req.params.id))
