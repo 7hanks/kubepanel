@@ -325,6 +325,18 @@ a { text-decoration: none; }
 .el-pagination { --el-pagination-button-bg-color: transparent; font-weight: 500; }
 .el-pagination.is-background .el-pager li:not(.is-disabled).is-active { background: var(--kp-brand); }
 .el-dropdown-menu__item { font-size: 13px; }
+
+/* ------------------------------------------------------------ 操作列「更多」下拉 */
+/* 下拉菜单被 teleport 到 body，scoped 样式够不到，故以下均为全局样式。
+   提高层级并加深投影，使菜单作为独立浮层清晰浮在表格（含 fixed 右列）之上，不与相邻行混在一起。 */
+.kp-row-actions { z-index: 3000 !important; box-shadow: var(--kp-shadow-lg); }
+/* 破坏性操作用警示色（禁用态不染色） */
+.kp-row-actions .el-dropdown-menu__item.kp-dd-danger:not(.is-disabled) { color: var(--kp-danger); }
+.kp-row-actions .el-dropdown-menu__item.kp-dd-danger:not(.is-disabled):hover,
+.kp-row-actions .el-dropdown-menu__item.kp-dd-danger:not(.is-disabled):focus {
+  color: var(--kp-danger);
+  background: var(--kp-danger-bg);
+}
 .el-progress-bar__outer { background: #eef1f6; }
 .el-divider--horizontal { border-color: var(--kp-border); margin: 16px 0; }
 .el-checkbox__label { font-size: 12.5px; }

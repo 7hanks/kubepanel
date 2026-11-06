@@ -33,21 +33,26 @@
             <el-button link type="primary" size="small" @click="viewYaml(row)">YAML</el-button>
             <el-button v-if="meta.kind === 'Pod'" link type="primary" size="small" @click="goLogs(row)">日志</el-button>
             <el-button v-if="meta.kind === 'Pod' && canUpdateRes" link type="primary" size="small" @click="goTerminal(row)">终端</el-button>
-            <el-dropdown trigger="click" @command="cmd => onCommand(cmd, row)">
+            <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
+            <el-dropdown
+              trigger="click" placement="bottom-end" :teleported="true" popper-class="kp-row-actions"
+              @command="cmd => onCommand(cmd, row)"
+            >
               <el-button link type="primary" size="small">更多<el-icon><ArrowDown /></el-icon></el-button>
               <template #dropdown>
                 <el-dropdown-menu>
-                  <el-dropdown-item command="detail">查看详情</el-dropdown-item>
-                  <el-dropdown-item command="yaml">查看 YAML</el-dropdown-item>
+                  <!-- 普通操作：低频、非破坏性（行内四入口已覆盖的高频动作不在此重复） -->
                   <el-dropdown-item command="editYaml" :disabled="!canUpdateRes">编辑 YAML</el-dropdown-item>
                   <el-dropdown-item v-if="scalable" command="scale" :disabled="!canUpdateRes">扩缩容</el-dropdown-item>
                   <el-dropdown-item v-if="restartable" command="restart" :disabled="!canUpdateRes">重启工作负载</el-dropdown-item>
                   <el-dropdown-item v-if="meta.kind === 'Node'" command="cordon" :disabled="!canUpdateRes">
                     {{ row.unschedulable ? '解除封锁 (uncordon)' : '封锁节点 (cordon)' }}
                   </el-dropdown-item>
-                  <el-dropdown-item v-if="meta.kind === 'Pod'" command="terminal" :disabled="!canUpdateRes">进入容器</el-dropdown-item>
-                  <el-dropdown-item v-if="meta.kind === 'Pod'" command="restartPod" divided :disabled="!canUpdateRes && !canDeleteRes">重启 Pod（删除并重建）</el-dropdown-item>
-                  <el-dropdown-item command="delete" divided :disabled="!canDeleteRes">删除</el-dropdown-item>
+                  <!-- 破坏性操作：分隔线分组 + 警示色，且均保留二次确认 -->
+                  <el-dropdown-item v-if="meta.kind === 'Pod'" command="restartPod" divided class="kp-dd-danger"
+                    :disabled="!canUpdateRes && !canDeleteRes">重启 Pod（删除并重建）</el-dropdown-item>
+                  <el-dropdown-item command="delete" :divided="meta.kind !== 'Pod'" class="kp-dd-danger"
+                    :disabled="!canDeleteRes">删除</el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
@@ -238,13 +243,9 @@ async function saveScale(replicas) {
 async function onCommand(cmd, row) {
   const m = meta.value
   const ns = nsPath(row.namespace)
-  const readOnly = cmd === 'detail' || cmd === 'yaml'
-  if (!readOnly && !writable.value) return ElMessage.warning('当前账号只有查看权限，不能执行该操作')
+  if (!writable.value) return ElMessage.warning('当前账号只有查看权限，不能执行该操作')
   try {
-    if (cmd === 'detail') return openDetail(row)
-    if (cmd === 'yaml') return viewYaml(row)
     if (cmd === 'editYaml') return editYaml(row)
-    if (cmd === 'terminal') return goTerminal(row)
     if (cmd === 'restartPod') {
       await ElMessageBox.confirm(
         `重启 Pod ${row.name} 会先删除该 Pod，再由其控制器（Deployment / ReplicaSet / DaemonSet 等）自动拉起新实例，等同于 kubectl delete pod。会有短暂中断；没有控制器的裸 Pod 会被拒绝。确认继续？`,
