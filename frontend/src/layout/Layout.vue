@@ -15,7 +15,7 @@
           <div
             v-for="it in g.items" :key="it.path"
             class="kp-nav-item" :class="{ active: isActive(it.path) }"
-            :title="collapsed ? it.label : ''" @click="go(it.path)"
+            :title="it.kind ? it.label + ' (' + it.kind + ')' : it.label" @click="go(it.path)"
           >
             <el-icon><component :is="it.icon || 'Document'" /></el-icon>
             <span>{{ it.label }}</span>
