@@ -2,35 +2,40 @@
   <div v-loading="loading">
     <div class="kp-stat-grid">
       <div class="kp-stat clickable" @click="jump('nodes')">
-        <div class="label">节点</div><div class="value">{{ stat.nodes || 0 }}</div>
+        <div class="label">节点 <span class="kp-scope">全集群</span></div><div class="value">{{ stat.nodes || 0 }}</div>
         <el-icon class="icon"><Monitor /></el-icon>
       </div>
       <div class="kp-stat clickable" @click="jump('namespaces')">
-        <div class="label">命名空间</div><div class="value">{{ stat.namespaces || 0 }}</div>
+        <div class="label">命名空间 <span class="kp-scope">全集群</span></div><div class="value">{{ stat.namespaces || 0 }}</div>
         <el-icon class="icon"><Collection /></el-icon>
       </div>
       <div class="kp-stat clickable" @click="jump('pods')">
-        <div class="label">Pod</div><div class="value">{{ stat.pods || 0 }}</div>
+        <div class="label">Pod <span class="kp-scope is-ns">{{ nsScopeLabel }}</span></div><div class="value">{{ stat.pods || 0 }}</div>
         <el-icon class="icon"><Box /></el-icon>
       </div>
       <div class="kp-stat clickable" @click="jump('deployments')">
-        <div class="label">Deployment</div><div class="value">{{ stat.deployments || 0 }}</div>
+        <div class="label">Deployment <span class="kp-scope is-ns">{{ nsScopeLabel }}</span></div><div class="value">{{ stat.deployments || 0 }}</div>
         <el-icon class="icon"><Grid /></el-icon>
       </div>
       <div class="kp-stat clickable" @click="jump('services')">
-        <div class="label">Service</div><div class="value">{{ stat.services || 0 }}</div>
+        <div class="label">Service <span class="kp-scope is-ns">{{ nsScopeLabel }}</span></div><div class="value">{{ stat.services || 0 }}</div>
         <el-icon class="icon"><Connection /></el-icon>
       </div>
       <div class="kp-stat">
-        <div class="label">异常 Pod</div>
+        <div class="label">异常 Pod <span class="kp-scope is-ns">{{ nsScopeLabel }}</span></div>
         <div class="value" :class="stat.unhealthyPods ? 'kp-danger' : 'kp-ok'">{{ stat.unhealthyPods || 0 }}</div>
         <el-icon class="icon"><Warning /></el-icon>
       </div>
     </div>
 
-    <div v-if="activeNs" class="kp-muted" style="margin:-4px 0 14px;font-size:12.5px">
-      当前只统计命名空间 <el-tag size="small" type="info" effect="plain">{{ activeNs }}</el-tag> 的 Pod / Deployment / Service / 事件
-      <el-button link type="primary" size="small" @click="store.setNamespace('all')">查看全部命名空间</el-button>
+    <div class="kp-muted" style="margin:-4px 0 14px;font-size:12.5px">
+      <template v-if="activeNs">
+        以下统计仅含命名空间 <el-tag size="small" type="info" effect="plain">{{ activeNs }}</el-tag> 的资源；节点数、命名空间数为全集群口径，不受命名空间筛选影响。节点状态与集群信息为集群级卡片，本视图已隐藏，切到「全部命名空间」可查看。
+        <el-button link type="primary" size="small" @click="store.setNamespace('all')">查看全部命名空间</el-button>
+      </template>
+      <template v-else>
+        当前为「全部命名空间」：以下统计均为全集群口径，节点状态与集群信息按集群展示。
+      </template>
     </div>
 
     <el-row :gutter="16">
@@ -75,7 +80,7 @@
           </template>
         </div>
 
-        <div class="kp-card" style="margin-bottom:16px">
+        <div v-if="!activeNs" class="kp-card" style="margin-bottom:16px">
           <div class="kp-section-title">节点状态</div>
           <el-table :data="data.nodes || []" size="small" border stripe @row-click="row => goNode(row)">
             <el-table-column prop="name" label="节点" min-width="110" show-overflow-tooltip />
@@ -126,7 +131,7 @@
       </el-col>
 
       <el-col :xs="24" :lg="10">
-        <div class="kp-card" style="margin-bottom:16px">
+        <div v-if="!activeNs" class="kp-card" style="margin-bottom:16px">
           <div class="kp-section-title">集群信息</div>
           <table class="kp-kv">
             <tr><td>API Server</td><td class="kp-mono">{{ cluster?.server || '-' }}</td></tr>
@@ -204,6 +209,7 @@ const data = ref({})
 const cluster = computed(() => store.cluster)
 const stat = computed(() => data.value.stat || {})
 const activeNs = computed(() => (store.namespace && store.namespace !== 'all' ? store.namespace : ''))
+const nsScopeLabel = computed(() => activeNs.value ? '本命名空间' : '全集群')
 
 /* ---- 每个 Pod 的资源使用率：用量 ÷ 该 Pod 的 requests ---- */
 const podUsage = computed(() => data.value.podUsage || { available: false, items: [] })
@@ -302,6 +308,17 @@ onUnmounted(() => window.removeEventListener('kp:refresh', load))
   border-bottom: 1px dashed transparent;
 }
 .ns-link:hover { border-bottom-color: currentColor; }
+
+/* 统计卡口径标注：集群级固定「全集群」，命名空间级随筛选状态变化 */
+.kp-scope {
+  display: inline-block; margin-left: 6px; padding: 1px 5px;
+  border-radius: 3px; font-size: 10px; font-weight: 500; line-height: 1.4;
+  vertical-align: 1px; color: var(--kp-muted);
+  background: var(--kp-surface-2); border: 1px solid var(--kp-border);
+}
+.kp-scope.is-ns {
+  color: var(--kp-brand); border-color: var(--kp-brand-border); background: #eef4ff;
+}
 
 /* Pod 资源使用率（按 Pod 逐个列出） */
 .usage-meta { font-size: 12px; font-weight: 400; margin-left: auto; }
