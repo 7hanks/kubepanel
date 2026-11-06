@@ -30,32 +30,35 @@
         </el-table-column>
         <el-table-column label="操作" :width="actionWidth" fixed="right" align="center">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="viewYaml(row)">YAML</el-button>
-            <el-button v-if="meta.kind === 'Pod'" link type="primary" size="small" @click="goLogs(row)">日志</el-button>
-            <el-button v-if="meta.kind === 'Pod' && canUpdateRes" link type="primary" size="small" @click="goTerminal(row)">终端</el-button>
-            <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
-            <el-dropdown
-              trigger="click" placement="bottom-end" :teleported="true" popper-class="kp-row-actions"
-              @command="cmd => onCommand(cmd, row)"
-            >
-              <el-button link type="primary" size="small">更多<el-icon><ArrowDown /></el-icon></el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <!-- 普通操作：低频、非破坏性（行内四入口已覆盖的高频动作不在此重复） -->
-                  <el-dropdown-item command="editYaml" :disabled="!canUpdateRes">编辑 YAML</el-dropdown-item>
-                  <el-dropdown-item v-if="scalable" command="scale" :disabled="!canUpdateRes">扩缩容</el-dropdown-item>
-                  <el-dropdown-item v-if="restartable" command="restart" :disabled="!canUpdateRes">重启工作负载</el-dropdown-item>
-                  <el-dropdown-item v-if="meta.kind === 'Node'" command="cordon" :disabled="!canUpdateRes">
-                    {{ row.unschedulable ? '解除封锁 (uncordon)' : '封锁节点 (cordon)' }}
-                  </el-dropdown-item>
-                  <!-- 破坏性操作：分隔线分组 + 警示色，且均保留二次确认 -->
-                  <el-dropdown-item v-if="meta.kind === 'Pod'" command="restartPod" divided class="kp-dd-danger"
-                    :disabled="!canUpdateRes && !canDeleteRes">重启 Pod（删除并重建）</el-dropdown-item>
-                  <el-dropdown-item command="delete" :divided="meta.kind !== 'Pod'" class="kp-dd-danger"
-                    :disabled="!canDeleteRes">删除</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+            <div class="kp-list-actions">
+              <ResourceActionButton @click="viewYaml(row)">YAML</ResourceActionButton>
+              <ResourceActionButton v-if="meta.kind === 'Pod'" @click="goLogs(row)">日志</ResourceActionButton>
+              <ResourceActionButton v-if="meta.kind === 'Pod' && canUpdateRes" @click="goTerminal(row)">终端</ResourceActionButton>
+              <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
+              <el-dropdown
+                trigger="click" placement="bottom-end" :teleported="true" popper-class="kp-row-actions"
+                :popper-options="{ modifiers: [{ name: 'flip', options: { fallbackPlacements: ['top-end'] } }] }"
+                @command="cmd => onCommand(cmd, row)"
+              >
+                <ResourceActionButton aria-label="更多操作" title="更多操作"><el-icon aria-hidden="true"><MoreFilled /></el-icon></ResourceActionButton>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <!-- 普通操作：低频、非破坏性（行内四入口已覆盖的高频动作不在此重复） -->
+                    <el-dropdown-item command="editYaml" :disabled="!canUpdateRes">编辑 YAML</el-dropdown-item>
+                    <el-dropdown-item v-if="scalable" command="scale" :disabled="!canUpdateRes">扩缩容</el-dropdown-item>
+                    <el-dropdown-item v-if="restartable" command="restart" :disabled="!canUpdateRes">重启工作负载</el-dropdown-item>
+                    <el-dropdown-item v-if="meta.kind === 'Node'" command="cordon" :disabled="!canUpdateRes">
+                      {{ row.unschedulable ? '解除封锁 (uncordon)' : '封锁节点 (cordon)' }}
+                    </el-dropdown-item>
+                    <!-- 破坏性操作：分隔线分组 + 警示色，且均保留二次确认 -->
+                    <el-dropdown-item v-if="meta.kind === 'Pod'" command="restartPod" divided class="kp-dd-danger"
+                      :disabled="!canUpdateRes && !canDeleteRes">重启 Pod（删除并重建）</el-dropdown-item>
+                    <el-dropdown-item command="delete" :divided="meta.kind !== 'Pod'" class="kp-dd-danger"
+                      :disabled="!canDeleteRes">删除</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
         <template #empty><div class="kp-empty">没有找到资源</div></template>
@@ -86,7 +89,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Filter, Plus, Refresh, ArrowDown } from '@element-plus/icons-vue'
+import { Search, Filter, Plus, Refresh, MoreFilled } from '@element-plus/icons-vue'
 import * as yaml from 'js-yaml'
 import api from '../api'
 import { store } from '../store'
@@ -96,6 +99,7 @@ import { cpath, nsPath } from '../utils/path'
 import { canCreate, canUpdate, canDelete } from '../utils/perm'
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
+import ResourceActionButton from '../components/ResourceActionButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -104,9 +108,9 @@ const columns = computed(() => columnsFor(meta.value.kind, meta.value.namespaced
 const scalable = computed(() => ['Deployment', 'StatefulSet', 'ReplicaSet'].includes(meta.value.kind))
 const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].includes(meta.value.kind))
 const actionWidth = computed(() => {
-  if (meta.value.kind === 'Pod') return 230
+  if (meta.value.kind === 'Pod') return 250
   if (scalable.value || restartable.value || meta.value.kind === 'Node') return 180
-  return 110
+  return 140
 })
 
 const loading = ref(false)
