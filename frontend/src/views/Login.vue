@@ -8,11 +8,31 @@
       <p class="login-sub">Kubernetes 可视化控制台</p>
       <el-form :model="form" @keyup.enter="submit">
         <el-form-item>
-          <el-input v-model="form.username" placeholder="用户名" size="large" :prefix-icon="User" autocomplete="username" />
+          <el-input
+            v-model="form.username"
+            placeholder="用户名"
+            size="large"
+            :prefix-icon="User"
+            autocomplete="username"
+            @input="errorMsg = ''"
+          />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="form.password" placeholder="密码" size="large" :prefix-icon="Lock" type="password" show-password autocomplete="current-password" />
+          <el-input
+            v-model="form.password"
+            placeholder="密码"
+            size="large"
+            :prefix-icon="Lock"
+            type="password"
+            show-password
+            autocomplete="current-password"
+            @input="errorMsg = ''"
+          />
         </el-form-item>
+        <div v-if="errorMsg" class="login-error" role="alert">
+          <el-icon><WarningFilled /></el-icon>
+          <span>{{ errorMsg }}</span>
+        </div>
         <el-button type="primary" size="large" style="width:100%" :loading="loading" @click="submit">登 录</el-button>
       </el-form>
       <div class="login-tip">
@@ -26,18 +46,23 @@
 <script setup>
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { User, Lock } from '@element-plus/icons-vue'
+import { WarningFilled, User, Lock } from '@element-plus/icons-vue'
 import api from '../api'
 import { saveSession, landingPath, canSee } from '../utils/perm'
 
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
+const errorMsg = ref('')
 const form = reactive({ username: 'admin', password: '' })
 
 async function submit() {
-  if (!form.username || !form.password) return ElMessage.warning('请输入用户名和密码')
+  if (loading.value) return
+  errorMsg.value = ''
+  if (!form.username || !form.password) {
+    errorMsg.value = '请输入用户名和密码'
+    return
+  }
   loading.value = true
   try {
     const data = await api.login(form.username, form.password)
@@ -48,7 +73,10 @@ async function submit() {
     const target = redirect && canForPath(redirect) ? redirect : landingPath()
     router.push(target)
   } catch (e) {
-    // 拦截器已提示
+    // 账号或密码错误（401）由后端给出文案，其他失败兜底成网络异常提示
+    errorMsg.value = e?.status
+      ? String(e.message || '登录失败，请重试').slice(0, 200)
+      : '无法连接服务器，请检查网络后重试'
   } finally {
     loading.value = false
   }

@@ -18,11 +18,16 @@ http.interceptors.response.use(
   err => {
     const status = err.response?.status
     const msg = err.response?.data?.message || err.message || '请求失败'
-    if (status === 401) {
-      localStorage.removeItem('kp_token')
-      if (!location.pathname.startsWith('/login')) location.href = '/login'
-    } else if (status !== 404) {
-      ElMessage.error(typeof msg === 'string' ? msg.slice(0, 300) : '请求失败')
+    // 登录接口的失败由登录页就地展示（401 即「用户名或密码错误」），
+    // 这里既不弹全局提示也不跳转，否则登录页的提示会被静默吞掉
+    const isLogin = String(err.config?.url || '').includes('/auth/login')
+    if (status === 401) localStorage.removeItem('kp_token')
+    if (!isLogin) {
+      if (status === 401) {
+        if (!location.pathname.startsWith('/login')) location.href = '/login'
+      } else if (status !== 404) {
+        ElMessage.error(typeof msg === 'string' ? msg.slice(0, 300) : '请求失败')
+      }
     }
     return Promise.reject({ status, message: msg, hint: err.response?.data?.hint, raw: err })
   }

@@ -121,6 +121,13 @@ a { text-decoration: none; }
 .login-title { font-size: 21px; font-weight: 650; letter-spacing: -.02em; color: var(--kp-text); }
 .login-sub { color: var(--kp-muted); margin: 0 0 28px 52px; font-size: 13px; }
 .login-tip { margin-top: 18px; font-size: 12px; color: var(--kp-faint); line-height: 1.7; }
+.login-error {
+  display: flex; align-items: flex-start; gap: 7px; margin: 2px 0 14px;
+  padding: 9px 12px; border-radius: var(--kp-r-md, 8px);
+  background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c;
+  font-size: 13px; line-height: 1.5;
+}
+.login-error .el-icon { margin-top: 2px; font-size: 15px; flex-shrink: 0; }
 .login-wrap .el-input__wrapper { box-shadow: 0 0 0 1px var(--kp-border-strong) inset; }
 .login-wrap .el-button--primary { height: 40px; font-size: 14px; }
 
