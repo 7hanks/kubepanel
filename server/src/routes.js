@@ -13,7 +13,7 @@ import {
   listRegistries, addRegistry, updateRegistry, removeRegistry, testRegistry,
   listProjects, listRepositories, listArtifacts, discoverRegistries,
 } from './registryService.js'
-import { monitorView, saveMonitor, testMonitor, listDashboards, podMetrics, topPods } from './monitorService.js'
+import { monitorView, createMonitor, updateMonitor, deleteMonitor, testMonitor, listDashboards, podMetrics, topPods } from './monitorService.js'
 import { canAny, OBJECTS, ACTIONS, PERMISSIONS, PERMISSION_LABEL } from './permissions.js'
 import { listRoles, createRole, updateRole, deleteRole } from './roleService.js'
 import { listUsers, createUser, updateUser, deleteUser, countUsersByRole } from './userService.js'
@@ -184,16 +184,23 @@ router.get('/v1/registries/:id/artifacts', requirePerm('registry:detail', 'regis
   res.json(await listArtifacts(req.params.id, String(req.query.project || ''), String(req.query.repository || '')))
 }))
 
-// ---------------- 监控（平台级，Grafana） ----------------
+// ---------------- 监控（平台级，Grafana，支持多实例 / 多环境） ----------------
+// 静态路径先注册，避免与 /:id 混淆
 router.get('/v1/monitor', requirePerm('monitor:list', 'monitor:detail'), wrap(async (req, res) => res.json(monitorView())))
-router.post('/v1/monitor', requirePerm('monitor:update', 'monitor:create'), wrap(async (req, res) => {
-  res.json(saveMonitor(req.body || {}))
+router.get('/v1/monitor/dashboards', requirePerm('monitor:detail', 'monitor:list'), wrap(async (req, res) => {
+  res.json(await listDashboards(req.query.id))
+}))
+router.post('/v1/monitor', requirePerm('monitor:create'), wrap(async (req, res) => {
+  res.status(201).json(createMonitor(req.body || {}))
 }))
 router.post('/v1/monitor/test', requirePerm('monitor:update', 'monitor:create'), wrap(async (req, res) => {
   res.json(await testMonitor(req.body || {}))
 }))
-router.get('/v1/monitor/dashboards', requirePerm('monitor:detail', 'monitor:list'), wrap(async (req, res) => {
-  res.json(await listDashboards())
+router.patch('/v1/monitor/:id', requirePerm('monitor:update'), wrap(async (req, res) => {
+  res.json(updateMonitor(req.params.id, req.body || {}))
+}))
+router.delete('/v1/monitor/:id', requirePerm('monitor:delete'), wrap(async (req, res) => {
+  res.json(deleteMonitor(req.params.id))
 }))
 
 // ---------------- 以下所有接口都需要选定集群 ----------------

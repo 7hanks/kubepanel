@@ -1,40 +1,27 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import http from 'node:http'
 import https from 'node:https'
 import { config } from './config.js'
 import { kubeRequest, KubeError } from './kube.js'
 
 /**
- * 监控：对接外部 Grafana（配置 + 仪表盘清单），并提供不依赖 Grafana 的内置指标。
+ * 监控：对接多个外部 Grafana 实例（按环境分组管理），并提供不依赖 Grafana 的内置指标。
  *
  * Grafana 只做「配置托管 + 链接/嵌入」，不代理它的所有请求：
  * 浏览器 iframe 直连 Grafana，避免把大流量和大响应体塞进本服务。
+ *
+ * 存储格式（monitor.json）：
+ *   { version: 2, instances: [ { id, name, environment, url, token, enabled, updatedAt } ] }
+ * 兼容旧的「单实例」格式 { url, token, enabled, updatedAt }：读取时自动迁移成一条实例。
  */
 
 const FILE = path.join(config.dataDir, 'monitor.json')
+const DEFAULT_ENV = '默认'
 
-const DEFAULTS = { url: '', token: '', enabled: false, updatedAt: null }
-
-export function readMonitor() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(FILE, 'utf8'))
-    return { ...DEFAULTS, ...raw }
-  } catch (e) {
-    return { ...DEFAULTS }
-  }
-}
-
-/** 给前端看的视图：token 只告知是否已配置 */
-export function monitorView() {
-  const m = readMonitor()
-  return {
-    url: m.url || '',
-    enabled: !!m.enabled,
-    hasToken: !!m.token,
-    updatedAt: m.updatedAt,
-    embedHint: m.url ? `${m.url.replace(/\/+$/, '')}/d/<uid>?kiosk&theme=light` : '',
-  }
+function newId() {
+  return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 function normalizeUrl(url) {
@@ -44,20 +31,148 @@ function normalizeUrl(url) {
   return u.replace(/\/+$/, '')
 }
 
-export function saveMonitor({ url, token, enabled, clearToken }) {
-  const cur = readMonitor()
-  const next = {
-    url: url !== undefined ? normalizeUrl(url) : cur.url,
-    // token 留空 = 保持原值；clearToken = 显式清空
-    token: token ? String(token) : (clearToken ? '' : cur.token),
-    enabled: enabled !== undefined ? !!enabled : cur.enabled,
-    updatedAt: new Date().toISOString(),
+/** 把任意输入归一成一条实例；url 为空视为无效（返回 null） */
+function normalizeInstance(x) {
+  if (!x || !x.id) return null
+  const url = normalizeUrl(x.url)
+  if (!url) return null
+  return {
+    id: String(x.id),
+    name: String(x.name || '').trim() || '未命名 Grafana',
+    environment: String(x.environment || '').trim() || DEFAULT_ENV,
+    url,
+    token: String(x.token || ''),
+    enabled: x.enabled !== false,
+    updatedAt: x.updatedAt || null,
   }
+}
+
+/**
+ * 读取存储并归一成 { instances }。
+ * 兼容旧的单实例配置：内存里迁移，不改写磁盘；首次写操作会落盘成新格式。
+ */
+function readStore() {
+  let raw = {}
+  try { raw = JSON.parse(fs.readFileSync(FILE, 'utf8')) } catch (e) { raw = {} }
+
+  if (Array.isArray(raw.instances)) {
+    return { instances: raw.instances.map(normalizeInstance).filter(Boolean) }
+  }
+  // 旧格式：只有一条连接。立即落盘成新格式，保证自动生成的 id 稳定
+  // （否则每次读取都换 id，前端拿到的 id 在下次 PATCH/DELETE 时会对不上）。
+  if (raw.url) {
+    const inst = normalizeInstance({
+      id: newId(),
+      name: '默认 Grafana',
+      environment: DEFAULT_ENV,
+      url: raw.url,
+      token: raw.token,
+      enabled: raw.enabled,
+      updatedAt: raw.updatedAt,
+    })
+    const store = { instances: inst ? [inst] : [] }
+    try { writeStore(store) } catch (e) { /* 数据目录只读时仅内存迁移，不影响读取 */ }
+    return store
+  }
+  return { instances: [] }
+}
+
+function writeStore(store) {
   fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 })
+  const payload = { version: 2, instances: store.instances }
   const tmp = `${FILE}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(next, null, 2), { mode: 0o600 })
+  fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), { mode: 0o600 })
   fs.renameSync(tmp, FILE)
   try { fs.chmodSync(FILE, 0o600) } catch (e) { /* ignore */ }
+}
+
+function getInstance(id) {
+  if (!id) return null
+  return readStore().instances.find(x => x.id === String(id)) || null
+}
+
+/** 给前端看的视图：隐藏 token，只告知是否已配置 */
+function instanceView(x) {
+  return {
+    id: x.id,
+    name: x.name,
+    environment: x.environment,
+    url: x.url,
+    enabled: x.enabled,
+    hasToken: !!x.token,
+    updatedAt: x.updatedAt,
+    embedHint: `${x.url}/d/<uid>?kiosk&theme=light`,
+  }
+}
+
+/**
+ * 列表视图。除了新的 instances 数组，仍返回单实例的顶层字段（url/enabled/hasToken/
+ * updatedAt/embedHint），兼容旧前端与冒烟脚本对 /v1/monitor 的读取。
+ */
+export function monitorView() {
+  const s = readStore()
+  const primary = s.instances.find(x => x.enabled) || s.instances[0]
+  const p = primary ? instanceView(primary) : null
+  return {
+    instances: s.instances.map(instanceView),
+    url: p?.url || '',
+    enabled: p?.enabled || false,
+    hasToken: p?.hasToken || false,
+    updatedAt: p?.updatedAt || null,
+    embedHint: p?.embedHint || '',
+  }
+}
+
+function requireName(name) {
+  const n = String(name || '').trim()
+  if (!n) throw new KubeError(400, '请填写实例名称')
+  return n
+}
+
+export function createMonitor(draft) {
+  const s = readStore()
+  const inst = normalizeInstance({
+    id: newId(),
+    name: requireName(draft?.name),
+    environment: draft?.environment,
+    url: draft?.url,
+    token: draft?.token || '',
+    enabled: draft?.enabled !== false,
+    updatedAt: new Date().toISOString(),
+  })
+  if (!inst) throw new KubeError(400, '请填写有效的 Grafana 地址')
+  s.instances.push(inst)
+  writeStore(s)
+  return monitorView()
+}
+
+export function updateMonitor(id, patch) {
+  const s = readStore()
+  const idx = s.instances.findIndex(x => x.id === String(id))
+  if (idx < 0) throw new KubeError(404, 'Grafana 实例不存在')
+  const cur = s.instances[idx]
+  const next = normalizeInstance({
+    ...cur,
+    name: patch.name !== undefined ? requireName(patch.name) : cur.name,
+    environment: patch.environment !== undefined ? patch.environment : cur.environment,
+    url: patch.url !== undefined ? patch.url : cur.url,
+    // token 留空 = 保持原值；clearToken = 显式清空
+    token: patch.token ? String(patch.token) : (patch.clearToken ? '' : cur.token),
+    enabled: patch.enabled !== undefined ? !!patch.enabled : cur.enabled,
+    updatedAt: new Date().toISOString(),
+  })
+  if (!next) throw new KubeError(400, '请填写有效的 Grafana 地址')
+  s.instances[idx] = next
+  writeStore(s)
+  return monitorView()
+}
+
+export function deleteMonitor(id) {
+  const s = readStore()
+  const before = s.instances.length
+  s.instances = s.instances.filter(x => x.id !== String(id))
+  if (s.instances.length === before) throw new KubeError(404, 'Grafana 实例不存在')
+  writeStore(s)
   return monitorView()
 }
 
@@ -96,10 +211,15 @@ function grafanaRequest(cfg, reqPath, { timeout = 10000 } = {}) {
   })
 }
 
+/** 测试连接：可测某条已保存实例（id），也可测草稿（url + token） */
 export async function testMonitor(draft) {
-  const cfg = {
-    url: normalizeUrl(draft?.url ?? readMonitor().url),
-    token: draft?.token || readMonitor().token,
+  let cfg
+  if (draft?.id) {
+    const inst = getInstance(draft.id)
+    if (!inst) throw new KubeError(404, 'Grafana 实例不存在')
+    cfg = { url: inst.url, token: draft.token || inst.token }
+  } else {
+    cfg = { url: normalizeUrl(draft?.url), token: draft?.token || '' }
   }
   if (!cfg.url) throw new KubeError(400, '请先填写 Grafana 地址')
   const started = Date.now()
@@ -113,11 +233,15 @@ export async function testMonitor(draft) {
   return { ok: true, version, dashboards, ms: Date.now() - started, url: cfg.url }
 }
 
-export async function listDashboards() {
-  const m = readMonitor()
-  if (!m.url) throw new KubeError(400, '尚未配置 Grafana 地址')
-  const list = await grafanaRequest(m, '/api/search?type=dash-db&limit=1000')
-  const base = m.url.replace(/\/+$/, '')
+/** 列出指定实例的仪表盘；未指定时取第一个启用的实例 */
+export async function listDashboards(id) {
+  const s = readStore()
+  const inst = (id && s.instances.find(x => x.id === String(id)))
+    || s.instances.find(x => x.enabled)
+    || s.instances[0]
+  if (!inst) throw new KubeError(400, '尚未配置 Grafana 实例')
+  const list = await grafanaRequest(inst, '/api/search?type=dash-db&limit=1000')
+  const base = inst.url.replace(/\/+$/, '')
   return (Array.isArray(list) ? list : []).map(d => ({
     uid: d.uid,
     title: d.title,

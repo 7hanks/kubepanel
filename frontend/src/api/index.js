@@ -112,11 +112,13 @@ export const api = {
   registryArtifacts: (id, project, repository) =>
     http.get(`/v1/registries/${encodeURIComponent(id)}/artifacts`, { params: { project, repository } }),
 
-  // ---- 监控（平台级 + 集群级指标） ----
+  // ---- 监控（平台级，多 Grafana 实例 + 集群级指标） ----
   monitor: () => http.get('/v1/monitor'),
-  saveMonitor: body => http.post('/v1/monitor', body),
+  createMonitor: body => http.post('/v1/monitor', body),
+  updateMonitor: (id, body) => http.patch(`/v1/monitor/${encodeURIComponent(id)}`, body),
+  removeMonitor: id => http.delete(`/v1/monitor/${encodeURIComponent(id)}`),
   testMonitor: body => http.post('/v1/monitor/test', body),
-  dashboards: () => http.get('/v1/monitor/dashboards'),
+  dashboards: id => http.get('/v1/monitor/dashboards', { params: id ? { id } : {} }),
 }
 
 // ---- SSE / WebSocket 地址（浏览器原生 API，不走 axios）----
