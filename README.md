@@ -2,7 +2,7 @@
 
 > 轻量级多集群 Kubernetes 可视化控制台 —— 用浏览器完成原本需要 `kubectl` 的操作。
 
-![KubePanel 集群概览](deploy/screenshots/v14-nav-console.png)
+![KubePanel 集群概览](deploy/screenshots/console-overview.png)
 
 KubePanel 把 Vue 3 前端与 Node.js/Express 后端打进**一个 Docker 镜像**，无需数据库、无需 Nginx。登录后先看到集群列表，进入某个集群再浏览和操作资源；每个集群持有独立 kubeconfig，资源通过 API Discovery 动态发现，内置资源与 CRD 用同一套通用表格呈现。
 
