@@ -13,4 +13,13 @@ CODEBUDDY.md
 .local/
 attachments/
 shots/
+.review/
+review/
+.planning/
 description.md
+overview.md
+# 任务草稿 / 需求描述临时文件（不入库）
+qc-*.md
+quick-*.md
+quickcreate-*.md
+steps-*.json
