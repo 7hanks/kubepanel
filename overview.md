@@ -6,6 +6,21 @@
 
 ---
 
+## 2026-11-09 运维修复：健康检查语义 + 镜像重建
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 容器 `Up 2 days (unhealthy)`，`FailingStreak 7136`；`/healthz` 返回 503 `partially-unreachable` |
+| 根因（决定性证据） | 火山云集群 API Server `https://192.168.111.252:6443` 直连 4s 超时 `HTTP=000`；同机对照 dev `https://172.16.0.3:6443` 9.9ms `HTTP=200`。网络不可达，不是凭据错误、也不是服务故障 |
+| 代码改动 | `server/index.js` 的 `/healthz` 改为 **liveness 语义**：HTTP 恒 200、`status: "ok"` 只表示进程存活；集群连通性另放 `kube` / `healthyClusters` / `totalClusters` / `clusters[]`。探测超时 3000ms → 2000ms，避免 HEALTHCHECK（5s）被拖垮 |
+| 构建前核对 | 本地 `D:\dashboard` 与服务器 `/opt/kubepanel/app` 源码逐文件哈希一致；Multica 的 `ResourceActionButton.vue`、`ResourceList.vue`、`README.md` 改动本地已包含，因此全量同步不会覆盖他人改动 |
+| 部署 | `docker build -t kubepanel:1.4.0 .` 成功（新镜像 `bd743b49c3e6`，旧 `a324bd9bc65b` 保留可回滚）；带全参数重建容器（9090:8080、`DATA_DIR`、`DASHBOARD_SECRET`、两个 bind 挂载） |
+| 验证 | `/healthz` HTTP 200 → 容器 `healthy`；首页 200；登录接口错误密码正确返回 401；前端产物、`data/` 五个 JSON、`clusters/` 两个 kubeconfig 均完好 |
+| 文档 | `README.md`「常见问题」补两条：healthz / `partially-unreachable` 排查（附可直接复制的批量连通性命令）、冒烟脚本需显式传当前密码 |
+| 遗留 | 31 项冒烟需用户提供界面自定义后的当前密码；火山云集群需打通网络或在界面移除，否则 `kube` 会持续显示降级 |
+
+---
+
 ## 本轮迭代（v1.4.0）
 
 用户一次性提了 5 件事，全部落地并部署：

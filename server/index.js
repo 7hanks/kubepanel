@@ -26,12 +26,16 @@ try {
 }
 
 // 健康检查：不要求认证，供 Docker HEALTHCHECK / K8s probe 使用
+// 探针只判定「本服务进程是否可用」。导入的集群属于外部依赖，
+// 单个集群 API Server 超时属于业务降级，不应把容器标成 unhealthy
+// （否则会触发无意义的重启与告警，且此时集群列表页仍需可用来修复凭据）。
+// 各集群连通性照常完整上报，便于监控与排障。
 let healthCache = { at: 0, states: [] }
 app.get('/healthz', async (req, res) => {
   if (Date.now() - healthCache.at > 10000) {
     const states = await Promise.all(listClusters().map(async c => {
       try {
-        await kubeRequest('GET', '/version', { timeout: 3000, clusterId: c.id })
+        await kubeRequest('GET', '/version', { timeout: 2000, clusterId: c.id })
         return { id: c.id, name: c.name, ok: true }
       } catch (e) {
         return { id: c.id, name: c.name, ok: false, error: e.message }
@@ -40,11 +44,18 @@ app.get('/healthz', async (req, res) => {
     healthCache = { at: Date.now(), states }
   }
   const states = healthCache.states
-  const ok = states.length > 0 && states.every(s => s.ok)
-  res.status(ok ? 200 : 503).json({
-    status: ok ? 'ok' : 'degraded',
+  const reachable = states.filter(s => s.ok).length
+  const kubeStatus = states.length === 0 ? 'unconfigured'
+    : reachable === 0 ? 'unreachable'
+      : reachable === states.length ? 'connected'
+        : 'partially-unreachable'
+  res.status(200).json({
+    // status 只表示服务进程存活（liveness）；集群连通性看 kube / clusters
+    status: 'ok',
     service: 'kubepanel', version: '1.4.0',
-    kube: states.length === 0 ? 'unconfigured' : (ok ? 'connected' : 'partially-unreachable'),
+    kube: kubeStatus,
+    healthyClusters: reachable,
+    totalClusters: states.length,
     clusters: states,
     warnings: boot.warnings.length ? boot.warnings : undefined,
   })

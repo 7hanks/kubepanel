@@ -124,3 +124,9 @@ cd frontend && npm run build                  # 构建验证
 - **CPU / 内存显示配额而非实时用量**：集群未安装 metrics-server。
 - **改了源码没生效**：前端改动同样要重建镜像（`frontend/dist` 是构建阶段产物），不要 `docker exec` 进容器改代码。
 - **日志流不实时 / Web 终端连不上**：反代需 `proxy_buffering off;` 并允许 WebSocket 升级；终端还需要 `pods/exec` 的 `create` 权限。
+- **容器显示 `unhealthy` / `partially-unreachable`**：`/healthz` 的 `status` 只表示服务进程存活（liveness），HTTP 恒为 200；导入的集群属于外部依赖，某个 API Server 连不上时仅体现在 `kube` 与 `clusters[].ok=false`，不会让容器被标成不健康（否则会触发无意义重启，且此时仍需能进集群列表页修凭据）。排查：`curl -s --noproxy '*' http://127.0.0.1:9090/healthz` 看哪个集群 `ok:false`，再逐个测 kubeconfig 里的 `server` 是否可达（`000` 即网络不通，不是凭据问题）：
+
+```bash
+for f in /opt/kubepanel/clusters/*.yaml; do addr=$(grep -m1 'server:' "$f" | awk '{print $2}'); printf '%s %s ' "$(basename "$f")" "$addr"; curl -k -s --noproxy '*' -m 4 -o /dev/null -w '%{http_code}\n' "$addr/version" || true; done
+```
+- **冒烟脚本报「缺少 DASHBOARD_PASSWORD」**：脚本不读 `.env`；界面改过密码后 `DASHBOARD_PASSWORD` 环境变量已失效，须显式传当前密码：`DASHBOARD_PASSWORD='当前密码' bash /opt/kubepanel/smoke-test.sh`。
