@@ -4,6 +4,8 @@
 
 ![KubePanel 集群概览](deploy/screenshots/console-overview.png)
 
+界面示例使用测试数据，展示异常优先级、资源用量与节点诊断。
+
 ## 功能与边界
 
 - 多集群导入、切换、连通性检查，API Discovery 驱动内置资源和 CRD 浏览。

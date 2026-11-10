@@ -50,7 +50,7 @@ print(json.dumps({'revision':os.environ['FAKE_REVISION'],'sourceManifestSha256':
 
 @unittest.skipUnless(os.name == 'posix' and shutil.which('bash'), 'Linux deployment behavior test')
 class ReleaseTests(unittest.TestCase):
-    def run_release(self, fail=False, existing=True, rename_fail=False, hook_fail=False, external_env=False):
+    def run_release(self, fail=False, existing=True, rename_fail=False, hook_fail=False, external_env=False, source_link=False, publish_fail=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             source, base, commands, state = [root / name for name in ['source', 'base', 'bin', 'state']]
@@ -64,6 +64,13 @@ class ReleaseTests(unittest.TestCase):
             (base / '.env').write_text('DASHBOARD_PASSWORD=never-log-this\n')
             selected_env = root / 'private.env' if external_env else base / '.env'
             selected_env.write_text('DASHBOARD_PASSWORD=never-log-this\n')
+            old_source = base / 'old-source'
+            old_source.mkdir()
+            (old_source / 'preserved.txt').write_text('old source')
+            if source_link:
+                (base / 'app').symlink_to(old_source, target_is_directory=True)
+            else:
+                shutil.copytree(old_source, base / 'app')
             if existing:
                 (state / 'kubepanel').write_text('true')
             sha = 'a' * 40
@@ -75,6 +82,10 @@ class ReleaseTests(unittest.TestCase):
             hook = root / 'candidate-check'
             hook.write_text('#!/bin/sh\nprintf "%s" "$1" > "$FAKE_STATE/hook-url"\nexit ' + ('1' if hook_fail else '0') + '\n')
             hook.chmod(0o700)
+            if publish_fail:
+                mover = commands / 'mv'
+                mover.write_text('#!/bin/sh\ncase "$*" in *".app-next-"*) exit 1;; esac\nexec /bin/mv "$@"\n')
+                mover.chmod(0o700)
             env = {**os.environ, 'PATH': str(commands) + os.pathsep + os.environ['PATH'], 'BASE_DIR': str(base), 'BACKUP_ROOT': str(root / 'backups'), 'ENV_FILE': str(selected_env), 'CANDIDATE_CHECK': str(hook), 'FAKE_STATE': str(state), 'FAKE_REVISION': sha, 'FAKE_MANIFEST': checksum, 'FAIL_PRODUCTION': str(int(fail)), 'FAIL_RENAME': str(int(rename_fail))}
             process = subprocess.run(['bash', str(source / 'deploy' / 'release.sh'), str(source)], env=env, text=True, capture_output=True, timeout=40)
             self.assertNotIn('never-log-this', process.stdout + process.stderr)
@@ -86,8 +97,9 @@ class ReleaseTests(unittest.TestCase):
                 self.assertTrue(saved, 'Selected external environment must be backed up')
                 self.assertEqual(saved[0].read_text(), 'DASHBOARD_PASSWORD=never-log-this\n')
                 self.assertEqual(saved[0].stat().st_mode & 0o777, 0o600)
-            if fail or rename_fail or hook_fail:
+            if fail or rename_fail or hook_fail or publish_fail:
                 self.assertNotEqual(process.returncode, 0)
+                self.assertEqual((base / 'app' / 'preserved.txt').read_text(), 'old source')
                 if existing:
                     self.assertEqual((state / 'kubepanel').read_text(), 'true')
                     if fail:
@@ -104,6 +116,11 @@ class ReleaseTests(unittest.TestCase):
                 production = next(event for event in events if event[0] == 'run' and event[event.index('--name') + 1] == 'kubepanel')
                 self.assertIn(str(base / 'data') + ':/app/data', production)
                 self.assertEqual((state / 'hook-url').read_text(), 'http://127.0.0.1:18080')
+                self.assertTrue((base / 'app').is_symlink())
+                self.assertEqual((base / 'app').resolve(), base / 'releases' / sha)
+                self.assertEqual(manifest.verify(base / 'app'), checksum)
+                if not source_link:
+                    self.assertEqual(next(base.glob('source-rollback-*')).joinpath('preserved.txt').read_text(), 'old source')
             if hook_fail:
                 self.assertEqual((state / 'hook-url').read_text(), 'http://127.0.0.1:18080')
                 self.assertFalse(any(event[0] == 'rename' for event in events))
@@ -125,6 +142,12 @@ class ReleaseTests(unittest.TestCase):
 
     def test_failed_candidate_hook_does_not_promote_production(self):
         self.run_release(hook_fail=True)
+
+    def test_subsequent_release_atomically_replaces_source_symlink(self):
+        self.run_release(source_link=True)
+
+    def test_failed_source_publication_restores_original_directory_and_container(self):
+        self.run_release(publish_fail=True)
 
 
 if __name__ == '__main__':

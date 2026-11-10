@@ -2,7 +2,7 @@
 
 ## 目录与版本
 
-运行数据固定放在 `/opt/kubepanel/data`、`/opt/kubepanel/clusters`；源码可在 `/opt/kubepanel/app`。正式发布保留不可变 `/opt/kubepanel/releases/<完整Git SHA>`。备份默认在 `/opt/kubepanel-backups/<UTC时间>-<随机后缀>`，不在源码、构建目录或运行数据目录内。
+运行数据固定放在 `/opt/kubepanel/data`、`/opt/kubepanel/clusters`；`/opt/kubepanel/app` 始终指向当前已验证的不可变 `/opt/kubepanel/releases/<完整Git SHA>`。首次发布将原 app 目录保留为私有 `source-rollback-<UTC>-<PID>`，后续原子切换符号链接。备份默认在 `/opt/kubepanel-backups/<UTC时间>-<随机后缀>`，不在源码、构建目录或运行数据目录内。
 
 每个纯源码包含 `RELEASE`（完整 40 位 Git revision）和 `SHA256SUMS`（所有源文件的 SHA-256，排除这两个元数据文件）。`manifest.py verify` 同时拒绝文件变化、缺失、额外文件及路径穿越。服务器没有 `.git` 也可核验。不得手工 `docker exec` 修改代码。
 
@@ -39,7 +39,7 @@ sudo BASE_DIR=/opt/kubepanel CONTAINER=kubepanel bash deploy/backup.sh
 
 ## 发布脚本
 
-Linux 主机需要 root、Docker（含 BuildKit）、Bash、Python 3.8+、curl、flock；服务器能访问锁定依赖的 npm 仓库及基础镜像。环境文件推荐放在 `/opt/kubepanel/.env`，默认也兼容现有 `/opt/kubepanel/app/.env`，或通过 `ENV_FILE` 显式指定。首次部署显式设置强密码；数据卷属主为 10001。
+Linux 主机需要 root、Docker（含 BuildKit）、Bash、Python 3.8+、curl、flock；服务器能访问锁定依赖的 npm 仓库及基础镜像。环境文件放在 `/opt/kubepanel/.env`，或通过 `ENV_FILE` 指定源码目录之外的私有文件。旧配置若在 app/.env，首次升级先私密备份并复制到 base/.env；发布器拒绝把仍依赖 app 内配置的实例切换到纯源码链接。首次部署显式设置强密码；数据卷属主为 10001。
 
 ```bash
 sudo BASE_DIR=/opt/kubepanel ENV_FILE=/opt/kubepanel/.env \

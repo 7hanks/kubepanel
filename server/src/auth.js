@@ -146,4 +146,3 @@ export function activeStreamAccount(account) {
   return boundAccount(sessionById(account.sessionId))
 }
 export function verifyWsToken(url){return !!accountFromWsToken(url)}
-

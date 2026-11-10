@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Standalone Docker deployment. Root privileges, Docker, Python 3.8+, curl, flock.
-# Source must be a clean manifest.py stage output. Never modifies source/runtime dirs.
+# Source must be a clean manifest.py stage output. Publishes app as a release symlink.
 set -Eeuo pipefail
 umask 077
 source_dir=$(realpath -e -- "${1:?Usage: release.sh SOURCE_DIR}")
@@ -27,6 +27,8 @@ image="$IMAGE_REPOSITORY:$revision"
 destination="$base/releases/$revision"
 [[ ! -e "$destination" ]] || { echo 'Immutable release already exists; use a new revision' >&2; exit 2; }
 [[ -f "$ENV_FILE" && -d "$base/data" && -d "$base/clusters" ]] || { echo 'Missing environment or runtime directories' >&2; exit 2; }
+[[ $(realpath -e -- "$ENV_FILE") != "$base/app/"* ]] || { echo 'Move ENV_FILE outside app before publishing the source pointer' >&2; exit 2; }
+[[ ! -e "$base/app" || -d "$base/app" ]] || { echo 'app must be a directory or directory symlink' >&2; exit 2; }
 [[ "$source_dir" != "$base/data"* && "$source_dir" != "$base/clusters"* ]] || exit 2
 cp -a -- "$source_dir" "$destination"
 python3 "$destination/deploy/manifest.py" verify "$destination" >/dev/null
@@ -42,10 +44,27 @@ old_renamed=0
 old_was_running=0
 new_started=0
 success=0
+source_archive="$base/source-rollback-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+source_moved=0
+source_published=0
+old_source_link=''
+if [[ -L "$base/app" ]]; then old_source_link=$(readlink -- "$base/app"); fi
 cleanup() {
   status=$?
   trap - EXIT INT TERM
   docker rm -f "$candidate" >/dev/null 2>&1 || true
+  if ((success == 0)); then
+    if ((source_published)); then
+      if [[ -n "$old_source_link" ]]; then
+        ln -s -- "$old_source_link" "$base/.app-restore-$$"
+        mv -Tf -- "$base/.app-restore-$$" "$base/app"
+      else
+        rm -f -- "$base/app"
+      fi
+    fi
+    if ((source_moved)); then mv -- "$source_archive" "$base/app"; fi
+  fi
+  rm -f -- "$base/.app-next-$$"
   if ((success == 0 && new_started)); then
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   fi
@@ -103,5 +122,15 @@ docker run -d --name "$CONTAINER" --restart unless-stopped --cap-drop ALL --secu
   -e BUILD_REVISION="$revision" -e SOURCE_MANIFEST_SHA256="$manifest_sha" \
   -p "$BIND_ADDRESS:$HOST_PORT:8080" -v "$base/data:/app/data" -v "$base/clusters:/app/kube/clusters" "$image" >/dev/null
 wait_ready "http://127.0.0.1:$HOST_PORT"
+# Publish only after the running image is verified. Keep the legacy source privately
+# for recovery; subsequent releases atomically replace this symlink.
+ln -s -- "$destination" "$base/.app-next-$$"
+if [[ -d "$base/app" && ! -L "$base/app" ]]; then
+  mv -- "$base/app" "$source_archive"
+  source_moved=1
+  chmod 700 "$source_archive"
+fi
+source_published=1
+mv -Tf -- "$base/.app-next-$$" "$base/app"
 success=1
 printf 'Released %s\nSource: %s\nBackup: %s\nRollback container: %s\n' "$revision" "$destination" "$backup" "$previous"
