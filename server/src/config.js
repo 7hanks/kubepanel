@@ -12,10 +12,19 @@ function randomSecret(n = 24) {
 
 const prod = process.env.NODE_ENV === 'production'
 
-// 未显式设置密码时自动生成随机密码并打印到启动日志，避免固定弱口令上线
-const generatedPassword = !process.env.DASHBOARD_PASSWORD ? randomSecret(8) : null
-
 const dataDir = process.env.DATA_DIR || path.join(serverRoot, 'data')
+// First-run credential is private and stable across restarts, never printed.
+function initialPassword() {
+  if (process.env.DASHBOARD_PASSWORD) return null
+  const file = path.join(dataDir, '.initial-password')
+  try { return fs.readFileSync(file,'utf8').trim() }
+  catch(error) { if(error.code !== 'ENOENT') throw new Error('初始凭据文件无法读取') }
+  const value = randomSecret(16)
+  fs.mkdirSync(dataDir,{recursive:true,mode:0o700})
+  fs.writeFileSync(file,value,{mode:0o600,flag:'wx'})
+  return value
+}
+const generatedPassword = initialPassword()
 
 /**
  * JWT 签名密钥：DASHBOARD_SECRET 未设置时，在数据目录生成一次并落盘复用。
@@ -26,24 +35,30 @@ function loadOrCreateSecret(dir) {
   try {
     const saved = fs.readFileSync(file, 'utf8').trim()
     if (saved.length >= 32) return { value: saved, source: 'file' }
+    throw new Error('密钥长度无效')
   } catch (e) {
-    if (e.code !== 'ENOENT') console.warn(`[KubePanel] 读取密钥文件失败（${file}）：${e.message}`)
+    if (e.code !== 'ENOENT') throw new Error('持久化密钥无法读取，拒绝替换现有密钥，请恢复备份')
   }
   const value = randomSecret(32)
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-    fs.writeFileSync(file, value, { mode: 0o600 })
+    fs.writeFileSync(file, value, { mode: 0o600, flag: 'wx' })
     try { fs.chmodSync(file, 0o600) } catch (e) { /* 非 POSIX 文件系统忽略 */ }
     return { value, source: 'file' }
   } catch (e) {
-    console.warn(`[KubePanel] 密钥无法写入数据目录（${file}）：${e.message}；本次使用临时密钥，重启后登录状态会失效`)
-    return { value, source: 'memory' }
+    throw new Error('密钥无法写入持久化目录，请检查数据卷权限')
   }
 }
 
 const savedSecret = process.env.DASHBOARD_SECRET ? null : loadOrCreateSecret(dataDir)
+const proxySetting = String(process.env.TRUST_PROXY || '').trim()
+const trustProxy = ['', 'false', '0', 'no'].includes(proxySetting) ? false
+  : proxySetting === 'true' ? true : /^\d+$/.test(proxySetting) ? Number(proxySetting) : proxySetting
 
 export const config = {
+  version: '1.5.0',
+  revision: process.env.BUILD_REVISION || 'development',
+  sourceManifestSha256: process.env.SOURCE_MANIFEST_SHA256 || '',
   prod,
   port: Number(process.env.PORT || 8080),
   host: process.env.HOST || '0.0.0.0',
@@ -56,6 +71,10 @@ export const config = {
   secretPersisted: savedSecret?.source === 'file',
   authEnabled: process.env.DASHBOARD_AUTH_ENABLED !== 'false',
   tokenTtl: process.env.DASHBOARD_TOKEN_TTL || '12h',
+  cookieSecure: process.env.DASHBOARD_COOKIE_SECURE === 'true',
+  trustProxy,
+  terminalIdleMs: Math.max(60000, Number(process.env.TERMINAL_IDLE_MS) || 15*60*1000),
+  terminalMaxMs: Math.max(60000, Number(process.env.TERMINAL_MAX_MS) || 60*60*1000),
   kubeconfigPath: process.env.KUBECONFIG || '',
   // 可写目录：每个 kubeconfig 文件 = 一个（或多个 context）集群，界面添加的集群也落在这里
   clustersDir: process.env.KUBE_CLUSTERS_DIR || '/app/kube/clusters',

@@ -1,4 +1,6 @@
 import { kubeStream, KubeError } from './kube.js'
+import { authorizeStream, watchStream } from './streamSecurity.js'
+import { StringDecoder } from 'node:string_decoder'
 
 /**
  * GET /api/v1/pods/:namespace/:name/logs —— Pod 日志 SSE 流
@@ -7,11 +9,12 @@ import { kubeStream, KubeError } from './kube.js'
 export async function streamPodLogs(req, res) {
   const { namespace, name } = req.params
   const q = req.query || {}
+  authorizeStream(req.account,'logs',{clusterId:req.clusterId,namespace,pod:name})
 
   const params = new URLSearchParams()
   if (q.container) params.append('container', String(q.container))
-  if (q.tailLines) params.append('tailLines', String(Number(q.tailLines) || 200))
-  if (q.sinceSeconds) params.append('sinceSeconds', String(Number(q.sinceSeconds)))
+  params.append('tailLines',String(Math.min(20000,Math.max(1,Number(q.tailLines)||200))))
+  if (q.sinceSeconds) params.append('sinceSeconds',String(Math.min(604800,Math.max(1,Number(q.sinceSeconds)||3600))))
   if (String(q.timestamps) === '1') params.append('timestamps', 'true')
   if (String(q.previous) === '1') params.append('previous', 'true')
   if (String(q.follow) === '1') params.append('follow', 'true')
@@ -39,6 +42,8 @@ export async function streamPodLogs(req, res) {
 
   let buffer = ''
   let closed = false
+  const decoder=new StringDecoder('utf8')
+  const stopWatch=watchStream({...req.account,sessionId:req.session?.id},'logs',{clusterId:req.clusterId,namespace,pod:name},()=>{cleanup();res.end()})
   const heartbeat = setInterval(() => {
     if (!closed && !res.writableEnded) res.write(': keepalive\n\n')
   }, 20000)
@@ -46,11 +51,11 @@ export async function streamPodLogs(req, res) {
   const emitLine = line => {
     if (closed || res.writableEnded) return
     const safe = line.replace(/\r$/, '').replace(/\n/g, ' ')
-    res.write(`data: ${safe}\n\n`)
+    if(!res.write(`data: ${safe}\n\n`)) {upstream.pause();res.once('drain',()=>{if(!closed)upstream.resume()})}
   }
 
   upstream.on('data', chunk => {
-    buffer += chunk.toString('utf8')
+    buffer += decoder.write(chunk)
     let idx
     while ((idx = buffer.indexOf('\n')) >= 0) {
       emitLine(buffer.slice(0, idx))
@@ -60,6 +65,7 @@ export async function streamPodLogs(req, res) {
     if (buffer.length > 1024 * 1024) { emitLine(buffer); buffer = '' }
   })
   upstream.on('end', () => {
+    buffer+=decoder.end()
     if (buffer) emitLine(buffer)
     if (!closed && !res.writableEnded) res.write('event: eof\ndata: end\n\n')
     cleanup()
@@ -74,6 +80,7 @@ export async function streamPodLogs(req, res) {
   function cleanup() {
     closed = true
     clearInterval(heartbeat)
+    stopWatch()
     try { upstream.destroy() } catch (e) { /* ignore */ }
   }
   req.on('close', cleanup)

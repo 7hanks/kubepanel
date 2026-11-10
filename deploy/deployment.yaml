@@ -1,17 +1,26 @@
-# 可选：把 KubePanel 直接跑在 K8s 集群里（ServiceAccount 认证，无需挂载 kubeconfig）
-# 前置：镜像需先推送到集群可拉取的仓库，或改成本地已有镜像名。
-# 应用顺序：kubectl apply -f rbac.yaml && kubectl apply -f deployment.yaml
+# Create kubepanel-auth separately from a private env file; no default password is shipped.
+# kubectl -n kube-system create secret generic kubepanel-auth --from-env-file=/secure/kubepanel.env
 apiVersion: v1
-kind: Secret
+kind: PersistentVolumeClaim
 metadata:
-  name: kubepanel-auth
+  name: kubepanel-data
   namespace: kube-system
-type: Opaque
-stringData:
-  # 换成你自己的强密码（≥12 位），或用 kubectl create secret 生成后删掉这段
-  DASHBOARD_PASSWORD: "change-me-please"
-  # 可留空：容器首次启动会在数据目录生成 .jwt-secret 并复用（多副本共享会话时才需要显式指定）
-  DASHBOARD_SECRET: ""
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kubepanel-clusters
+  namespace: kube-system
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -22,6 +31,8 @@ metadata:
     app: kubepanel
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: kubepanel
@@ -32,13 +43,23 @@ spec:
     spec:
       serviceAccountName: kubepanel
       securityContext:
+        runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
         fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: kubepanel
-          image: kubepanel:1.0.0
+          # Replace with the same immutable revision tag/digest built by release.sh.
+          image: kubepanel:REPLACE_WITH_FULL_GIT_REVISION
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
           ports:
             - name: http
               containerPort: 8080
@@ -49,28 +70,49 @@ spec:
             - name: NODE_ENV
               value: production
             - name: PORT
-              value: "8080"
+              value: '8080'
             - name: TZ
               value: Asia/Shanghai
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: clusters
+              mountPath: /app/kube/clusters
+            - name: tmp
+              mountPath: /tmp
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
           readinessProbe:
             httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 5
+              path: /readyz
+              port: http
             periodSeconds: 10
           livenessProbe:
             httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 20
+              path: /livez
+              port: http
             periodSeconds: 30
           resources:
             requests:
               cpu: 100m
               memory: 128Mi
             limits:
-              cpu: 1000m
+              cpu: '1'
               memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: kubepanel-data
+        - name: clusters
+          persistentVolumeClaim:
+            claimName: kubepanel-clusters
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service
@@ -84,6 +126,6 @@ spec:
   ports:
     - name: http
       port: 8080
-      targetPort: 8080
+      targetPort: http
       nodePort: 30090
       protocol: TCP

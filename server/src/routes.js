@@ -1,8 +1,9 @@
 import express from 'express'
-import { authMiddleware, login, logout, profile, changePassword } from './auth.js'
+import { authMiddleware, login, logout, profile, changePassword, issueStreamTicket } from './auth.js'
 import {
   kubeRequest, resRequest, KUBE_HEADERS, KubeError,
   discoverResources, kubeContext, getCluster, getDefaultClusterId,
+  resourceMeta,
 } from './kube.js'
 import {
   initClusters, clusterSummaries, addCluster, removeCluster, testCluster, clusterDetail,
@@ -13,8 +14,12 @@ import {
   listRegistries, addRegistry, updateRegistry, removeRegistry, testRegistry,
   listProjects, listRepositories, listArtifacts, discoverRegistries,
 } from './registryService.js'
-import { monitorView, createMonitor, updateMonitor, deleteMonitor, testMonitor, listDashboards, podMetrics, topPods } from './monitorService.js'
-import { canAny, OBJECTS, ACTIONS, PERMISSIONS, PERMISSION_LABEL } from './permissions.js'
+import { monitorView, createMonitor, updateMonitor, deleteMonitor, testMonitor, listDashboards, parseCpu, parseMem, fmtCpu, fmtBytes } from './monitorService.js'
+import { can, canAny, OBJECTS, ACTIONS, PERMISSIONS, PERMISSION_LABEL, SENSITIVE_PERMISSIONS } from './permissions.js'
+import { assertResourceAccess, assertClusterAccess, resourceAllowed } from './access.js'
+import { scopedList } from './resourceScope.js'
+import { operations } from './operations.js'
+import { listAudit } from './auditService.js'
 import { listRoles, createRole, updateRole, deleteRole } from './roleService.js'
 import { listUsers, createUser, updateUser, deleteUser, countUsersByRole } from './userService.js'
 
@@ -32,6 +37,49 @@ function requirePerm(...perms) {
     })
   }
 }
+function requireAll(...perms) {
+  return (req, res, next) => perms.every(p => can(req.account, p)) ? next() : res.status(403).json({ message: '当前账号缺少执行该操作的完整权限', required: perms })
+}
+function bool(value, fallback = false) {
+  if (value === undefined) return fallback
+  if ([true, 'true', '1', 1].includes(value)) return true
+  if ([false, 'false', '0', 0].includes(value)) return false
+  throw new KubeError(400, '布尔参数必须是 true 或 false')
+}
+const opOptions = req => ({ dryRun: bool(req.body?.dryRun ?? req.query.dryRun), authorize: meta => assertResourceAccess(req.account, { ...meta, clusterId: req.clusterId }) })
+async function target(req, verb) {
+  const meta = await resourceMeta(metaOf(req), req.clusterId)
+  if (!meta.verbs.includes(verb)) throw new KubeError(405, `资源不支持 ${verb}`)
+  const namespace = nsOf(req) || (verb === 'create' && meta.namespaced ? req.body?.metadata?.namespace || 'default' : undefined)
+  if (!meta.namespaced && nsOf(req)) throw new KubeError(400, '集群级资源不能指定 namespace')
+  if (meta.namespaced && !namespace && verb !== 'list') throw new KubeError(400, '该资源必须指定 namespace')
+  if (verb !== 'list') assertResourceAccess(req.account, { ...meta, clusterId: req.clusterId, namespace, verb })
+  return { meta, namespace }
+}
+function validateBody(body, meta, namespace, name) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new KubeError(400, '请求体必须是资源对象')
+  const av = meta.group ? `${meta.group}/${meta.version}` : meta.version
+  if ((body.apiVersion && body.apiVersion !== av) || (body.kind && body.kind !== meta.kind)
+    || (name && body.metadata?.name && name !== body.metadata.name)
+    || (body.metadata?.namespace && body.metadata.namespace !== namespace)) throw new KubeError(400, '资源 apiVersion/kind/name/namespace 与请求目标不一致')
+}
+function resourceResponse(account, meta, data) {
+  if (meta.group || meta.plural !== 'secrets' || can(account, 'secret:read') || !data || data.kind === 'Status') return data
+  const metadata = {}
+  for (const key of ['name', 'namespace', 'uid', 'resourceVersion', 'creationTimestamp']) if (data.metadata?.[key] !== undefined) metadata[key] = data.metadata[key]
+  return { apiVersion: data.apiVersion, kind: data.kind, metadata, type: data.type, redacted: true }
+}
+async function metricsPods(account, clusterId, namespace, limit) {
+  const data = await scopedList(account, { group: 'metrics.k8s.io', version: 'v1beta1', plural: 'pods', namespaced: true }, { clusterId, namespace, timeout: 6000 })
+  const pods = await scopedList(account, { group: '', version: 'v1', plural: 'pods', namespaced: true }, { clusterId, namespace, timeout: 6000 })
+  const byName = new Map((pods.items || []).map(p => [`${p.metadata.namespace}/${p.metadata.name}`, p]))
+  const items = (data.items || []).map(p => {
+    const usage = (p.containers || []).reduce((a, c) => ({ cpu: a.cpu + parseCpu(c.usage?.cpu), mem: a.mem + parseMem(c.usage?.memory) }), { cpu: 0, mem: 0 })
+    const requests = (byName.get(`${p.metadata.namespace}/${p.metadata.name}`)?.spec?.containers || []).reduce((a, c) => ({ cpu: a.cpu + parseCpu(c.resources?.requests?.cpu), mem: a.mem + parseMem(c.resources?.requests?.memory) }), { cpu: 0, mem: 0 })
+    return { namespace: p.metadata.namespace, name: p.metadata.name, cpu: usage.cpu, cpuText: fmtCpu(usage.cpu), memory: usage.mem, memoryText: fmtBytes(usage.mem), cpuPercent: requests.cpu > 0 ? Math.round(usage.cpu / requests.cpu * 100) : null, memoryPercent: requests.mem > 0 ? Math.round(usage.mem / requests.mem * 100) : null, timestamp: p.timestamp }
+  }).sort((a, b) => b.cpu - a.cpu)
+  return { items: limit ? items.slice(0, Math.min(100, Math.max(1, Number(limit) || 10))) : items, total: items.length, totalCpu: items.reduce((a, b) => a + b.cpu, 0), totalMemory: items.reduce((a, b) => a + b.memory, 0), timestamp: items[0]?.timestamp || null }
+}
 
 /** 服务层抛出的 { status } 错误转成 KubeError，保留 4xx 语义 */
 function rethrow(e) {
@@ -48,7 +96,9 @@ function metaOf(req) {
   }
 }
 function nsOf(req) {
-  const v = req.params.namespace || req.query.namespace
+  // Path namespace is an actual object identity; "all" is a valid K8s namespace name.
+  if (req.params.namespace) return ['_all','-'].includes(req.params.namespace) ? undefined : req.params.namespace
+  const v = req.query.namespace
   // '-' 是前端对「无命名空间」的显示占位，不能拼进 /namespaces/-/...
   return !v || v === 'all' || v === '_all' || v === '-' ? undefined : v
 }
@@ -62,8 +112,9 @@ function listQuery(req) {
 
 // ---------------- 认证 ----------------
 router.post('/auth/login', login)
-router.post('/auth/logout', logout)
 router.use(authMiddleware)
+router.post('/auth/logout', wrap(logout))
+router.post('/v1/auth/stream-ticket', wrap(issueStreamTicket))
 
 // ---------------- 账号（登录后） ----------------
 router.get('/v1/auth/profile', wrap(async (req, res) => profile(req, res)))
@@ -76,7 +127,7 @@ router.get('/v1/roles', requirePerm('user:list', 'user:detail'), wrap(async (req
     permissionLabels: r.permissions.map(p => PERMISSION_LABEL.get(p) || p),
     userCount: countUsersByRole(r.id),
   }))
-  res.json({ roles, objects: OBJECTS, actions: ACTIONS, permissions: PERMISSIONS })
+  res.json({ roles, objects: OBJECTS, actions: ACTIONS, permissions: PERMISSIONS, sensitivePermissions: SENSITIVE_PERMISSIONS })
 }))
 
 router.post('/v1/roles', requirePerm('user:create'), wrap(async (req, res) => {
@@ -131,29 +182,34 @@ router.delete('/v1/users/:username', requirePerm('user:delete'), wrap(async (req
 
 // ---------------- 集群管理（平台级，不需要指定 clusterId） ----------------
 router.get('/v1/clusters', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => {
-  res.json(await clusterSummaries(String(req.query.refresh) === '1'))
+  res.json(await clusterSummaries(String(req.query.refresh) === '1', req.account))
 }))
-router.post('/v1/clusters', requirePerm('cluster:create'), wrap(async (req, res) => {
+router.post('/v1/clusters', requirePerm('cluster:import'), wrap(async (req, res) => {
   const { name, kubeconfig } = req.body || {}
   res.status(201).json(addCluster(name, kubeconfig))
 }))
 router.post('/v1/clusters/:id/test', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {
+  assertClusterAccess(req.account, req.params.id)
   res.json(await testCluster(req.params.id))
 }))
 router.get('/v1/clusters/:id/detail', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {
-  res.json(await clusterDetail(req.params.id))
+  assertClusterAccess(req.account, req.params.id)
+  res.json(await clusterDetail(req.params.id, req.account))
 }))
 // 平台级：集群详情抽屉里的「资源使用率 TOP 10」，走 metrics-server
 router.get('/v1/clusters/:id/top-pods', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {
   const id = req.params.id
+  assertClusterAccess(req.account, id)
   try {
-    res.json({ available: true, ...(await topPods(id, req.query.limit)) })
+    res.json({ available: true, ...(await metricsPods(req.account, id, undefined, req.query.limit || 10)) })
   } catch (e) {
-    res.json({ available: false, items: [], total: 0, message: '未安装 metrics-server 或无访问权限' })
+    if (e.status === 403) throw e
+    res.json({ available: false, items: [], total: null, message: e.message })
   }
 }))
-router.delete('/v1/clusters/:id', requirePerm('cluster:delete'), wrap(async (req, res) => {
-  res.json(removeCluster(req.params.id))
+router.delete('/v1/clusters/:id', requirePerm('cluster:remove'), wrap(async (req, res) => {
+  assertClusterAccess(req.account, req.params.id)
+  res.json(removeCluster(req.params.id, req.account))
 }))
 
 // ---------------- 镜像仓库（平台级，Harbor） ----------------
@@ -163,7 +219,9 @@ router.post('/v1/registries', requirePerm('registry:create'), wrap(async (req, r
 }))
 router.post('/v1/registries/discover', requirePerm('registry:create'), wrap(async (req, res) => {
   const { clusterId, namespace } = req.body || {}
-  res.json(await discoverRegistries(getCluster(clusterId).id, namespace || 'harbor'))
+  const id = getCluster(clusterId).id
+  assertResourceAccess(req.account, { clusterId: id, namespace: namespace || 'harbor', group: '', plural: 'services', verb: 'list' })
+  res.json(await discoverRegistries(id, namespace || 'harbor', { account: req.account }))
 }))
 router.patch('/v1/registries/:id', requirePerm('registry:update'), wrap(async (req, res) => {
   res.json(await updateRegistry(req.params.id, req.body || {}))
@@ -175,13 +233,13 @@ router.post('/v1/registries/:id/test', requirePerm('registry:detail', 'registry:
   res.json(await testRegistry(req.params.id))
 }))
 router.get('/v1/registries/:id/projects', requirePerm('registry:detail', 'registry:list'), wrap(async (req, res) => {
-  res.json(await listProjects(req.params.id))
+  res.json(await listProjects(req.params.id, req.query))
 }))
 router.get('/v1/registries/:id/repositories', requirePerm('registry:detail', 'registry:list'), wrap(async (req, res) => {
-  res.json(await listRepositories(req.params.id, String(req.query.project || '')))
+  res.json(await listRepositories(req.params.id, String(req.query.project || ''), req.query))
 }))
 router.get('/v1/registries/:id/artifacts', requirePerm('registry:detail', 'registry:list'), wrap(async (req, res) => {
-  res.json(await listArtifacts(req.params.id, String(req.query.project || ''), String(req.query.repository || '')))
+  res.json(await listArtifacts(req.params.id, String(req.query.project || ''), String(req.query.repository || ''), req.query))
 }))
 
 // ---------------- 监控（平台级，Grafana，支持多实例 / 多环境） ----------------
@@ -204,6 +262,7 @@ router.delete('/v1/monitor/:id', requirePerm('monitor:delete'), wrap(async (req,
 }))
 
 // ---------------- 以下所有接口都需要选定集群 ----------------
+router.get('/v1/audit', requirePerm('audit:list'), wrap(async (req, res) => res.json(listAudit(req.query))))
 // 集群级接口统一鉴权：读需要 cluster:list / cluster:detail，写操作按具体权限码判断
 router.use(requirePerm('cluster:list', 'cluster:detail',
   'cluster:create', 'cluster:update', 'cluster:delete'))
@@ -213,6 +272,7 @@ router.use((req, res, next) => {
   const raw = req.query.clusterId || req.headers['x-cluster-id'] || req.body?.clusterId
   try {
     req.clusterId = getCluster(raw).id
+    assertClusterAccess(req.account, req.clusterId)
     next()
   } catch (e) {
     res.status(e.status || 404).json({
@@ -223,43 +283,45 @@ router.use((req, res, next) => {
 })
 
 // ---------------- 集群信息 ----------------
-router.get('/v1/cluster', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => res.json(await clusterInfo(req.clusterId))))
-router.get('/v1/overview', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => res.json(await overview(req.clusterId, String(req.query.namespace || 'all')))))
+router.get('/v1/cluster', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => res.json(await clusterInfo(req.clusterId, req.account))))
+router.get('/v1/overview', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => res.json(await overview(req.clusterId, nsOf(req), req.account))))
 router.get('/v1/resources', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => {
   const force = String(req.query.refresh) === '1'
-  res.json(await discoverResources(force, req.clusterId))
+  res.json((await discoverResources(force, req.clusterId)).filter(r => resourceAllowed(req.account, r)))
 }))
 
 // ---------------- 通用资源 CRUD ----------------
 router.get('/v1/resources/:group/:version/:plural', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => {
-  const r = await resRequest('GET', metaOf(req), {
-    namespace: nsOf(req), query: listQuery(req), clusterId: req.clusterId,
-  })
-  res.json(r.data)
+  const { meta, namespace } = await target(req, 'list')
+  res.json(await scopedList(req.account, meta, { namespace, query: listQuery(req), clusterId: req.clusterId }))
 }))
 
 router.post('/v1/resources/:group/:version/:plural', requirePerm('cluster:create'), wrap(async (req, res) => {
-  const meta = metaOf(req)
+  const { meta, namespace } = await target(req, 'create')
   const body = req.body
   if (!body || !body.metadata?.name) throw new KubeError(400, '请求体必须包含 metadata.name')
-  const namespace = req.query.namespace || body.metadata.namespace
-  const r = await resRequest('POST', meta, { namespace, body, clusterId: req.clusterId })
-  res.status(201).json(r.data)
+  validateBody(body, meta, namespace)
+  const r = await resRequest('POST', meta, { namespace, body, query: bool(req.query.dryRun) ? { dryRun: 'All' } : {}, clusterId: req.clusterId })
+  res.status(201).json(resourceResponse(req.account, meta, r.data))
 }))
 
 router.get('/v1/resources/:group/:version/:plural/:namespace/:name', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {
-  const r = await resRequest('GET', metaOf(req), {
-    namespace: nsOf(req), name: req.params.name, clusterId: req.clusterId,
+  const { meta, namespace } = await target(req, 'get')
+  const r = await resRequest('GET', meta, {
+    namespace, name: req.params.name, clusterId: req.clusterId,
   })
   res.json(r.data)
 }))
 
 router.put('/v1/resources/:group/:version/:plural/:namespace/:name', requirePerm('cluster:update'), wrap(async (req, res) => {
+  const { meta, namespace } = await target(req, 'update')
+  validateBody(req.body, meta, namespace, req.params.name)
+  if (!req.body.metadata?.resourceVersion) throw new KubeError(400, '更新资源必须保留 metadata.resourceVersion，请刷新后重试')
   try {
-    const r = await resRequest('PUT', metaOf(req), {
-      namespace: nsOf(req), name: req.params.name, body: req.body, clusterId: req.clusterId,
+    const r = await resRequest('PUT', meta, {
+      namespace, name: req.params.name, body: req.body, query: bool(req.query.dryRun) ? { dryRun: 'All' } : {}, clusterId: req.clusterId,
     })
-    res.json(r.data)
+    res.json(resourceResponse(req.account, meta, r.data))
   } catch (e) {
     if (e instanceof KubeError && (e.status === 409 || /has been modified/i.test(e.message || ''))) {
       throw new KubeError(409, '资源已被其他客户端修改，请刷新页面后重新编辑（K8s 乐观锁冲突）')
@@ -269,83 +331,78 @@ router.put('/v1/resources/:group/:version/:plural/:namespace/:name', requirePerm
 }))
 
 router.patch('/v1/resources/:group/:version/:plural/:namespace/:name', requirePerm('cluster:update'), wrap(async (req, res) => {
+  const { meta, namespace } = await target(req, 'patch')
   const type = req.query.patchType || 'merge'
   const headers = {
     merge: KUBE_HEADERS.mergePatch,
     strategic: KUBE_HEADERS.strategicPatch,
     json: KUBE_HEADERS.jsonPatch,
-  }[type] || KUBE_HEADERS.mergePatch
-  const r = await resRequest('PATCH', metaOf(req), {
-    namespace: nsOf(req), name: req.params.name, body: req.body, headers, clusterId: req.clusterId,
+  }[type]
+  if (!headers) throw new KubeError(400, '不支持的 patchType')
+  if (type !== 'json') validateBody(req.body, meta, namespace, req.params.name)
+  else if (!Array.isArray(req.body)) throw new KubeError(400, 'JSON Patch 必须是操作数组')
+  const r = await resRequest('PATCH', meta, {
+    namespace, name: req.params.name, body: req.body, headers, query: bool(req.query.dryRun) ? { dryRun: 'All' } : {}, clusterId: req.clusterId,
   })
-  res.json(r.data)
+  res.json(resourceResponse(req.account, meta, r.data))
 }))
 
 router.delete('/v1/resources/:group/:version/:plural/:namespace/:name', requirePerm('cluster:delete'), wrap(async (req, res) => {
+  const { meta, namespace } = await target(req, 'delete')
   const query = {}
   if (req.query.gracePeriodSeconds !== undefined) query.gracePeriodSeconds = req.query.gracePeriodSeconds
   if (req.query.propagationPolicy !== undefined) query.propagationPolicy = req.query.propagationPolicy
-  const r = await resRequest('DELETE', metaOf(req), {
-    namespace: nsOf(req), name: req.params.name, query, clusterId: req.clusterId,
+  if (bool(req.query.dryRun)) query.dryRun = 'All'
+  const r = await resRequest('DELETE', meta, {
+    namespace, name: req.params.name, query, clusterId: req.clusterId,
   })
-  res.json(r.data)
+  res.json(resourceResponse(req.account, meta, r.data))
 }))
 
 router.post('/v1/resources/:group/:version/:plural/:namespace/:name/scale', requirePerm('cluster:update'), wrap(async (req, res) => {
-  const r = await scaleResource(metaOf(req), nsOf(req), req.params.name, req.body?.replicas, req.clusterId)
+  const { meta, namespace } = await target(req, 'patch')
+  if (meta.group !== 'apps' || !['deployments', 'statefulsets', 'replicasets'].includes(meta.plural)) throw new KubeError(400, '该资源不支持扩缩容')
+  const r = await scaleResource(meta, namespace, req.params.name, req.body?.replicas, req.clusterId, { dryRun: bool(req.body?.dryRun) })
   res.json(r.data)
 }))
 router.post('/v1/resources/:group/:version/:plural/:namespace/:name/restart', requirePerm('cluster:update'), wrap(async (req, res) => {
-  const r = await restartWorkload(metaOf(req), nsOf(req), req.params.name, req.clusterId)
+  const { meta, namespace } = await target(req, 'patch')
+  if (meta.group !== 'apps' || !['deployments', 'statefulsets', 'daemonsets'].includes(meta.plural)) throw new KubeError(400, '该资源不支持滚动重启')
+  const r = await restartWorkload(meta, namespace, req.params.name, req.clusterId, { dryRun: bool(req.body?.dryRun) })
   res.json(r.data)
 }))
 
 // ---------------- 组合操作 ----------------
-router.post('/v1/apply', requirePerm('cluster:create', 'cluster:update'), wrap(async (req, res) => {
+router.post('/v1/apply', requireAll('cluster:create', 'cluster:update'), wrap(async (req, res) => {
   const yamlText = req.body?.yaml
   if (!yamlText || typeof yamlText !== 'string') throw new KubeError(400, '请求体缺少 yaml 字段')
-  res.json(await applyYaml(yamlText, req.body?.defaultNamespace, req.clusterId))
+  const options = { ...opOptions(req), force: bool(req.body?.force) }
+  if (options.force && !can(req.account, 'apply:force')) throw new KubeError(403, '强制接管字段需要 apply:force 权限')
+  res.json(await applyYaml(yamlText, req.body?.defaultNamespace, req.clusterId, options))
 }))
 
-router.post('/v1/nodes/:name/cordon', requirePerm('cluster:update'), wrap(async (req, res) => {
-  const r = await cordonNode(req.params.name, req.body?.unschedulable !== false, req.clusterId)
+router.post('/v1/nodes/:name/cordon', requireAll('cluster:update', 'node:maintain'), wrap(async (req, res) => {
+  assertResourceAccess(req.account, { clusterId: req.clusterId, group: '', plural: 'nodes', verb: 'patch' })
+  const r = await cordonNode(req.params.name, bool(req.body?.unschedulable, true), req.clusterId, { dryRun: bool(req.body?.dryRun) })
   res.json(r.data)
 }))
 
 // ---------------- Pod 日志 / 事件 / 指标 ----------------
-router.get('/v1/pods/:namespace/:name/logs', requirePerm('cluster:detail', 'cluster:list'), wrap(streamPodLogs))
+router.get('/v1/pods/:namespace/:name/logs', requirePerm('pod:logs'), wrap(async (req, res) => {
+  assertResourceAccess(req.account, { clusterId: req.clusterId, group: '', plural: 'pods', namespace: req.params.namespace, verb: 'get' })
+  return streamPodLogs(req, res)
+}))
 
 /**
- * 重启 Pod：K8s 没有 Pod restart 子资源，标准做法是删除后由控制器重建。
- * 裸 Pod（无 ownerReferences）删除后不会自动重建，这里直接拒绝，避免误删。
+ * Pod 重建通过 Eviction 保留 PDB 与 UID 保护，不保证控制器一定能补足副本。
  */
-router.post('/v1/pods/:namespace/:name/restart', requirePerm('cluster:update', 'cluster:delete'), wrap(async (req, res) => {
-  const { namespace, name } = req.params
-  const podPath = `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(name)}`
-  const pod = await kubeRequest('GET', podPath, { clusterId: req.clusterId })
-  const owners = pod.data?.metadata?.ownerReferences || []
-  if (!owners.length) {
-    throw new KubeError(400,
-      `Pod ${name} 没有控制器（ownerReferences），删除后不会自动重建，已拒绝重启。如需重建请用 YAML 工作台重新 apply；确认无用的裸 Pod 请手动删除。`)
-  }
-  const ownerList = owners.map(o => `${o.kind}/${o.name}`).join('、')
-  // dryRun=1 只做预检，不删除任何 Pod，便于脚本验证与用户确认
-  if (String(req.query.dryRun) === '1') {
-    return res.json({
-      ok: true, dryRun: true, wouldRestart: true,
-      message: `预检通过：${name} 由 ${ownerList} 管理，删除后会自动重建（未执行删除）`,
-      owners: owners.map(o => ({ kind: o.kind, name: o.name })),
-    })
-  }
-  await kubeRequest('DELETE', podPath, { clusterId: req.clusterId })
-  res.json({
-    ok: true,
-    message: `已删除 Pod ${name}，将由 ${ownerList} 自动重建`,
-    owners: owners.map(o => ({ kind: o.kind, name: o.name })),
-  })
+router.post('/v1/pods/:namespace/:name/restart', requireAll('cluster:update', 'cluster:delete'), wrap(async (req, res) => {
+  res.json(await operations.restartPod(req.params.namespace, req.params.name, req.clusterId, opOptions(req)))
 }))
 
 router.get('/v1/pods/:namespace/:name/events', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {
+  assertResourceAccess(req.account, { clusterId: req.clusterId, group: '', plural: 'pods', namespace: req.params.namespace, verb: 'get' })
+  assertResourceAccess(req.account, { clusterId: req.clusterId, group: '', plural: 'events', namespace: req.params.namespace, verb: 'list' })
   const q = new URLSearchParams({
     fieldSelector: `involvedObject.name=${req.params.name},involvedObject.namespace=${req.params.namespace}`,
   })
@@ -356,6 +413,8 @@ router.get('/v1/pods/:namespace/:name/events', requirePerm('cluster:detail', 'cl
 }))
 
 router.get('/v1/metrics/nodes', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => {
+  assertResourceAccess(req.account, { clusterId: req.clusterId, group: 'metrics.k8s.io', plural: 'nodes', verb: 'list' })
+  assertResourceAccess(req.account, { clusterId: req.clusterId, group: '', plural: 'nodes', verb: 'list' })
   try {
     const [m, nodes] = await Promise.all([
       kubeRequest('GET', '/apis/metrics.k8s.io/v1beta1/nodes', { timeout: 5000, clusterId: req.clusterId }),
@@ -370,16 +429,37 @@ router.get('/v1/metrics/nodes', requirePerm('cluster:list', 'cluster:detail'), w
     const items = (m.data.items || []).map(x => ({ ...x, capacity: cap[x.metadata?.name] || null }))
     res.json({ available: true, items, capacities: cap })
   } catch (e) {
-    res.json({ available: false, items: [], message: '未安装 metrics-server 或无访问权限' })
+    res.json({ available: false, items: [], message: e.message || '未安装 metrics-server 或无访问权限' })
   }
 }))
 
 router.get('/v1/metrics/pods', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => {
   try {
-    res.json({ available: true, ...(await podMetrics(req.clusterId, String(req.query.namespace || 'all'))) })
+    res.json({ available: true, ...(await metricsPods(req.account, req.clusterId, nsOf(req))) })
   } catch (e) {
-    res.json({ available: false, items: [], totalCpu: 0, totalMemory: 0, message: e.message || '未安装 metrics-server 或无访问权限' })
+    if (e.status === 403) throw e
+    res.json({ available: false, items: [], totalCpu: null, totalMemory: null, message: e.message || '未安装 metrics-server 或无访问权限' })
   }
+}))
+
+router.get('/v1/workloads/:namespace/:name/history', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => {
+  res.json(await operations.workloadHistory(req.params.namespace, req.params.name, String(req.query.kind || 'Deployment'), req.clusterId, opOptions(req)))
+}))
+router.post('/v1/workloads/:namespace/:name/rollback', requirePerm('cluster:update'), wrap(async (req, res) => {
+  res.json(await operations.rollbackWorkload(req.params.namespace, req.params.name, String(req.body?.kind || req.query.kind || 'Deployment'), req.body?.revision, req.clusterId, opOptions(req)))
+}))
+router.post('/v1/cronjobs/:namespace/:name/run', requirePerm('cluster:create'), wrap(async (req, res) => {
+  res.json(await operations.runCronJob(req.params.namespace, req.params.name, req.clusterId, opOptions(req)))
+}))
+router.post('/v1/cronjobs/:namespace/:name/suspend', requirePerm('cluster:update'), wrap(async (req, res) => {
+  res.json(await operations.suspendCronJob(req.params.namespace, req.params.name, req.body?.suspend, req.clusterId, opOptions(req)))
+}))
+router.get('/v1/nodes/:name/drain', requireAll('node:maintain', 'cluster:update', 'cluster:delete'), wrap(async (req, res) => {
+  const { _pods, ...result } = await operations.nodeDrainPreflight(req.params.name, req.clusterId, opOptions(req))
+  res.json(result)
+}))
+router.post('/v1/nodes/:name/drain', requireAll('node:maintain', 'cluster:update', 'cluster:delete'), wrap(async (req, res) => {
+  res.json(await operations.drainNode(req.params.name, req.clusterId, { ...opOptions(req), timeoutSeconds: req.body?.timeoutSeconds }))
 }))
 
 // 调试用：返回当前集群连接上下文（不含任何凭据）

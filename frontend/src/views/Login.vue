@@ -66,7 +66,6 @@ async function submit() {
   loading.value = true
   try {
     const data = await api.login(form.username, form.password)
-    localStorage.setItem('kp_token', data.token)
     saveSession(data)
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
     // 目标页越权时退回该账号的落地页，避免登录后立刻 403

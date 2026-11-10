@@ -23,7 +23,7 @@
               <div class="kp-card">
                 <div class="kp-section-title">
                   Grafana 实例
-                  <el-tag size="small" type="info" effect="plain" round>{{ instances.length }} 个</el-tag>
+                  <el-tag disable-transitions size="small" type="info" effect="plain" round>{{ instances.length }} 个</el-tag>
                   <span style="flex:1" />
                   <el-button link type="primary" size="small" :disabled="!canCreate" @click="openCreate">
                     <el-icon><Plus /></el-icon><span style="margin-left:3px">添加</span>
@@ -47,8 +47,8 @@
                     <div class="inst-text">
                       <div class="inst-name">
                         <span class="nm">{{ it.name }}</span>
-                        <el-tag v-if="!it.enabled" size="small" type="info" effect="plain">已停用</el-tag>
-                        <el-tag v-else-if="it.hasToken" size="small" type="success" effect="plain">已配 Token</el-tag>
+                        <el-tag disable-transitions v-if="!it.enabled" size="small" type="info" effect="plain">已停用</el-tag>
+                        <el-tag disable-transitions v-else-if="it.hasToken" size="small" type="success" effect="plain">已配 Token</el-tag>
                       </div>
                       <div class="inst-sub">{{ it.url }}</div>
                     </div>
@@ -97,7 +97,7 @@
               <div class="kp-card" style="padding:0;overflow:hidden">
                 <div class="frame-head">
                   <template v-if="activeInstance">
-                    <el-tag size="small" effect="plain" round>{{ activeInstance.environment }}</el-tag>
+                    <el-tag disable-transitions size="small" effect="plain" round>{{ activeInstance.environment }}</el-tag>
                     <span>{{ activeInstance.name }}</span>
                     <span class="kp-muted frame-url">{{ activeInstance.url }}</span>
                   </template>
@@ -218,6 +218,8 @@
             </el-button>
           </div>
         </el-form-item>
+        <el-form-item label="信任 CA（PEM，可选）"><el-input v-model="form.ca" type="textarea" :rows="4" placeholder="自签证书请提供 CA；编辑时留空保留" /></el-form-item>
+        <el-form-item><el-checkbox v-model="form.insecure">跳过 TLS 校验（仅在明确了解风险时开启）</el-checkbox></el-form-item>
         <el-form-item>
           <el-switch v-model="form.enabled" active-text="启用该实例" />
         </el-form-item>
@@ -268,7 +270,7 @@ const activeId = ref(localStorage.getItem(ACTIVE_KEY) || '')
 
 const dialogVisible = ref(false)
 const editing = ref(null) // 正在编辑的实例视图；null = 新建
-const form = reactive({ name: '', environment: '生产', url: '', token: '', enabled: true, clearToken: false })
+const form = reactive({ name: '', environment: '生产', url: '', token: '', enabled: true, clearToken: false, insecure:false,ca:'' })
 
 // 按环境分组；常见环境在前，其余按拼音排序
 const groups = computed(() => {
@@ -357,7 +359,7 @@ function selectInstance(it) {
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', environment: '生产', url: '', token: '', enabled: true, clearToken: false })
+  Object.assign(form, { name: '', environment: '生产', url: '', token: '', enabled: true, clearToken: false, insecure:false,ca:'' })
   dialogVisible.value = true
 }
 
@@ -365,7 +367,7 @@ function openEdit(it) {
   editing.value = it
   Object.assign(form, {
     name: it.name, environment: it.environment, url: it.url,
-    token: '', enabled: it.enabled, clearToken: false,
+    token: '', enabled: it.enabled, clearToken: false, insecure:!!it.insecure, ca:'',
   })
   dialogVisible.value = true
 }
@@ -387,7 +389,7 @@ async function saveInstance() {
       environment: form.environment || '默认',
       url: form.url.trim(),
       token: form.token,
-      enabled: form.enabled,
+      enabled: form.enabled, insecure:form.insecure, ...(form.ca.trim() ? {ca:form.ca.trim()} : {}),
     }
     let c
     if (editing.value) {
@@ -411,8 +413,8 @@ async function saveInstance() {
 
 async function testDraft() {
   const payload = editing.value
-    ? { id: editing.value.id, token: form.token }
-    : { url: form.url.trim(), token: form.token }
+    ? { id: editing.value.id, token: form.token, url:form.url.trim(),insecure:form.insecure,...(form.ca.trim() ? {ca:form.ca.trim()} : {}) }
+    : { url: form.url.trim(), token: form.token,insecure:form.insecure,...(form.ca.trim() ? {ca:form.ca.trim()} : {}) }
   if (!editing.value && !payload.url) { ElMessage.warning('请先填写地址'); return }
   testing.value = true
   try {

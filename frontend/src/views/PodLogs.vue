@@ -20,7 +20,7 @@
     </div>
 
     <div class="kp-card" style="padding:10px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px">
-      <el-tag :type="connected ? 'success' : 'info'" size="small">{{ connected ? '实时连接中' : follow ? '连接中...' : '已加载' }}</el-tag>
+      <el-tag disable-transitions :type="connected ? 'success' : 'info'" size="small">{{ connected ? '实时连接中' : follow ? '连接中...' : '已加载' }}</el-tag>
       <span class="kp-muted" style="font-size:12px">{{ lines.length }} 行 · 容器 {{ container || '-' }}</span>
       <span class="spacer" />
       <el-input v-model="filter" placeholder="过滤关键字" clearable size="small" style="width:220px" :prefix-icon="Search" />
@@ -79,15 +79,17 @@ function reconnect() {
   }
   const es = new EventSource(logsUrl(namespace, name, params))
   source = es
-  es.onopen = () => { connected.value = true }
+  es.onopen = () => { if(source===es)connected.value = true }
   es.onmessage = ev => {
+    if(source!==es)return
     // 后端按「一行日志 = 一个 SSE 事件」推送，天然规避 SSE data 不能含换行的问题
     lines.value.push(ev.data)
     if (lines.value.length > 20000) lines.value.splice(0, lines.value.length - 20000)
     if (!paused.value && stickBottom) nextTick(() => { if (logBox.value) logBox.value.scrollTop = logBox.value.scrollHeight })
   }
-  es.addEventListener('eof', () => { connected.value = false; closeSource() })
+  es.addEventListener('eof', () => { if(source===es)closeSource() })
   es.onerror = () => {
+    if(source!==es)return
     closeSource()
     ElMessage.warning('日志流已断开，可点击「重新加载」')
   }

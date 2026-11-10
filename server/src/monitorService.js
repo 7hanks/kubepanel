@@ -4,6 +4,7 @@ import crypto from 'node:crypto'
 import http from 'node:http'
 import https from 'node:https'
 import { config } from './config.js'
+import { sealSecret, openSecret } from './secretStore.js'
 import { kubeRequest, KubeError } from './kube.js'
 
 /**
@@ -27,8 +28,11 @@ function newId() {
 function normalizeUrl(url) {
   let u = String(url || '').trim()
   if (!u) return ''
-  if (!/^https?:\/\//i.test(u)) u = `http://${u}`
-  return u.replace(/\/+$/, '')
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = `https://${u}`
+  let parsed
+  try { parsed = new URL(u) } catch { throw new KubeError(400, 'Grafana 地址不合法') }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new KubeError(400, 'Grafana 地址不合法')
+  return parsed.toString().replace(/\/+$/, '')
 }
 
 /** 把任意输入归一成一条实例；url 为空视为无效（返回 null） */
@@ -41,7 +45,9 @@ function normalizeInstance(x) {
     name: String(x.name || '').trim() || '未命名 Grafana',
     environment: String(x.environment || '').trim() || DEFAULT_ENV,
     url,
-    token: String(x.token || ''),
+    token: openSecret(x.token),
+    insecure: x.insecure === true,
+    ca: String(x.ca || ''),
     enabled: x.enabled !== false,
     updatedAt: x.updatedAt || null,
   }
@@ -53,33 +59,39 @@ function normalizeInstance(x) {
  */
 function readStore() {
   let raw = {}
-  try { raw = JSON.parse(fs.readFileSync(FILE, 'utf8')) } catch (e) { raw = {} }
+  try { raw = JSON.parse(fs.readFileSync(FILE, 'utf8')) } catch (e) {
+    if (e.code !== 'ENOENT') throw new KubeError(503, '监控配置读取失败或损坏，请恢复备份')
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || (raw.instances !== undefined && !Array.isArray(raw.instances))) throw new KubeError(503, '监控配置已损坏，请恢复备份')
 
   if (Array.isArray(raw.instances)) {
-    return { instances: raw.instances.map(normalizeInstance).filter(Boolean) }
+    const instances = raw.instances.map(normalizeInstance)
+    if (instances.some(instance => !instance)) throw new KubeError(503, '监控配置已损坏，请恢复备份')
+    return { instances }
   }
-  // 旧格式：只有一条连接。立即落盘成新格式，保证自动生成的 id 稳定
-  // （否则每次读取都换 id，前端拿到的 id 在下次 PATCH/DELETE 时会对不上）。
+  // 旧格式使用确定性 ID，仅内存归一；读取不会改写运行数据。
   if (raw.url) {
     const inst = normalizeInstance({
-      id: newId(),
+      id: 'legacy-grafana-' + crypto.createHash('sha256').update(String(raw.url)).digest('hex').slice(0, 16),
       name: '默认 Grafana',
       environment: DEFAULT_ENV,
       url: raw.url,
       token: raw.token,
+      insecure: raw.insecure,
+      ca: raw.ca,
       enabled: raw.enabled,
       updatedAt: raw.updatedAt,
     })
     const store = { instances: inst ? [inst] : [] }
-    try { writeStore(store) } catch (e) { /* 数据目录只读时仅内存迁移，不影响读取 */ }
     return store
   }
+  if (Object.keys(raw).length) throw new KubeError(503, '监控配置已损坏，请恢复备份')
   return { instances: [] }
 }
 
 function writeStore(store) {
   fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 })
-  const payload = { version: 2, instances: store.instances }
+  const payload = { version: 2, instances: store.instances.map(instance => ({ ...instance, token: sealSecret(instance.token) })) }
   const tmp = `${FILE}.${process.pid}.tmp`
   fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), { mode: 0o600 })
   fs.renameSync(tmp, FILE)
@@ -100,6 +112,8 @@ function instanceView(x) {
     url: x.url,
     enabled: x.enabled,
     hasToken: !!x.token,
+    insecure: x.insecure === true,
+    hasCa: !!x.ca,
     updatedAt: x.updatedAt,
     embedHint: `${x.url}/d/<uid>?kiosk&theme=light`,
   }
@@ -137,6 +151,8 @@ export function createMonitor(draft) {
     environment: draft?.environment,
     url: draft?.url,
     token: draft?.token || '',
+    insecure: draft?.insecure === true,
+    ca: draft?.ca || '',
     enabled: draft?.enabled !== false,
     updatedAt: new Date().toISOString(),
   })
@@ -159,6 +175,8 @@ export function updateMonitor(id, patch) {
     // token 留空 = 保持原值；clearToken = 显式清空
     token: patch.token ? String(patch.token) : (patch.clearToken ? '' : cur.token),
     enabled: patch.enabled !== undefined ? !!patch.enabled : cur.enabled,
+    insecure: patch.insecure !== undefined ? patch.insecure === true : cur.insecure === true,
+    ca: patch.ca !== undefined ? String(patch.ca || '') : cur.ca || '',
     updatedAt: new Date().toISOString(),
   })
   if (!next) throw new KubeError(400, '请填写有效的 Grafana 地址')
@@ -176,6 +194,10 @@ export function deleteMonitor(id) {
   return monitorView()
 }
 
+export function monitorTlsOptions(cfg = {}) {
+  return { rejectUnauthorized: cfg.insecure !== true, ...(cfg.ca ? { ca: String(cfg.ca) } : {}) }
+}
+
 function grafanaRequest(cfg, reqPath, { timeout = 10000 } = {}) {
   return new Promise((resolve, reject) => {
     let base
@@ -188,10 +210,10 @@ function grafanaRequest(cfg, reqPath, { timeout = 10000 } = {}) {
       protocol: base.protocol,
       hostname: base.hostname,
       port: base.port || (isHttps ? 443 : 80),
-      path: reqPath,
+      path: base.pathname.replace(/\/$/, '') + reqPath,
       method: 'GET',
       headers,
-      rejectUnauthorized: false,
+      ...monitorTlsOptions(cfg),
       timeout,
     }, res => {
       const chunks = []
@@ -217,9 +239,9 @@ export async function testMonitor(draft) {
   if (draft?.id) {
     const inst = getInstance(draft.id)
     if (!inst) throw new KubeError(404, 'Grafana 实例不存在')
-    cfg = { url: inst.url, token: draft.token || inst.token }
+    cfg = { ...inst, token: draft.token || inst.token, insecure: draft.insecure ?? inst.insecure, ca: draft.ca ?? inst.ca }
   } else {
-    cfg = { url: normalizeUrl(draft?.url), token: draft?.token || '' }
+    cfg = { url: normalizeUrl(draft?.url), token: draft?.token || '', insecure: draft?.insecure === true, ca: draft?.ca || '' }
   }
   if (!cfg.url) throw new KubeError(400, '请先填写 Grafana 地址')
   const started = Date.now()

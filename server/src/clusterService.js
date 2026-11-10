@@ -1,13 +1,17 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import os from 'node:os'
 import { KubeConfig } from '@kubernetes/client-node'
 import { config } from './config.js'
 import {
   registerCluster, unregisterCluster, listClusters, getCluster,
   kubeRequest, clearDiscoveryCache, discoverResources, KubeError,
+  validateKubeconfigText,
 } from './kube.js'
 import { clusterInfo, overview } from './actions.js'
+import { canAccessCluster, resourceAllowed, assertClusterAccess } from './access.js'
+import { scopedList } from './resourceScope.js'
 
 const IN_CLUSTER_TOKEN = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 const CONFIG_EXT = ['.yaml', '.yml', '.conf', '.kubeconfig']
@@ -29,8 +33,27 @@ function authModeOf(kc, mode) {
   return 'anonymous'
 }
 
+/** Public client certificate expiry only; never reads certificate or private-key files. */
+export function certificateExpiry(user, now = Date.now(), parse = bytes => new crypto.X509Certificate(bytes)) {
+  const unknown = { notAfter: null, daysRemaining: null, status: 'unknown' }
+  if (typeof user?.certData !== 'string' || !user.certData) return unknown
+  try {
+    const certificate = parse(Buffer.from(user.certData, 'base64'))
+    const expiresAt = Date.parse(certificate.validTo)
+    const remaining = expiresAt - Number(now)
+    if (!Number.isFinite(remaining)) return unknown
+    const day = 24 * 60 * 60 * 1000
+    return {
+      notAfter: new Date(expiresAt).toISOString(),
+      daysRemaining: Math.floor(remaining / day),
+      status: remaining <= 0 ? 'expired' : remaining <= 30 * day ? 'expiring' : 'valid',
+    }
+  } catch { return unknown }
+}
+
 /** 把一个 kubeconfig 文本展开成多个 {context, kc}，每个 context 一个独立客户端 */
 function contextsFrom(content, mode = 'kubeconfig-file') {
+  validateKubeconfigText(content)
   const base = new KubeConfig()
   base.loadFromString(content)
   const contexts = base.getContexts()
@@ -126,13 +149,10 @@ export function initClusters() {
   // 5) 本地开发兜底
   if (count === 0) {
     try {
-      const kc = new KubeConfig()
-      kc.loadFromDefault()
-      if (safeRegister({
-        id: 'default', name: '本地默认集群', kc,
-        source: 'default-kubeconfig', mode: 'default-kubeconfig',
-        authMode: authModeOf(kc, 'default-kubeconfig'), removable: false,
-      })) count++
+      const file = path.join(os.homedir(), '.kube', 'config')
+      if (fs.existsSync(file)) addFromContent(fs.readFileSync(file, 'utf8'), {
+        source: 'default-kubeconfig', mode: 'default-kubeconfig', baseName: '本地默认集群', file, removable: false,
+      })
     } catch (e) { warnings.push(`default: ${e.message}`) }
   }
 
@@ -141,19 +161,20 @@ export function initClusters() {
 }
 
 /** 集群列表页数据：并发探测每个集群的版本 / 节点数 / 命名空间数 */
-export async function clusterSummaries(force = false) {
-  if (!force && summaryCache.data && Date.now() - summaryCache.at < CACHE_MS) return summaryCache.data
-  const rows = await Promise.all(listClusters().map(async c => {
+export async function clusterSummaries(force = false, account) {
+  if (!account && !force && summaryCache.data && Date.now() - summaryCache.at < CACHE_MS) return summaryCache.data
+  const rows = await Promise.all(listClusters().filter(c => !account || canAccessCluster(account, c.id)).map(async c => {
     const base = {
       id: c.id, name: c.name, server: c.server, context: c.context,
       authMode: c.authMode, source: c.source, mode: c.mode, removable: c.removable,
+      credentialExpiry: certificateExpiry(c.kc.getCurrentUser()),
       healthy: false, version: 'unknown', nodes: null, namespaces: null, error: '',
     }
     try {
       const [v, n, ns] = await Promise.all([
         kubeRequest('GET', '/version', { timeout: 5000, clusterId: c.id }),
-        kubeRequest('GET', '/api/v1/nodes', { timeout: 5000, clusterId: c.id }).catch(() => null),
-        kubeRequest('GET', '/api/v1/namespaces', { timeout: 5000, clusterId: c.id }).catch(() => null),
+        scopedList(account, { group: '', version: 'v1', plural: 'nodes', namespaced: false }, { clusterId: c.id, timeout: 5000 }).then(data => ({ data })).catch(() => null),
+        scopedList(account, { group: '', version: 'v1', plural: 'namespaces', namespaced: false }, { clusterId: c.id, timeout: 5000 }).then(data => ({ data })).catch(() => null),
       ])
       base.healthy = true
       base.version = v.data?.gitVersion || 'unknown'
@@ -164,7 +185,7 @@ export async function clusterSummaries(force = false) {
     return base
   }))
   rows.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
-  summaryCache = { at: Date.now(), data: rows }
+  if (!account) summaryCache = { at: Date.now(), data: rows }
   return rows
 }
 
@@ -200,8 +221,11 @@ export function addCluster(name, kubeconfigText) {
   catch (e) { throw new KubeError(400, `写入 kubeconfig 失败：${e.message}`) }
 
   let added = 0
-  contexts.forEach(({ context, kc, authMode }, i) => {
-    const cid = contexts.length > 1 ? `${id}-${i}` : id
+  const ids = []
+  contexts.forEach(({ context, kc, authMode }) => {
+    // Same derivation as startup: adding a cluster must not change its scope identity on restart.
+    const cid = `c-${shortHash(`file:${path.basename(file)}|${context}`)}`
+    ids.push(cid)
     if (safeRegister({
       id: cid, name: contexts.length > 1 ? `${cleanName} / ${context.split('@')[0]}` : cleanName,
       kc, source: `file:${path.basename(file)}`, mode: 'kubeconfig-file', authMode,
@@ -209,15 +233,16 @@ export function addCluster(name, kubeconfigText) {
     })) added++
   })
   summaryCache = { at: 0, data: null }
-  return { added, ids: contexts.length > 1 ? contexts.map((_, i) => `${id}-${i}`) : [id] }
+  return { added, ids }
 }
 
 /** 删除集群：移除 kubeconfig 文件并注销同源的全部 context */
-export function removeCluster(id) {
+export function removeCluster(id, account) {
   const c = getCluster(id)
   if (!c.removable) throw new KubeError(400, '该集群来自环境变量 / ServiceAccount / 只读挂载，不能在界面删除')
   const file = c.file
   const sameFile = listClusters().filter(x => x.file === file).map(x => x.id)
+  if (account) for (const cid of sameFile) assertClusterAccess(account, cid)
   if (file && fs.existsSync(file)) {
     try { fs.unlinkSync(file) } catch (e) { throw new KubeError(400, `删除凭据文件失败：${e.message}`) }
   }
@@ -238,12 +263,12 @@ export async function testCluster(id) {
  * 集群详情：聚合基本信息、版本、命名空间、资源统计、节点状态、近期事件与 API 组分布。
  * 这是平台级接口，不需要（也不改变）当前选中的 clusterId。
  */
-export async function clusterDetail(id) {
+export async function clusterDetail(id, account) {
   const c = getCluster(id)
   const [info, ov, disc] = await Promise.all([
-    clusterInfo(c.id),
-    overview(c.id),
-    discoverResources(false, c.id),
+    clusterInfo(c.id, account),
+    overview(c.id, undefined, account),
+    discoverResources(false, c.id).catch(() => null),
   ])
 
   return {
@@ -252,12 +277,13 @@ export async function clusterDetail(id) {
     server: c.server,
     context: c.context,
     authMode: c.authMode,
+    credentialExpiry: certificateExpiry(c.kc.getCurrentUser()),
     source: c.source,
     mode: c.mode,
     removable: c.removable,
     version: info.version,
     platform: info.platform,
-    resourceTypes: disc.length,
+    resourceTypes: disc ? disc.filter(r => !account || resourceAllowed(account, r)).length : null,
     namespaces: info.namespaces,
     stat: ov.stat,
     nodes: ov.nodes,
@@ -265,5 +291,6 @@ export async function clusterDetail(id) {
     podPhases: ov.podPhases,
     metricsAvailable: ov.metricsAvailable,
     partial: ov.partial,
+    errors: ov.errors,
   }
 }

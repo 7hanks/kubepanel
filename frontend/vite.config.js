@@ -13,8 +13,10 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // 本地开发时把 /api 与 /healthz 转发到后端，生产环境由 Express 同源托管
-      '/api': { target: 'http://127.0.0.1:8080', changeOrigin: true, ws: true },
-      '/healthz': { target: 'http://127.0.0.1:8080', changeOrigin: true },
+      '/api': { target: 'http://127.0.0.1:8080', changeOrigin: false, ws: true },
+      '/livez': { target: 'http://127.0.0.1:8080', changeOrigin: false },
+      '/readyz': { target: 'http://127.0.0.1:8080', changeOrigin: false },
+      '/healthz': { target: 'http://127.0.0.1:8080', changeOrigin: false },
     },
   },
 })

@@ -40,12 +40,15 @@ export const store = reactive({
       this.error = '未选择集群'
       throw new Error('未选择集群')
     }
+    const clusterId=this.currentClusterId
     try {
       const [cluster, discovery] = await Promise.all([api.cluster(), api.discovery()])
+      if (this.currentClusterId!==clusterId) return
       this.cluster = cluster
       this.discovery = discovery
       this.ready = true
     } catch (e) {
+      if (this.currentClusterId!==clusterId) return
       this.error = e.message || '无法连接 Kubernetes 集群'
       throw e
     }

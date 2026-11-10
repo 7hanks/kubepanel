@@ -2,6 +2,8 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { config } from './config.js'
+import { promisify } from 'node:util'
+const scryptAsync = promisify(crypto.scrypt)
 
 /**
  * 登录凭据持久化。
@@ -24,12 +26,12 @@ export function readCredential() {
   try {
     const raw = fs.readFileSync(FILE, 'utf8')
     const rec = JSON.parse(raw)
-    if (!rec || !rec.salt || !rec.hash) return null
+    if (!rec || !rec.salt || !rec.hash) throw new Error('凭据文件格式错误')
     // 换了 DASHBOARD_USERNAME 时，旧账号的密码哈希不再适用
     if (rec.username && rec.username !== config.username) return null
     return rec
   } catch (e) {
-    if (e.code !== 'ENOENT') console.warn(`[KubePanel] 凭据文件不可用（${FILE}）：${e.message}`)
+    if (e.code !== 'ENOENT') throw Object.assign(new Error('凭据文件不可用，已拒绝回退到初始密码；请恢复备份'), {status:503})
     return null
   }
 }
@@ -39,11 +41,11 @@ export function credentialSource() {
 }
 
 /** 校验密码：有落盘凭据用哈希比对，否则交给调用方按环境变量比较 */
-export function verifyPassword(password) {
+export async function verifyPassword(password) {
   const rec = readCredential()
   if (!rec) return null
   const expected = Buffer.from(String(rec.hash), 'hex')
-  const actual = scrypt(password, rec.salt)
+  const actual = await scryptAsync(String(password), rec.salt, KEY_LEN)
   if (expected.length !== actual.length) return false
   return crypto.timingSafeEqual(expected, actual)
 }

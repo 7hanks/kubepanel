@@ -11,45 +11,45 @@
       </div>
       <div class="kp-side-scroll">
         <template v-for="g in groups" :key="g.title">
-          <div class="kp-group-title">{{ g.title }}</div>
-          <div
-            v-for="it in g.items" :key="it.path"
+          <button v-if="g.advanced && !menuFilter" type="button" class="kp-group-title advanced-toggle" :aria-expanded="showAdvanced" @click="showAdvanced=!showAdvanced">{{g.title}} {{showAdvanced ? '−':'+'}}</button><div v-else class="kp-group-title">{{ g.title }}</div>
+          <router-link v-for="it in (g.advanced && !showAdvanced && !menuFilter ? [] : g.items)" :key="it.path"
             class="kp-nav-item" :class="{ active: isActive(it.path) }"
-            :title="it.kind ? it.label + ' (' + it.kind + ')' : it.label" @click="go(it.path)"
-          >
+            :title="it.kind ? it.label + ' (' + it.kind + ')' : it.label" 
+           :to="cpath(it.path)">
             <el-icon><component :is="it.icon || 'Document'" /></el-icon>
             <span>{{ it.label }}</span>
-          </div>
+          </router-link>
         </template>
 
         <div class="kp-group-title">平台</div>
-        <div v-if="canReadCluster" class="kp-nav-item" :title="collapsed ? '集群列表' : ''" @click="router.push('/clusters')">
+        <router-link v-if="can('audit:list')" class="kp-nav-item" to="/audit">操作审计</router-link>
+        <router-link v-if="canReadCluster" class="kp-nav-item" :title="collapsed ? '集群列表' : ''"  :to="'/clusters'">
           <el-icon><OfficeBuilding /></el-icon><span>集群列表</span>
-        </div>
-        <div v-if="canReadUsers" class="kp-nav-item" :class="{ open: showUserNav }" :title="collapsed ? '用户管理' : ''" @click="showUserNav = !showUserNav">
+        </router-link>
+        <button type="button" v-if="canReadUsers" class="kp-nav-item" :class="{ open: showUserNav }" :title="collapsed ? '用户管理' : ''"  @click="showUserNav = !showUserNav">
           <el-icon><User /></el-icon><span>用户管理</span>
           <el-icon class="kp-nav-caret"><ArrowDown /></el-icon>
-        </div>
+        </button>
         <template v-if="canReadUsers && showUserNav">
-          <div class="kp-nav-item kp-subnav-item" :title="collapsed ? '用户' : ''" @click="router.push('/users')">
+          <router-link class="kp-nav-item kp-subnav-item" :title="collapsed ? '用户' : ''"  :to="'/users'">
             <span>用户</span>
-          </div>
-          <div class="kp-nav-item kp-subnav-item" :title="collapsed ? '角色' : ''" @click="router.push('/roles')">
+          </router-link>
+          <router-link class="kp-nav-item kp-subnav-item" :title="collapsed ? '角色' : ''"  :to="'/roles'">
             <span>角色</span>
-          </div>
+          </router-link>
         </template>
-        <div v-if="canReadRegistry" class="kp-nav-item" :title="collapsed ? '镜像仓库' : ''" @click="router.push('/registries')">
+        <router-link v-if="canReadRegistry" class="kp-nav-item" :title="collapsed ? '镜像仓库' : ''"  :to="'/registries'">
           <el-icon><Box /></el-icon><span>镜像仓库</span>
-        </div>
-        <div v-if="canReadMonitor" class="kp-nav-item" :title="collapsed ? '监控' : ''" @click="router.push('/monitor')">
+        </router-link>
+        <router-link v-if="canReadMonitor" class="kp-nav-item" :title="collapsed ? '监控' : ''"  :to="'/monitor'">
           <el-icon><TrendCharts /></el-icon><span>监控</span>
-        </div>
+        </router-link>
       </div>
       <div class="kp-side-footer">
-        <div class="kp-nav-item" :title="collapsed ? '展开菜单' : ''" @click="toggleCollapse">
+        <button type="button" class="kp-nav-item" :title="collapsed ? '展开菜单' : ''"  @click="toggleCollapse">
           <el-icon><component :is="collapsed ? 'Expand' : 'Fold'" /></el-icon>
           <span>收起菜单</span>
-        </div>
+        </button>
       </div>
     </aside>
 
@@ -58,12 +58,12 @@
       <header class="kp-header">
         <div class="kp-header-left">
           <el-tooltip :content="collapsed ? '展开侧栏' : '收起侧栏'" placement="bottom">
-            <el-button size="small" circle text @click="toggleCollapse">
+            <el-button size="small" circle text aria-label="展开或收起侧栏" @click="toggleCollapse">
               <el-icon><component :is="collapsed ? 'Expand' : 'Fold'" /></el-icon>
             </el-button>
           </el-tooltip>
           <el-tooltip content="返回集群列表" placement="bottom">
-            <el-button size="small" circle text @click="goClusterList"><el-icon><OfficeBuilding /></el-icon></el-button>
+            <el-button size="small" circle text aria-label="返回集群列表" @click="goClusterList"><el-icon><OfficeBuilding /></el-icon></el-button>
           </el-tooltip>
           <span class="kp-header-sep" />
           <el-select
@@ -73,7 +73,7 @@
             <el-option v-for="c in store.clusters" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
           <span class="kp-crumb">{{ title }}</span>
-          <el-tag v-if="store.cluster" type="info" size="small" effect="plain">{{ store.cluster.version }}</el-tag>
+          <el-tag disable-transitions v-if="store.cluster" type="info" size="small" effect="plain">{{ store.cluster.version }}</el-tag>
         </div>
 
         <div class="kp-header-left">
@@ -83,9 +83,9 @@
             <el-option v-for="ns in store.namespaces" :key="ns" :label="ns" :value="ns" />
           </el-select>
           <el-dropdown @command="setAutoRefresh">
-            <span class="kp-header-action">
+            <button type="button" class="kp-header-action">
               <el-icon><Timer /></el-icon>{{ autoLabel }}<el-icon><ArrowDown /></el-icon>
-            </span>
+            </button>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item :command="0">关闭自动刷新</el-dropdown-item>
@@ -96,14 +96,14 @@
             </template>
           </el-dropdown>
           <el-tooltip content="刷新当前数据" placement="bottom">
-            <el-button size="small" circle text :loading="reloading" @click="reload"><el-icon><Refresh /></el-icon></el-button>
+            <el-button size="small" circle text :loading="reloading" aria-label="刷新当前数据" @click="reload"><el-icon><Refresh /></el-icon></el-button>
           </el-tooltip>
           <el-tooltip content="关于" placement="bottom">
-            <el-button size="small" circle text @click="onCommand('about')"><el-icon><QuestionFilled /></el-icon></el-button>
+            <el-button size="small" circle text aria-label="关于" @click="onCommand('about')"><el-icon><QuestionFilled /></el-icon></el-button>
           </el-tooltip>
           <span class="kp-header-sep" />
           <el-dropdown @command="onCommand">
-            <span class="kp-header-action"><el-icon><UserFilled /></el-icon>{{ username }}<el-icon><ArrowDown /></el-icon></span>
+            <button type="button" class="kp-header-action"><el-icon><UserFilled /></el-icon>{{ username }}<el-icon><ArrowDown /></el-icon></button>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item v-if="roleLabel" disabled>{{ roleLabel }}</el-dropdown-item>
@@ -126,7 +126,7 @@
             <el-button link type="primary" @click="goClusterList">返回集群列表</el-button>
           </template>
         </el-alert>
-        <router-view v-slot="{ Component }">
+        <router-view v-if="store.ready" v-slot="{ Component }">
           <component :is="Component" :key="route.fullPath" />
         </router-view>
       </main>
@@ -145,18 +145,21 @@ import {
 } from '@element-plus/icons-vue'
 import { store } from '../store'
 import { navGroups } from '../config/resources'
+import { confirmContextChange } from '../utils/navigation'
 import { cpath, CLUSTERS_PATH } from '../utils/path'
+import api from '../api'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import {
   canReadCluster as permitCluster, canReadUsers as permitUsers,
   canReadRegistry as permitRegistry, canReadMonitor as permitMonitor,
-  refreshSession, clearSession, roleName,
+  refreshSession, clearSession, roleName, can, canResource,
 } from '../utils/perm'
 
 const route = useRoute()
 const router = useRouter()
 const reloading = ref(false)
 const menuFilter = ref('')
+const showAdvanced=ref(false)
 const username = ref(localStorage.getItem('kp_user') || 'admin')
 const roleLabel = ref(roleName())
 const showUserNav = ref(true)
@@ -183,7 +186,7 @@ const canReadMonitor = computed(() => allow.value.monitor)
 const autoLabel = computed(() => autoRefresh.value ? `${autoRefresh.value}s 刷新` : '自动刷新')
 
 const groups = computed(() => {
-  const base = navGroups.map(g => ({ ...g }))
+  const base = navGroups.map(g => ({ ...g,items:g.items.filter(it=>!it.plural || canResource(it,'list',store.namespace)) })).filter(g=>g.items.length)
   const f = menuFilter.value.trim().toLowerCase()
   if (!f) return base
   return base
@@ -228,10 +231,9 @@ function isActive(path) {
 function go(path) { if (route.path !== cpath(path)) router.push(cpath(path)) }
 function goClusterList() { router.push(CLUSTERS_PATH) }
 function switchCluster(id) {
-  store.setCluster(id)
   router.push(cpath('/overview', id))
 }
-function changeNs(ns) { store.setNamespace(ns) }
+async function changeNs(ns) { if (await confirmContextChange()) store.setNamespace(ns) }
 
 /** 改完密码旧 token 仍然有效，但一律要求重新登录，避免“改了却没生效”的困惑 */
 function afterPasswordChanged() {
@@ -248,7 +250,7 @@ async function reload() {
 }
 
 async function onCommand(cmd) {
-  if (cmd === 'logout') {
+  if (cmd === 'logout') { await api.logout().catch(() => {});
     clearSession()
     router.push('/login')
   } else if (cmd === 'password') {

@@ -2,18 +2,29 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import express from 'express'
-import cors from 'cors'
 import { config } from './src/config.js'
 import { kubeRequest, KubeError, listClusters } from './src/kube.js'
 import { initClusters } from './src/clusterService.js'
 import { attachTerminal } from './src/terminal.js'
 import { credentialMeta } from './src/userStore.js'
 import router from './src/routes.js'
+import { auditMiddleware } from './src/auditService.js'
 
 const app = express()
 app.disable('x-powered-by')
-app.use(cors())
+app.set('trust proxy', config.trustProxy)
+app.use((req,res,next) => {
+  res.setHeader('X-Content-Type-Options','nosniff')
+  res.setHeader('X-Frame-Options','SAMEORIGIN')
+  res.setHeader('Referrer-Policy','no-referrer')
+  res.setHeader('Permissions-Policy','camera=(), microphone=(), geolocation=()')
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-src http: https:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'")
+  if (req.secure) res.setHeader('Strict-Transport-Security','max-age=31536000')
+  if (req.path.startsWith('/api')) res.setHeader('Cache-Control','no-store')
+  next()
+})
 app.use(express.json({ limit: '8mb' }))
+app.use('/api', auditMiddleware)
 
 // 启动时构建多集群注册表
 let boot = { count: 0, warnings: [] }
@@ -25,45 +36,19 @@ try {
   console.error(`[KubePanel] 集群注册表初始化失败：${e.message}`)
 }
 
-// 健康检查：不要求认证，供 Docker HEALTHCHECK / K8s probe 使用
-// 探针只判定「本服务进程是否可用」。导入的集群属于外部依赖，
-// 单个集群 API Server 超时属于业务降级，不应把容器标成 unhealthy
-// （否则会触发无意义的重启与告警，且此时集群列表页仍需可用来修复凭据）。
-// 各集群连通性照常完整上报，便于监控与排障。
-let healthCache = { at: 0, states: [] }
-app.get('/healthz', async (req, res) => {
-  if (Date.now() - healthCache.at > 10000) {
-    const states = await Promise.all(listClusters().map(async c => {
-      try {
-        await kubeRequest('GET', '/version', { timeout: 2000, clusterId: c.id })
-        return { id: c.id, name: c.name, ok: true }
-      } catch (e) {
-        return { id: c.id, name: c.name, ok: false, error: e.message }
-      }
-    }))
-    healthCache = { at: Date.now(), states }
-  }
-  const states = healthCache.states
-  const reachable = states.filter(s => s.ok).length
-  const kubeStatus = states.length === 0 ? 'unconfigured'
-    : reachable === 0 ? 'unreachable'
-      : reachable === states.length ? 'connected'
-        : 'partially-unreachable'
-  res.status(200).json({
-    // status 只表示服务进程存活（liveness）；集群连通性看 kube / clusters
-    status: 'ok',
-    service: 'kubepanel', version: '1.4.0',
-    kube: kubeStatus,
-    healthyClusters: reachable,
-    totalClusters: states.length,
-    clusters: states,
-    warnings: boot.warnings.length ? boot.warnings : undefined,
-  })
+// Probes are constant-time and never wait on a remote API or expose cluster metadata.
+const probe = () => ({status:'ok',service:'kubepanel',version:config.version,revision:config.revision,sourceManifestSha256:config.sourceManifestSha256})
+app.get(['/livez','/healthz'], (req,res) => res.json(probe()))
+app.get('/readyz', (req,res) => {
+  try {
+    fs.accessSync(config.dataDir,fs.constants.R_OK|fs.constants.W_OK)
+    res.json(probe())
+  } catch { res.status(503).json({status:'not-ready',message:'运行数据目录不可用'}) }
 })
 
 // 一个集群都没有时，除「平台级」接口（集群/仓库/监控/账号/用户角色）外的接口给出明确提示
 app.use('/api/v1', (req, res, next) => {
-  const platform = ['/v1/clusters', '/v1/auth', '/v1/registries', '/v1/monitor', '/v1/users', '/v1/roles']
+  const platform = ['/v1/clusters', '/v1/auth', '/v1/registries', '/v1/monitor', '/v1/users', '/v1/roles', '/v1/audit']
   if (listClusters().length === 0 && !platform.some(p => req.originalUrl.includes(p))) {
     return res.status(503).json({ message: '尚未配置任何集群，请先在集群列表页导入 kubeconfig' })
   }
@@ -76,7 +61,8 @@ const publicDir = config.publicDir
 if (fs.existsSync(publicDir)) {
   app.use(express.static(publicDir, { index: false, maxAge: '1h' }))
   app.use((req, res, next) => {
-    if (req.method === 'GET' && !req.path.startsWith('/api') && !req.path.startsWith('/healthz')) {
+    if (req.method === 'GET' && !req.path.startsWith('/api')) {
+      res.setHeader('Cache-Control','no-cache')
       return res.sendFile(path.join(publicDir, 'index.html'))
     }
     next()
@@ -91,7 +77,7 @@ if (fs.existsSync(publicDir)) {
 // 统一错误处理：KubeError 保留 API Server 的状态码与原始 message
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err)
-  if (err instanceof KubeError) {
+  if (err instanceof KubeError || (err?.status >= 400 && err?.status < 600)) {
     return res.status(err.status || 500).json({ message: err.message, details: err.details })
   }
   if (err?.type === 'entity.parse.failed') {
@@ -102,12 +88,13 @@ app.use((err, req, res, next) => {
 })
 
 const server = http.createServer(app)
-attachTerminal(server)
+attachTerminal(server, {isSecureRequest:req => !!req.socket.encrypted ||
+  (app.get('trust proxy fn')(req.socket.remoteAddress,0) && String(req.headers['x-forwarded-proto']||'').split(',')[0].trim()==='https')})
 
 server.listen(config.port, config.host, () => {
   console.log('')
   console.log('  ╔══════════════════════════════════════════════════════════╗')
-  console.log('  ║  KubePanel v1.4.0  ·  多集群 Kubernetes 控制台              ║')
+  console.log(`  KubePanel v${config.version} · ${config.revision}`)
   console.log('  ╚══════════════════════════════════════════════════════════╝')
   console.log(`  监听地址      : http://${config.host}:${config.port}`)
   console.log(`  集群数量      : ${boot.count}`)
@@ -119,7 +106,7 @@ server.listen(config.port, config.host, () => {
       console.log(`  登录密码      : 已在界面上自定义（${meta.updatedAt || '时间未知'}更新，哈希存于数据目录）`)
       console.log('  提示          : 此时 DASHBOARD_PASSWORD 已失效，忘记密码见 README「重置密码」')
     } else {
-      console.log(`  登录密码      : ${config.password}${config.passwordGenerated ? '   <== 自动生成，请妥善保存' : ''}`)
+      console.log(config.passwordGenerated ? '  初始密码保存在数据目录 .initial-password（仅管理员可读）' : '  登录密码已通过环境配置提供（不记录明文）')
       console.log(`  数据目录      : ${config.dataDir}（界面改密码后的哈希存这里）`)
     }
   }
@@ -134,3 +121,7 @@ server.listen(config.port, config.host, () => {
 })
 
 process.on('unhandledRejection', err => console.error('[KubePanel] unhandledRejection:', err))
+for (const signal of ['SIGTERM','SIGINT']) process.on(signal,()=>{
+  server.close(()=>process.exit(0))
+  setTimeout(()=>process.exit(0),10000).unref()
+})

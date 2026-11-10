@@ -1,4 +1,5 @@
 import api from '../api'
+import { scopeAllows } from './scope'
 
 /**
  * 前端会话里的权限快照。
@@ -11,6 +12,10 @@ import api from '../api'
 const KEY_PERMS = 'kp_perms'
 
 export function saveSession(data = {}) {
+  localStorage.removeItem('kp_token')
+  localStorage.setItem('kp_authenticated','1')
+  if (data.csrfToken) sessionStorage.setItem('kp_csrf',data.csrfToken)
+  if (data.scope) localStorage.setItem('kp_scope',JSON.stringify(data.scope))
   if (data.username) localStorage.setItem('kp_user', data.username)
   if (data.nickname !== undefined) localStorage.setItem('kp_nickname', data.nickname || '')
   if (data.role) localStorage.setItem('kp_role', data.role)
@@ -19,7 +24,8 @@ export function saveSession(data = {}) {
 }
 
 export function clearSession() {
-  for (const k of ['kp_token', 'kp_user', KEY_PERMS, 'kp_role', 'kp_role_name', 'kp_nickname']) {
+  sessionStorage.removeItem('kp_csrf')
+  for (const k of ['kp_token', 'kp_authenticated', 'kp_scope', 'kp_user', KEY_PERMS, 'kp_role', 'kp_role_name', 'kp_nickname']) {
     localStorage.removeItem(k)
   }
 }
@@ -76,7 +82,7 @@ export function roleName() {
 }
 
 export function isLoggedIn() {
-  return !!localStorage.getItem('kp_token')
+  return localStorage.getItem('kp_authenticated') === '1'
 }
 
 /** 登录后落到第一个有权访问的页面 */
@@ -85,6 +91,7 @@ export function landingPath() {
   if (canList('registry')) return '/registries'
   if (canList('user')) return '/users'
   if (canList('monitor')) return '/monitor'
+  if (can('audit:list')) return '/audit'
   // 只有某个对象的写权限时，仍然给出一个能看的页面
   if (canReadCluster()) return '/clusters'
   if (canReadRegistry()) return '/registries'
@@ -98,4 +105,12 @@ export async function refreshSession() {
   const p = await api.profile()
   saveSession(p)
   return p
+}
+
+export function canResource(meta, action, namespace, clusterId=localStorage.getItem('kp_cluster')) {
+  if (!can(`cluster:${action}`) && !(['list','detail'].includes(action) && canAny('cluster:list','cluster:detail'))) return false
+  if (can('*')) return true
+  if (meta.plural==='secrets' && ['list','detail'].includes(action) && !can('secret:read')) return false
+  if (meta.group==='rbac.authorization.k8s.io' && !['list','detail'].includes(action) && !can('rbac:write')) return false
+  try { return scopeAllows(JSON.parse(localStorage.getItem('kp_scope') || '{}'), {...meta,clusterId,namespace}) } catch { return false }
 }

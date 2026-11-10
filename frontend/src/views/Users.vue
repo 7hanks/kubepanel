@@ -39,7 +39,7 @@
               <div style="display:flex;align-items:center;gap:8px">
                 <span class="avatar">{{ (row.nickname || row.username).slice(0, 1).toUpperCase() }}</span>
                 <strong style="font-weight:600">{{ row.username }}</strong>
-                <el-tag v-if="row.builtin" size="small" type="info" effect="plain">内置</el-tag>
+                <el-tag disable-transitions v-if="row.builtin" size="small" type="info" effect="plain">内置</el-tag>
               </div>
             </template>
           </el-table-column>
@@ -51,7 +51,7 @@
           </el-table-column>
           <el-table-column label="角色" min-width="150">
             <template #default="{ row }">
-              <el-tag size="small" :type="row.builtin ? 'danger' : 'primary'" effect="light">{{ row.roleName }}</el-tag>
+              <el-tag disable-transitions size="small" :type="row.builtin ? 'danger' : 'primary'" effect="light">{{ row.roleName }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="权限范围" min-width="240">
@@ -61,7 +61,7 @@
           </el-table-column>
           <el-table-column label="状态" width="90">
             <template #default="{ row }">
-              <el-tag size="small" :type="row.enabled ? 'success' : 'info'" effect="plain">
+              <el-tag disable-transitions size="small" :type="row.enabled ? 'success' : 'info'" effect="plain">
                 {{ row.enabled ? '启用' : '停用' }}
               </el-tag>
             </template>

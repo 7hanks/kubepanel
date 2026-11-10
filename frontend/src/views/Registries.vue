@@ -41,7 +41,7 @@
             </template>
           </el-table-column>
           <el-table-column label="类型" width="100">
-            <template #default="{ row }"><el-tag size="small" effect="plain">{{ row.type === 'harbor' ? 'Harbor' : row.type }}</el-tag></template>
+            <template #default="{ row }"><el-tag disable-transitions size="small" effect="plain">{{ row.type === 'harbor' ? 'Harbor' : row.type }}</el-tag></template>
           </el-table-column>
           <el-table-column label="地址" min-width="220">
             <template #default="{ row }"><span class="kp-mono kp-muted">{{ row.url }}</span></template>
@@ -59,7 +59,7 @@
           </el-table-column>
           <el-table-column label="状态" width="120">
             <template #default="{ row }">
-              <el-tag v-if="row.health" :type="row.health.ok ? 'success' : 'danger'" size="small" effect="light">
+              <el-tag disable-transitions v-if="row.health" :type="row.health.ok ? 'success' : 'danger'" size="small" effect="light">
                 {{ row.health.ok ? '正常' : '异常' }}
               </el-tag>
               <span v-else class="kp-muted" style="font-size:12px">未测试</span>
@@ -99,8 +99,9 @@
               <el-input v-model="form.password" type="password" show-password :placeholder="editingId ? '留空表示不修改' : '密码 / CLI secret'" style="flex:1" />
             </div>
           </el-form-item>
+          <el-form-item label="信任 CA（PEM，可选）"><el-input v-model="form.ca" type="textarea" :rows="4" placeholder="自签证书请提供 CA；编辑时留空保留已保存 CA" /></el-form-item>
           <el-form-item>
-            <el-checkbox v-model="form.insecure">跳过 TLS 证书校验（自签证书 / NodePort 访问时建议开启）</el-checkbox>
+            <el-checkbox v-model="form.insecure">跳过 TLS 证书校验（仅在明确了解风险时开启）</el-checkbox>
           </el-form-item>
         </el-form>
         <template #footer>
@@ -138,23 +139,27 @@
         <div v-loading="browseLoading">
           <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
             <span class="kp-muted" style="font-size:12.5px">项目</span>
-            <el-select v-model="project" size="small" style="width:220px" @change="loadRepos">
+            <el-select v-model="project" size="small" style="width:220px" @change="changeProject">
               <el-option v-for="p in projects" :key="p.name" :label="`${p.name}（${p.repoCount} 仓库）`" :value="p.name" />
             </el-select>
-            <el-tag v-if="currentProject?.public" size="small" type="success" effect="plain">公开</el-tag>
+            <el-tag disable-transitions v-if="currentProject?.public" size="small" type="success" effect="plain">公开</el-tag>
             <span style="flex:1" />
             <el-input v-model="repoFilter" size="small" placeholder="过滤仓库名" clearable style="width:180px" />
           </div>
 
-          <el-table :data="filteredRepos" size="small" row-key="name">
+          <el-pagination v-model:current-page="projectPage.page" :page-size="projectPage.pageSize" :total="projectPage.total" layout="total, prev, pager, next" size="small" aria-label="项目分页" @current-change="loadProjects" style="margin-bottom:12px" />
+          <el-alert v-if="browseError" type="error" :title="browseError" :closable="false" style="margin-bottom:12px"><el-button @click="loadProjects">重试</el-button></el-alert>
+          <p class="kp-muted" v-if="repoFilter">仓库名筛选只覆盖当前页。</p>
+          <el-table :data="filteredRepos" @expand-change="expandRepository" size="small" row-key="name">
             <el-table-column type="expand">
               <template #default="{ row }">
                 <div style="padding:6px 10px 12px 42px" v-loading="!!artifactsLoading[row.name]">
                   <div v-if="!artifacts[row.name]" class="kp-muted" style="font-size:12px">展开即加载标签…</div>
-                  <el-table v-else :data="artifacts[row.name]" size="small" border>
+                  <el-alert v-if="artifactErrors[row.name]" type="error" :title="artifactErrors[row.name]" :closable="false"><el-button @click="loadArtifacts(row, artifactPages[row.name]?.page || 1)">重试</el-button></el-alert>
+                  <el-table v-if="artifacts[row.name]" :data="artifacts[row.name]" size="small" border>
                     <el-table-column label="标签" min-width="140">
                       <template #default="{ row: a }">
-                        <el-tag v-for="t in a.tags" :key="t" size="small" effect="plain" style="margin-right:4px">{{ t }}</el-tag>
+                        <el-tag disable-transitions v-for="t in a.tags" :key="t" size="small" effect="plain" style="margin-right:4px">{{ t }}</el-tag>
                         <span v-if="!a.tags.length" class="kp-mono kp-muted" style="font-size:12px">{{ a.shortDigest }}</span>
                       </template>
                     </el-table-column>
@@ -175,6 +180,7 @@
                       </template>
                     </el-table-column>
                   </el-table>
+                  <el-pagination v-if="artifactPages[row.name]" v-model:current-page="artifactPages[row.name].page" :page-size="artifactPages[row.name].pageSize" :total="artifactPages[row.name].total" layout="total, prev, pager, next" size="small" :aria-label="`${row.name} 制品分页`" @current-change="p=>loadArtifacts(row,p)" />
                 </div>
               </template>
             </el-table-column>
@@ -195,6 +201,7 @@
             </el-table-column>
             <template #empty><div class="kp-empty">该项目下没有仓库</div></template>
           </el-table>
+          <el-pagination v-model:current-page="repoPage.page" :page-size="repoPage.pageSize" :total="repoPage.total" layout="total, prev, pager, next" size="small" aria-label="仓库分页" @current-change="loadRepos" style="margin-top:12px" />
         </div>
       </el-drawer>
     </main>
@@ -202,12 +209,14 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Box, CircleCheck, Warning, MagicStick } from '@element-plus/icons-vue'
 import { canCreate, canUpdate, canDelete } from '../utils/perm'
 import PlatformLayout from '../layout/PlatformLayout.vue'
 import api from '../api'
+import {normalizePage} from '../utils/pagination'
+import {createRequestGate} from '../utils/resource'
 
 const canCreateReg = computed(() => canCreate('registry'))
 const canUpdateReg = computed(() => canUpdate('registry'))
@@ -218,7 +227,7 @@ const testing = ref('')
 const registries = ref([])
 const formVisible = ref(false)
 const editingId = ref('')
-const form = reactive({ name: '', url: '', username: '', password: '', insecure: true })
+const form = reactive({ name: '', url: '', username: '', password: '', insecure: false, ca: '' })
 
 const discoverVisible = ref(false)
 const discovering = ref(false)
@@ -234,6 +243,14 @@ const repos = ref([])
 const repoFilter = ref('')
 const artifacts = reactive({})
 const artifactsLoading = reactive({})
+const artifactErrors=reactive({})
+const artifactPages=reactive({})
+const projectPage=reactive({page:1,pageSize:20,total:0})
+const repoPage=reactive({page:1,pageSize:20,total:0})
+const browseError=ref('')
+const projectGate=createRequestGate(),repoGate=createRequestGate()
+let artifactEpoch=0
+const artifactRequests=new Map()
 
 const okCount = computed(() => registries.value.filter(r => r.health?.ok).length)
 const badCount = computed(() => registries.value.filter(r => r.health && !r.health.ok).length)
@@ -259,12 +276,12 @@ async function load() {
 
 function openAdd() {
   editingId.value = ''
-  Object.assign(form, { name: '', url: '', username: '', password: '', insecure: true })
+  Object.assign(form, { name: '', url: '', username: '', password: '', insecure: false, ca: '' })
   formVisible.value = true
 }
 function openEdit(row) {
   editingId.value = row.id
-  Object.assign(form, { name: row.name, url: row.url, username: row.username, password: '', insecure: row.insecure })
+  Object.assign(form, { name: row.name, url: row.url, username: row.username, password: '', insecure: row.insecure, ca:'' })
   formVisible.value = true
 }
 
@@ -272,8 +289,8 @@ async function submitForm() {
   if (!form.url.trim()) return ElMessage.warning('请填写仓库地址')
   saving.value = true
   try {
-    if (editingId.value) await api.updateRegistry(editingId.value, { ...form })
-    else await api.addRegistry({ ...form })
+    if (editingId.value) await api.updateRegistry(editingId.value, { ...form,...(!form.ca.trim() ? {ca:undefined} : {}) })
+    else await api.addRegistry({ ...form,...(!form.ca.trim() ? {ca:undefined} : {}) })
     ElMessage.success(editingId.value ? '已保存' : '已添加')
     formVisible.value = false
     await load()
@@ -322,50 +339,57 @@ function useCandidate(row) {
   openAdd()
   form.name = row.likelyHarbor ? 'harbor' : row.service
   form.url = row.url
-  form.insecure = true
+  form.insecure = false
 }
 
+function resetArtifacts() {
+ artifactEpoch++
+ for(const map of [artifacts,artifactsLoading,artifactErrors,artifactPages]) for(const key of Object.keys(map)) delete map[key]
+ artifactRequests.clear()
+}
 async function browse(row) {
-  browseRegistry.value = row
-  browseVisible.value = true
-  browseLoading.value = true
-  projects.value = []
-  repos.value = []
-  project.value = ''
-  Object.keys(artifacts).forEach(k => delete artifacts[k])
-  try {
-    projects.value = await api.registryProjects(row.id)
-    if (projects.value.length) {
-      project.value = projects.value[0].name
-      await loadRepos()
-    }
-  } catch (e) { /* 拦截器已提示 */ }
-  finally { browseLoading.value = false }
+ browseRegistry.value=row; browseVisible.value=true; projects.value=[]; repos.value=[]; project.value='';repoFilter.value=''
+ projectPage.page=1;projectPage.total=0;repoPage.page=1;repoPage.total=0;resetArtifacts()
+ await loadProjects()
 }
-
+async function loadProjects() {
+ const request=projectGate.next(),registryId=browseRegistry.value?.id
+ if(!registryId)return
+ repoGate.invalidate();resetArtifacts();projects.value=[];repos.value=[];project.value='';repoPage.total=0;repoPage.page=1
+ browseLoading.value=true;browseError.value=''
+ try {
+  const data=normalizePage(await api.registryProjects(registryId,{page:projectPage.page,pageSize:projectPage.pageSize}),projectPage)
+  if(!projectGate.current(request))return
+  projects.value=data.items;Object.assign(projectPage,{page:data.page,pageSize:data.pageSize,total:data.total})
+  if(projects.value.length){project.value=projects.value[0].name;await loadRepos()}
+ } catch(e){if(projectGate.current(request))browseError.value=e.message || '项目加载失败'}
+ finally{if(projectGate.current(request))browseLoading.value=false}
+}
+function changeProject(){repoPage.page=1;repoFilter.value='';return loadRepos()}
 async function loadRepos() {
-  if (!project.value || !browseRegistry.value) return
-  browseLoading.value = true
-  try {
-    repos.value = await api.registryRepositories(browseRegistry.value.id, project.value)
-    Object.keys(artifacts).forEach(k => delete artifacts[k])
-    // 仓库不多时预取标签，展开即可看到；太多则展开时按需加载
-    if (repos.value.length <= 15) repos.value.forEach(r => loadArtifacts(r))
-  } catch (e) { repos.value = [] }
-  finally { browseLoading.value = false }
+ if(!project.value || !browseRegistry.value)return
+ const request=repoGate.next(),registryId=browseRegistry.value.id,projectName=project.value
+ resetArtifacts();repos.value=[];browseLoading.value=true;browseError.value=''
+ try {
+  const data=normalizePage(await api.registryRepositories(registryId,projectName,{page:repoPage.page,pageSize:repoPage.pageSize}),repoPage)
+  if(!repoGate.current(request))return
+  repos.value=data.items;Object.assign(repoPage,{page:data.page,pageSize:data.pageSize,total:data.total})
+ }catch(e){if(repoGate.current(request))browseError.value=e.message || '仓库加载失败'}
+ finally{if(repoGate.current(request))browseLoading.value=false}
 }
-
-async function loadArtifacts(row) {
-  if (artifacts[row.name] || artifactsLoading[row.name]) return
-  artifactsLoading[row.name] = true
-  try {
-    artifacts[row.name] = await api.registryArtifacts(browseRegistry.value.id, project.value, row.name)
-  } catch (e) {
-    artifacts[row.name] = []
-  } finally {
-    artifactsLoading[row.name] = false
-  }
+function expandRepository(row,expandedRows){if(expandedRows.some(r=>r.name===row.name) && !artifacts[row.name])loadArtifacts(row,1)}
+async function loadArtifacts(row,page=1) {
+ const epoch=artifactEpoch,request=Symbol(),registryId=browseRegistry.value?.id,projectName=project.value
+ if(!registryId)return
+ artifactRequests.set(row.name,request);artifactsLoading[row.name]=true;artifactErrors[row.name]=''
+ try {
+  const data=normalizePage(await api.registryArtifacts(registryId,projectName,row.name,{page,pageSize:20}),{page,pageSize:20})
+  if(epoch!==artifactEpoch || artifactRequests.get(row.name)!==request)return
+  artifacts[row.name]=data.items;artifactPages[row.name]={page:data.page,pageSize:data.pageSize,total:data.total}
+ }catch(e){if(epoch===artifactEpoch && artifactRequests.get(row.name)===request){artifacts[row.name]=[];artifactErrors[row.name]=e.message || '制品加载失败'}}
+ finally{if(epoch===artifactEpoch && artifactRequests.get(row.name)===request)artifactsLoading[row.name]=false}
 }
+onUnmounted(()=>{projectGate.invalidate();repoGate.invalidate();resetArtifacts()})
 
 function copy(text) {
   navigator.clipboard?.writeText(text)

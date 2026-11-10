@@ -23,3 +23,5 @@ qc-*.md
 quick-*.md
 quickcreate-*.md
 steps-*.json
+**/__pycache__/
+**/*.pyc

@@ -4,6 +4,9 @@ import path from 'node:path'
 import { config } from './config.js'
 import { SUPER_ROLE } from './permissions.js'
 import { getRole, permissionsOf, roleName as roleNameOf } from './roleService.js'
+import { normalizeScope } from './access.js'
+import { promisify } from 'node:util'
+import { credentialMeta } from './userStore.js'
 
 /**
  * 非 admin 账号的持久化。
@@ -17,6 +20,7 @@ const ALGO = 'scrypt'
 const KEY_LEN = 64
 const USERNAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{1,31}$/
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const scryptAsync = promisify(crypto.scrypt)
 
 function scrypt(password, salt) {
   return crypto.scryptSync(String(password), salt, KEY_LEN)
@@ -40,9 +44,10 @@ function readStore() {
   try {
     const raw = fs.readFileSync(FILE, 'utf8')
     const doc = JSON.parse(raw)
-    return Array.isArray(doc?.users) ? doc.users : []
+    if (!Array.isArray(doc?.users)) throw new Error('账号数据格式错误')
+    return doc.users
   } catch (e) {
-    if (e.code !== 'ENOENT') console.warn(`[KubePanel] 用户文件不可用（${FILE}）：${e.message}`)
+    if (e.code !== 'ENOENT') throw Object.assign(new Error('账号数据无法读取，请从备份恢复'), {status:503})
     return []
   }
 }
@@ -120,6 +125,7 @@ export function resolveAccount(username) {
       roleName: SUPER_ROLE.name,
       permissions: ['*'],
       builtin: true,
+      scope: normalizeScope(),
     }
   }
   const rec = findRaw(username)
@@ -131,7 +137,17 @@ export function resolveAccount(username) {
     roleName: roleNameOf(rec.role),
     permissions: permissionsOf(rec.role),
     builtin: false,
+    scope: normalizeScope(getRole(rec.role)?.scope),
   }
+}
+
+export function credentialStamp(username) {
+  if (username === config.username) {
+    const meta = credentialMeta()
+    return crypto.createHash('sha256').update(`${meta.source}:${meta.updatedAt || config.password}`).digest('hex')
+  }
+  const rec = findRaw(username)
+  return rec ? crypto.createHash('sha256').update(`${rec.salt}:${rec.hash}`).digest('hex') : ''
 }
 
 /** 某个角色下绑定的账号数（删除角色前校验） */
@@ -140,10 +156,12 @@ export function countUsersByRole(roleId) {
 }
 
 /** 校验非 admin 账号的密码 */
-export function verifyUserPassword(username, password) {
+export async function verifyUserPassword(username, password) {
   const rec = findRaw(username)
   if (!rec || rec.enabled === false) return false
-  return verifyHash(password, rec)
+  const expected = Buffer.from(String(rec.hash), 'hex')
+  const actual = await scryptAsync(String(password), rec.salt, KEY_LEN)
+  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual)
 }
 
 export function userExists(username) {

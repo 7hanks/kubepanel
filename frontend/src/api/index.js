@@ -2,14 +2,14 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
 // 后端同源托管，所有接口都在 /api 下
-const http = axios.create({ baseURL: '/api', timeout: 30000 })
+const http = axios.create({ baseURL: '/api', timeout: 30000, withCredentials: true })
 
 http.interceptors.request.use(cfg => {
-  const token = localStorage.getItem('kp_token')
-  if (token) cfg.headers.Authorization = `Bearer ${token}`
+  const csrf = sessionStorage.getItem('kp_csrf')
+  if (csrf && !['get','head','options'].includes(String(cfg.method).toLowerCase())) cfg.headers['X-CSRF-Token'] = csrf
   // 除集群管理接口外，所有请求都带上当前集群；后端按 clusterId 选择客户端
   const clusterId = localStorage.getItem('kp_cluster')
-  if (clusterId) cfg.params = { ...cfg.params, clusterId }
+  if (clusterId) cfg.params = { clusterId, ...cfg.params }
   return cfg
 })
 
@@ -21,7 +21,11 @@ http.interceptors.response.use(
     // 登录接口的失败由登录页就地展示（401 即「用户名或密码错误」），
     // 这里既不弹全局提示也不跳转，否则登录页的提示会被静默吞掉
     const isLogin = String(err.config?.url || '').includes('/auth/login')
-    if (status === 401) localStorage.removeItem('kp_token')
+    if (axios.isCancel(err)) return Promise.reject({ cancelled: true, message: '请求已取消' })
+    if (status === 401) {
+      for (const key of ['kp_token','kp_authenticated','kp_user','kp_perms','kp_role','kp_role_name','kp_scope']) localStorage.removeItem(key)
+      sessionStorage.removeItem('kp_csrf')
+    }
     if (!isLogin) {
       if (status === 401) {
         if (!location.pathname.startsWith('/login')) location.href = '/login'
@@ -42,6 +46,14 @@ export function resPath(group, version, plural, namespace, name) {
 }
 
 export const api = {
+  streamTicket: body => http.post('/v1/auth/stream-ticket', body),
+  audit: params => http.get('/v1/audit', { params }),
+  history: (namespace,name,kind) => http.get(`/v1/workloads/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/history`, {params:{kind}}),
+  rollback: (namespace,name,kind,revision,dryRun) => http.post(`/v1/workloads/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/rollback`, {revision,dryRun}, {params:{kind}}),
+  runCronJob: (namespace,name,dryRun) => http.post(`/v1/cronjobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/run`, {dryRun}),
+  suspendCronJob: (namespace,name,suspend,dryRun) => http.post(`/v1/cronjobs/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/suspend`, {suspend,dryRun}),
+  drainPreflight: name => http.get(`/v1/nodes/${encodeURIComponent(name)}/drain`),
+  drain: (name,body) => http.post(`/v1/nodes/${encodeURIComponent(name)}/drain`, body),
   // ---- 认证 ----
   login: (username, password) => http.post('/auth/login', { username, password }),
   logout: () => http.post('/auth/logout'),
@@ -75,14 +87,14 @@ export const api = {
   discovery: () => http.get('/v1/resources'),
 
   // ---- 通用资源 CRUD ----
-  list: (group, version, plural, params = {}) =>
-    http.get(resPath(group, version, plural), { params }),
+  list: (group, version, plural, params = {}, config = {}) =>
+    http.get(resPath(group, version, plural), { ...config, params }),
   get: (group, version, plural, namespace, name) =>
     http.get(resPath(group, version, plural, namespace, name)),
   create: (group, version, plural, namespace, body, params = {}) =>
     http.post(resPath(group, version, plural), body, { params: { namespace, ...params } }),
-  update: (group, version, plural, namespace, name, body) =>
-    http.put(resPath(group, version, plural, namespace, name), body),
+  update: (group, version, plural, namespace, name, body, params = {}) =>
+    http.put(resPath(group, version, plural, namespace, name), body, { params }),
   patch: (group, version, plural, namespace, name, body, patchType) =>
     http.patch(resPath(group, version, plural, namespace, name), body, { params: { patchType } }),
   remove: (group, version, plural, namespace, name, params = {}) =>
@@ -107,10 +119,10 @@ export const api = {
   removeRegistry: id => http.delete(`/v1/registries/${encodeURIComponent(id)}`),
   testRegistry: id => http.post(`/v1/registries/${encodeURIComponent(id)}/test`, {}),
   discoverRegistries: (clusterId, namespace) => http.post('/v1/registries/discover', { clusterId, namespace }),
-  registryProjects: id => http.get(`/v1/registries/${encodeURIComponent(id)}/projects`),
-  registryRepositories: (id, project) => http.get(`/v1/registries/${encodeURIComponent(id)}/repositories`, { params: { project } }),
-  registryArtifacts: (id, project, repository) =>
-    http.get(`/v1/registries/${encodeURIComponent(id)}/artifacts`, { params: { project, repository } }),
+  registryProjects: (id,options={}) => http.get(`/v1/registries/${encodeURIComponent(id)}/projects`,{params:options}),
+  registryRepositories: (id, project, options={}) => http.get(`/v1/registries/${encodeURIComponent(id)}/repositories`, { params: { project,...options } }),
+  registryArtifacts: (id, project, repository, options={}) =>
+    http.get(`/v1/registries/${encodeURIComponent(id)}/artifacts`, { params: { project, repository,...options } }),
 
   // ---- 监控（平台级，多 Grafana 实例 + 集群级指标） ----
   monitor: () => http.get('/v1/monitor'),
@@ -125,19 +137,17 @@ export const api = {
 export function logsUrl(namespace, pod, params = {}) {
   const q = new URLSearchParams({
     ...params,
-    token: localStorage.getItem('kp_token') || '',
     clusterId: localStorage.getItem('kp_cluster') || '',
   })
   return `/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs?${q}`
 }
 
-export function execWsUrl({ namespace, pod, container, shell }) {
+export function execWsUrl({ namespace, pod, container, shell, ticket }) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const q = new URLSearchParams({
-    namespace, pod,
+    namespace, pod, ticket,
     container: container || '',
     shell: shell || '/bin/sh',
-    token: localStorage.getItem('kp_token') || '',
     clusterId: localStorage.getItem('kp_cluster') || '',
   })
   return `${proto}//${location.host}/api/v1/ws/exec?${q}`

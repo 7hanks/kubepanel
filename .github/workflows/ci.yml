@@ -1,0 +1,29 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            server/package-lock.json
+            frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm --prefix server ci --no-audit --no-fund
+      - run: npm --prefix frontend ci --no-audit --no-fund
+      - run: npm --prefix server run check && npm --prefix server test
+      - run: npm --prefix frontend test && npm --prefix frontend run build
+      - run: python3 deploy/test_manifest.py
+      - run: python3 deploy/test_release.py
+      - run: bash -n deploy/backup.sh deploy/release.sh deploy/verify.sh deploy/smoke-test.sh
+      - run: docker compose config --quiet

@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { config } from './config.js'
 import { PERMISSIONS, SUPER_ROLE, normalizePermissions } from './permissions.js'
+import { normalizeScope } from './access.js'
 
 /**
  * 角色的持久化与 CRUD。
@@ -22,13 +23,13 @@ const PRESET_ROLES = [
     id: 'common',
     name: '普通用户',
     description: '只拥有集群对象的访问权限',
-    permissions: ['cluster:list', 'cluster:detail'],
+    permissions: ['cluster:list', 'cluster:detail', 'pod:logs'],
   },
   {
     id: 'cluster-admin',
     name: '集群管理员',
     description: '拥有集群对象的所有权限',
-    permissions: ['cluster:list', 'cluster:detail', 'cluster:create', 'cluster:update', 'cluster:delete'],
+    permissions: ['cluster:list', 'cluster:detail', 'cluster:create', 'cluster:update', 'cluster:delete', 'pod:logs', 'pod:exec', 'node:maintain'],
   },
   {
     id: 'registry-admin',
@@ -59,8 +60,9 @@ function readFile() {
     const raw = fs.readFileSync(FILE, 'utf8')
     const doc = JSON.parse(raw)
     if (Array.isArray(doc?.roles)) return doc.roles
+    throw new Error('角色数据格式错误')
   } catch (e) {
-    if (e.code !== 'ENOENT') console.warn(`[KubePanel] 角色文件不可用（${FILE}）：${e.message}`)
+    if (e.code !== 'ENOENT') throw Object.assign(new Error('角色数据无法读取，已停止自动初始化；请从备份恢复'), {status:503})
   }
   return null
 }
@@ -94,6 +96,7 @@ function publicRole(rec) {
     name: rec.name,
     description: rec.description || '',
     permissions: normalizePermissions(rec.permissions),
+    scope: normalizeScope(rec.scope),
     builtin: !!rec.builtin,
     createdAt: rec.createdAt || null,
     updatedAt: rec.updatedAt || null,
@@ -168,6 +171,7 @@ export function createRole(input = {}) {
     name,
     description,
     permissions: normalizePermissions(input.permissions || []),
+    scope: normalizeScope(input.scope),
     builtin: false,
     createdAt: t,
     updatedAt: t,
@@ -201,6 +205,7 @@ export function updateRole(roleId, patch = {}) {
     if (err) throw Object.assign(new Error(err), { status: 400 })
     rec.permissions = normalizePermissions(patch.permissions)
   }
+  if (patch.scope !== undefined) rec.scope = normalizeScope(patch.scope)
   rec.updatedAt = nowIso()
   roles[idx] = rec
   writeFile(roles)

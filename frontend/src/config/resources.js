@@ -18,7 +18,6 @@ export const navGroups = [
       R('部署', 'Deployment', 'deployments', 'apps', 'v1', true, 'Grid'),
       R('有状态副本集', 'StatefulSet', 'statefulsets', 'apps', 'v1', true, 'Files'),
       R('守护进程集', 'DaemonSet', 'daemonsets', 'apps', 'v1', true, 'Operation'),
-      R('副本集', 'ReplicaSet', 'replicasets', 'apps', 'v1', true, 'CopyDocument'),
       R('任务', 'Job', 'jobs', 'batch', 'v1', true, 'AlarmClock'),
       R('定时任务', 'CronJob', 'cronjobs', 'batch', 'v1', true, 'Timer'),
       R('水平自动扩缩', 'HorizontalPodAutoscaler', 'horizontalpodautoscalers', 'autoscaling', 'v2', true, 'TrendCharts'),
@@ -30,7 +29,6 @@ export const navGroups = [
       R('服务', 'Service', 'services', '', 'v1', true, 'Connection'),
       R('路由', 'Ingress', 'ingresses', 'networking.k8s.io', 'v1', true, 'Share'),
       R('网络策略', 'NetworkPolicy', 'networkpolicies', 'networking.k8s.io', 'v1', true, 'Lock'),
-      R('端点', 'Endpoints', 'endpoints', '', 'v1', true, 'Link'),
     ],
   },
   {
@@ -65,6 +63,7 @@ export const navGroups = [
       { label: '自定义资源', icon: 'Grid', path: '/custom-resources' },
     ],
   },
+  { title: '高级资源', advanced:true, items:[R('副本集','ReplicaSet','replicasets','apps','v1',true,'CopyDocument'),R('端点','Endpoints','endpoints','','v1',true,'Link'),R('端点切片','EndpointSlice','endpointslices','discovery.k8s.io','v1',true,'Link')] },
   { title: '工具', items: [{ label: 'YAML 工作台', icon: 'EditPen', path: '/workbench' }] },
 ]
 
@@ -74,9 +73,11 @@ for (const g of navGroups) {
   for (const it of g.items) if (it.key) resourceMap[it.key] = it
 }
 
-export function metaFromRoute(params) {
+export function metaFromRoute(params, discovery = []) {
   const key = `${params.group}/${params.version}/${params.plural}`
-  return resourceMap[key] || {
+  const group = params.group === CORE ? '' : params.group
+  const discovered = discovery.find(r => r.group === group && r.version === params.version && r.plural === params.plural)
+  return discovered ? { ...discovered, key, label: discovered.kind } : resourceMap[key] || {
     kind: params.plural, plural: params.plural,
     group: params.group === CORE ? '' : params.group,
     version: params.version, namespaced: true, key, label: params.plural,
@@ -101,7 +102,8 @@ export function customResources(discovery) {
 // 常用资源状态 -> Element Plus Tag 类型
 export function statusTag(text = '') {
   const t = String(text).toLowerCase()
-  if (/running|ready|active|bound|succeeded|true|available|healthy/.test(t)) return 'success'
+  if (/notready|nothealthy|unhealthy|failed|error|crashloop|imagepull|unschedulable|evicted|unknown|backoff/.test(t)) return 'danger'
+  if (/^(running|ready|active|bound|succeeded|true|available|healthy|completed)$/.test(t)) return 'success'
   if (/pending|creating|progressing|waiting|terminating/.test(t)) return 'warning'
   if (/failed|error|crashloop|imagepull|notready|unschedulable|evicted|unknown/.test(t)) return 'danger'
   return 'info'

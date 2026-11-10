@@ -1,364 +1,55 @@
 <template>
-  <div v-loading="loading">
-    <div class="kp-stat-grid">
-      <div class="kp-stat clickable" @click="jump('nodes')">
-        <div class="label">节点 <span class="kp-scope">全集群</span></div><div class="value">{{ stat.nodes || 0 }}</div>
-        <el-icon class="icon"><Monitor /></el-icon>
-      </div>
-      <div class="kp-stat clickable" @click="jump('namespaces')">
-        <div class="label">命名空间 <span class="kp-scope">全集群</span></div><div class="value">{{ stat.namespaces || 0 }}</div>
-        <el-icon class="icon"><Collection /></el-icon>
-      </div>
-      <div class="kp-stat clickable" @click="jump('pods')">
-        <div class="label">Pod <span class="kp-scope is-ns">{{ nsScopeLabel }}</span></div><div class="value">{{ stat.pods || 0 }}</div>
-        <el-icon class="icon"><Box /></el-icon>
-      </div>
-      <div class="kp-stat clickable" @click="jump('deployments')">
-        <div class="label">Deployment <span class="kp-scope is-ns">{{ nsScopeLabel }}</span></div><div class="value">{{ stat.deployments || 0 }}</div>
-        <el-icon class="icon"><Grid /></el-icon>
-      </div>
-      <div class="kp-stat clickable" @click="jump('services')">
-        <div class="label">Service <span class="kp-scope is-ns">{{ nsScopeLabel }}</span></div><div class="value">{{ stat.services || 0 }}</div>
-        <el-icon class="icon"><Connection /></el-icon>
-      </div>
-      <div class="kp-stat">
-        <div class="label">异常 Pod <span class="kp-scope is-ns">{{ nsScopeLabel }}</span></div>
-        <div class="value" :class="stat.unhealthyPods ? 'kp-danger' : 'kp-ok'">{{ stat.unhealthyPods || 0 }}</div>
-        <el-icon class="icon"><Warning /></el-icon>
-      </div>
-    </div>
-
-    <div class="kp-muted" style="margin:-4px 0 14px;font-size:12.5px">
-      <template v-if="activeNs">
-        以下统计仅含命名空间 <el-tag size="small" type="info" effect="plain">{{ activeNs }}</el-tag> 的资源；节点数、命名空间数为全集群口径，不受命名空间筛选影响。节点状态与集群信息为集群级卡片，本视图已隐藏，切到「全部命名空间」可查看。
-        <el-button link type="primary" size="small" @click="store.setNamespace('all')">查看全部命名空间</el-button>
-      </template>
-      <template v-else>
-        当前为「全部命名空间」：以下统计均为全集群口径，节点状态与集群信息按集群展示。
-      </template>
-    </div>
-
-    <el-row :gutter="16">
-      <el-col :xs="24" :lg="14">
-        <div class="kp-card" style="margin-bottom:16px">
-          <div class="kp-section-title">
-            Pod 资源使用率
-            <span v-if="podUsage.available" class="kp-muted usage-meta">
-              共 {{ podUsage.total }} 个 Pod · {{ podUsage.sampled }} 个有指标
-            </span>
-          </div>
-
-          <div v-if="loaded && !podUsage.available" class="kp-muted" style="font-size:12.5px">
-            未检测到 metrics-server，无法读取 Pod 实时用量。安装 metrics-server 后此表自动出现。
-          </div>
-
-          <template v-else-if="podUsage.available">
-            <el-table :data="podUsage.items" size="small" border stripe max-height="360"
-              empty-text="当前范围没有 Pod" @row-click="goPod">
-              <el-table-column label="Pod" min-width="200" show-overflow-tooltip>
-                <template #default="{ row }">
-                  <div class="pod-cell-name">{{ row.name }}</div>
-                  <div v-if="!activeNs" class="pod-cell-ns">{{ row.namespace }}</div>
-                </template>
-              </el-table-column>
-              <el-table-column prop="cpuText" label="CPU 用量" width="100" align="right" />
-              <el-table-column label="CPU 使用率" width="100" align="right">
-                <template #default="{ row }">
-                  <span :class="pctClass(row.cpuPercent)">{{ pctText(row.cpuPercent) }}</span>
-                </template>
-              </el-table-column>
-              <el-table-column prop="memoryText" label="内存用量" width="105" align="right" />
-              <el-table-column label="内存使用率" width="100" align="right">
-                <template #default="{ row }">
-                  <span :class="pctClass(row.memoryPercent)">{{ pctText(row.memoryPercent) }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
-            <div class="kp-muted usage-note">
-              用量来自 metrics-server 最近一次采样；使用率 = 用量 ÷ 该 Pod 的 requests（未声明显示「—」）。点击行查看详情。
-            </div>
-          </template>
-        </div>
-
-        <div v-if="!activeNs" class="kp-card" style="margin-bottom:16px">
-          <div class="kp-section-title">节点状态</div>
-          <el-table :data="data.nodes || []" size="small" border stripe @row-click="row => goNode(row)">
-            <el-table-column prop="name" label="节点" min-width="110" show-overflow-tooltip />
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <el-tag :type="row.ready ? 'success' : 'danger'" size="small">{{ row.ready ? 'Ready' : 'NotReady' }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="可调度" width="85">
-              <template #default="{ row }">
-                <el-tag :type="row.unschedulable ? 'warning' : 'info'" size="small">{{ row.unschedulable ? '已封锁' : '是' }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="version" label="Kubelet" width="100" />
-            <el-table-column prop="cpu" label="CPU" width="85" />
-            <el-table-column prop="memory" label="内存" width="95" />
-            <el-table-column prop="pods" label="Pod" width="60" />
-            <el-table-column prop="age" label="运行时间" width="95" />
-          </el-table>
-          <div v-if="!data.metricsAvailable" class="kp-muted" style="margin-top:10px;font-size:12px">
-            未检测到 metrics-server，CPU / 内存用量显示为容量配额。安装 metrics-server 后自动显示实时用量。
-          </div>
-        </div>
-
-        <div class="kp-card">
-          <div class="kp-section-title">近期事件
-            <el-button link type="primary" size="small" @click="jump('events')">查看全部</el-button>
-          </div>
-          <el-table :data="data.events || []" size="small" border stripe max-height="330"
-            :empty-text="activeNs ? `最近 1 小时 ${activeNs} 没有事件` : '最近 1 小时没有事件'">
-            <el-table-column label="类型" width="80">
-              <template #default="{ row }">
-                <el-tag :type="row.type === 'Warning' ? 'warning' : 'success'" size="small">{{ row.type }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="命名空间" width="145" show-overflow-tooltip>
-              <template #default="{ row }">
-                <span v-if="row.namespace && row.namespace !== '-'" class="ns-link" @click.stop="pickNamespace(row.namespace)">{{ row.namespace }}</span>
-                <span v-else class="kp-muted">-</span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="reason" label="原因" width="100" show-overflow-tooltip />
-            <el-table-column prop="object" label="对象" width="115" show-overflow-tooltip />
-            <el-table-column prop="message" label="消息" min-width="150" show-overflow-tooltip />
-            <el-table-column prop="age" label="时间" width="80" />
-          </el-table>
-        </div>
-      </el-col>
-
-      <el-col :xs="24" :lg="10">
-        <div v-if="!activeNs" class="kp-card" style="margin-bottom:16px">
-          <div class="kp-section-title">集群信息</div>
-          <table class="kp-kv">
-            <tr><td>API Server</td><td class="kp-mono">{{ cluster?.server || '-' }}</td></tr>
-            <tr><td>K8s 版本</td><td>{{ cluster?.version || '-' }}</td></tr>
-            <tr><td>Context</td><td class="kp-mono">{{ cluster?.context || '-' }}</td></tr>
-            <tr><td>认证方式</td><td>{{ cluster?.authMode || '-' }}</td></tr>
-            <tr><td>平台</td><td>{{ cluster?.platform || '-' }}</td></tr>
-            <tr><td>API 资源类型</td><td>{{ cluster?.resourceTypes || '-' }}</td></tr>
-          </table>
-        </div>
-
-        <div class="kp-card">
-          <div class="kp-section-title">
-            Pod 状态分布
-            <el-button link type="primary" size="small" @click="jump('pods')">Pod 列表</el-button>
-          </div>
-          <div v-if="!phaseRows.length" class="kp-empty">暂无 Pod</div>
-          <div
-            v-for="p in phaseRows" :key="p.name" class="phase-row"
-            :class="{ 'is-open': expandedPhase === p.name }"
-          >
-            <div class="phase-head" @click="togglePhase(p.name)">
-              <el-icon class="phase-caret"><CaretRight /></el-icon>
-              <span class="phase-name">{{ p.name }}</span>
-              <span class="phase-count">{{ p.value }}</span>
-              <span class="kp-muted phase-pct">{{ p.percent }}%</span>
-            </div>
-            <el-progress :percentage="p.percent" :color="p.color" :show-text="false" :stroke-width="9" />
-
-            <div v-if="expandedPhase === p.name" class="phase-detail">
-              <div v-if="phaseLoading" class="kp-muted" style="padding:10px 0;font-size:12px">加载中…</div>
-              <div v-else-if="phaseError" class="kp-danger" style="padding:10px 0;font-size:12px">{{ phaseError }}</div>
-              <div v-else-if="!phasePods.length" class="kp-muted" style="padding:10px 0;font-size:12px">没有该状态的 Pod</div>
-              <template v-else>
-                <div class="phase-list">
-                  <div
-                    v-for="pod in phasePods" :key="`${pod.namespace}/${pod.name}`"
-                    class="phase-pod" @click="goPod(pod)"
-                  >
-                    <div class="phase-pod-main">
-                      <div class="phase-pod-name">{{ pod.name }}</div>
-                      <div class="phase-pod-sub">{{ pod.namespace }} · {{ pod.node }}<template v-if="pod.restarts"> · 重启 {{ pod.restarts }}</template></div>
-                    </div>
-                    <span class="phase-pod-age">{{ pod.age }}</span>
-                    <el-button link type="primary" size="small" @click.stop="goPodLogs(pod)">日志</el-button>
-                  </div>
-                </div>
-                <div class="phase-foot">
-                  <span class="kp-muted">点击某一行进入 Pod 详情</span>
-                  <el-button link type="primary" size="small" @click="jump('pods')">在列表中查看全部</el-button>
-                </div>
-              </template>
-            </div>
-          </div>
-        </div>
-      </el-col>
-    </el-row>
+ <div v-loading="loading" :aria-busy="loading">
+  <div class="kp-toolbar"><strong>运行风险与诊断</strong><span class="kp-muted">{{scopeLabel}} · 更新 {{updatedAt || '—'}}</span><span class="spacer"/><el-button @click="load" :loading="loading">刷新</el-button></div>
+  <el-alert v-if="error" type="error" :title="error" :closable="false" style="margin-bottom:14px"/>
+  <el-alert v-if="componentErrors.length" type="warning" :closable="false" title="部分数据无法读取；未知值显示 —，请检查权限、API 或 metrics-server。" style="margin-bottom:14px"><ul><li v-for="e in componentErrors" :key="e.key">{{e.key}}：{{e.message}}</li></ul></el-alert>
+  <section class="kp-card risk-panel" aria-labelledby="risk-title">
+   <div class="kp-section-title" id="risk-title">优先处理 <el-button link type="primary" @click="jump('pods',{state:'active-abnormal'})">查看异常 Pod</el-button></div>
+   <div class="risk-summary"><button @click="jump('pods',{state:'active-abnormal'})"><strong :class="stat.unhealthyPods ? 'kp-danger':''">{{number(stat.unhealthyPods)}}</strong> 活跃异常 Pod</button><button @click="jump('nodes')"><strong :class="badNodes.length ? 'kp-danger':''">{{data.errors?.nodes ? '—':badNodes.length}}</strong> 节点异常 / 压力</button><button @click="jump('pods',{phase:'Failed'})"><strong>{{number(stat.failedPods)}}</strong> 历史失败 Pod</button></div>
+   <el-table :data="riskPods.slice(0,8)" size="small" border empty-text="已加载范围内暂无活跃异常 Pod"><el-table-column label="Pod" min-width="220"><template #default="{row}"><router-link :to="podPath(row)">{{row.namespace}} / {{row.name}}</router-link></template></el-table-column><el-table-column label="状态" width="150"><template #default="{row}"><el-tag disable-transitions :type="statusTag(row.status)">{{row.status}}</el-tag></template></el-table-column><el-table-column prop="reason" label="原因" min-width="180"/><el-table-column prop="node" label="节点" min-width="150"/><el-table-column prop="restarts" label="重启" width="80"/><el-table-column label="诊断线索" min-width="240"><template #default="{row}">{{diagnosis(row)}}</template></el-table-column></el-table>
+   <p v-if="podsLimited" class="kp-muted">诊断列表仅覆盖前 500 个 Pod；完整范围请进入资源列表加载更多。</p>
+  </section>
+  <div class="overview-stats">
+   <router-link v-for="card in cards" :key="card.key" class="kp-stat" :to="listPath(card.key)"><div class="label">{{card.label}} <span class="kp-scope">{{card.cluster ? '集群级授权范围':scopeLabel}}</span></div><div class="value">{{number(stat[card.key])}}</div></router-link>
   </div>
+  <div class="overview-grid">
+   <section class="kp-card"><div class="kp-section-title">Pod 实际用量 Top 10 <el-select v-model="metricSort" style="width:160px" aria-label="Top 10 排序"><el-option label="CPU 用量" value="cpu"/><el-option label="内存用量" value="memory"/><el-option label="CPU / request" value="cpuPercent"/><el-option label="内存 / request" value="memoryPercent"/></el-select></div><p class="kp-muted">采样时间 {{fmtTime(usage.timestamp)}} · {{usage.sampled || 0}} / {{usage.total || 0}} 个 Pod 有指标。用量 / request 是声明预留量比值，可超过 100%；不是节点容量使用率。</p><p v-if="!usage.available" class="kp-muted">指标不可用，详见上方数据源错误。</p><el-table v-else :data="topPods" size="small" border @sort-change="metricTableSort"><el-table-column label="Pod" min-width="190"><template #default="{row}"><router-link :to="podPath(row)">{{row.namespace}} / {{row.name}}</router-link></template></el-table-column><el-table-column prop="cpu" label="CPU 实际" width="110" sortable="custom"><template #default="{row}">{{row.cpuText}}</template></el-table-column><el-table-column prop="cpuPercent" label="CPU / request" width="140" sortable="custom"><template #default="{row}">{{pct(row.cpuPercent)}}</template></el-table-column><el-table-column prop="memory" label="内存实际" width="120" sortable="custom"><template #default="{row}">{{row.memoryText}}</template></el-table-column><el-table-column prop="memoryPercent" label="内存 / request" width="140" sortable="custom"><template #default="{row}">{{pct(row.memoryPercent)}}</template></el-table-column></el-table></section>
+   <section class="kp-card"><div class="kp-section-title">Pod 状态分布</div><p v-if="!phaseRows.length" class="kp-muted">{{data.errors?.pods ? 'Pod 数据读取失败' : '暂无 Pod'}}</p><button v-for="phase in phaseRows" :key="phase.name" class="phase-button" @click="jump('pods',{phase:phase.name})"><span>{{phase.name}}</span><strong>{{phase.count}}</strong><span>{{phase.percent}}%</span></button><p class="kp-muted">点击状态进入列表；状态筛选以 Pod 当前语义状态为准。</p></section>
+   <section class="kp-card wide"><div class="kp-section-title">节点状态、容量与实际负载</div><el-table :data="data.nodes || []" size="small" border><el-table-column label="节点" min-width="180"><template #default="{row}"><router-link :to="cpath(`/r/_core/v1/nodes/_all/${encodeURIComponent(row.name)}`)">{{row.name}}</router-link></template></el-table-column><el-table-column label="健康 / 调度" min-width="180"><template #default="{row}"><el-tag disable-transitions :type="row.ready ? 'success':'danger'">{{row.ready ? 'Ready':'NotReady'}}</el-tag> {{row.unschedulable ? '已封锁':''}} {{row.diskPressure ? 'DiskPressure':''}}</template></el-table-column><el-table-column label="实际 CPU / 内存" min-width="180"><template #default="{row}">{{data.metricsAvailable ? `${row.cpu} / ${row.memory}`:'—（指标不可用）'}}</template></el-table-column><el-table-column label="CPU 容量 / 可分配" min-width="160"><template #default="{row}">{{row.capacity?.cpu || '—'}} / {{row.allocatable?.cpu || '—'}}</template></el-table-column><el-table-column label="内存容量 / 可分配" min-width="210"><template #default="{row}">{{row.capacity?.memory || '—'}} / {{row.allocatable?.memory || '—'}}</template></el-table-column><el-table-column :label="`实际 Pod（${scopeLabel}）/ 节点可分配`" min-width="160"><template #default="{row}">{{number(row.pods)}} / {{row.allocatable?.pods || '—'}}</template></el-table-column><el-table-column label="污点 / 压力" min-width="240"><template #default="{row}">{{nodeDiagnosis(row)}}</template></el-table-column></el-table></section>
+   <section class="kp-card"><div class="kp-section-title">近期事件 <el-button link type="primary" @click="jump('events')">全部事件</el-button></div><el-table :data="data.events || []" size="small" border><el-table-column prop="type" label="类型" width="90"/><el-table-column prop="reason" label="原因" min-width="140"/><el-table-column prop="object" label="对象" min-width="170"/><el-table-column prop="message" label="说明" min-width="260" show-overflow-tooltip/><el-table-column prop="age" label="时间" width="80"/></el-table></section>
+   <section class="kp-card"><div class="kp-section-title">连接与资源发现</div><table class="kp-kv"><tbody><tr><td>API Server</td><td>{{store.cluster?.server || '—'}}</td></tr><tr><td>Kubernetes</td><td>{{store.cluster?.version || '—'}}</td></tr><tr><td>Context</td><td>{{store.cluster?.context || '—'}}</td></tr><tr><td>资源类型</td><td>{{data.resourceTypes ?? '—'}}</td></tr></tbody></table><p class="kp-muted">数据受角色集群、命名空间、资源范围限制。容量始终与实际用量分开显示。</p></section>
+  </div>
+ </div>
 </template>
-
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { CaretRight } from '@element-plus/icons-vue'
+import {ref,computed,onMounted,onUnmounted,watch} from 'vue'
+import {useRouter} from 'vue-router'
 import api from '../api'
-import { store } from '../store'
-import { CORE } from '../config/resources'
-import { normalizeRow } from '../config/columns'
-import { cpath } from '../utils/path'
-
-const router = useRouter()
-const loading = ref(false)
-const loaded = ref(false)
-const data = ref({})
-const cluster = computed(() => store.cluster)
-const stat = computed(() => data.value.stat || {})
-const activeNs = computed(() => (store.namespace && store.namespace !== 'all' ? store.namespace : ''))
-const nsScopeLabel = computed(() => activeNs.value ? '本命名空间' : '全集群')
-
-/* ---- 每个 Pod 的资源使用率：用量 ÷ 该 Pod 的 requests ---- */
-const podUsage = computed(() => data.value.podUsage || { available: false, items: [] })
-
-function pctText(percent) {
-  return percent == null ? '—' : `${percent}%`
-}
-function pctClass(percent) {
-  if (percent == null) return 'kp-muted'
-  return percent >= 100 ? 'kp-danger' : percent >= 85 ? 'kp-warn' : 'kp-ok'
-}
-
-const phaseRows = computed(() => {
-  const dist = data.value.podPhases || {}
-  const total = Object.values(dist).reduce((a, b) => a + b, 0)
-  const colors = { Running: '#16a34a', Pending: '#d97706', Succeeded: '#0ea5e9', Failed: '#dc2626', Unknown: '#6b7280' }
-  return Object.entries(dist).map(([name, value]) => ({
-    name, value, percent: total ? Math.round(value / total * 100) : 0, color: colors[name] || '#6b7280',
-  }))
-})
-
-function jump(plural) {
-  const map = {
-    nodes: [CORE, 'v1'], namespaces: [CORE, 'v1'], pods: [CORE, 'v1'],
-    services: [CORE, 'v1'], events: [CORE, 'v1'], deployments: ['apps', 'v1'],
-  }
-  const [g, v] = map[plural] || [CORE, 'v1']
-  router.push(cpath(`/r/${g}/${v}/${plural}`))
-}
-function goNode(row) { router.push(cpath(`/r/${CORE}/v1/nodes/_all/${row.name}`)) }
-
-/* ---- Pod 状态分布下钻：点开某个状态，列出该状态的具体 Pod ---- */
-const expandedPhase = ref('')
-const phaseLoading = ref(false)
-const phaseError = ref('')
-const phasePods = ref([])
-const phaseCache = new Map()
-
-async function fetchPhase(phase) {
-  phaseLoading.value = true
-  phasePods.value = []
-  phaseError.value = ''
-  try {
-    const r = await api.list(CORE, 'v1', 'pods', { namespace: activeNs.value || 'all', fieldSelector: `status.phase=${phase}` })
-    const rows = (r.items || []).map(i => normalizeRow('Pod', i))
-    phaseCache.set(phase, rows)
-    phasePods.value = rows
-  } catch (e) {
-    phaseError.value = e.message || '加载失败'
-  } finally {
-    phaseLoading.value = false
-  }
-}
-
-async function togglePhase(phase) {
-  if (expandedPhase.value === phase) { expandedPhase.value = ''; return }
-  expandedPhase.value = phase
-  if (phaseCache.has(phase)) { phasePods.value = phaseCache.get(phase); phaseError.value = ''; return }
-  await fetchPhase(phase)
-}
-function goPod(row) {
-  router.push(cpath(`/r/${CORE}/v1/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}`))
-}
-function goPodLogs(row) {
-  router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/logs`))
-}
-
-async function load() {
-  loading.value = true
-  try { data.value = await api.overview(activeNs.value || 'all') }
-  catch (e) { data.value = {} }
-  finally { loading.value = false; loaded.value = true }
-  // 分布数字变了，下钻缓存一并失效
-  phaseCache.clear()
-  if (expandedPhase.value) fetchPhase(expandedPhase.value).catch(() => {})
-}
-
-/** 点表格里的命名空间 → 切成全局命名空间过滤（顶部下拉框同步） */
-function pickNamespace(ns) {
-  if (!ns || ns === '-') return
-  store.setNamespace(ns)
-}
-
-onMounted(() => {
-  load()
-  window.addEventListener('kp:refresh', load)
-})
-watch(() => store.namespace, () => load())
-onUnmounted(() => window.removeEventListener('kp:refresh', load))
+import {store} from '../store'
+import {statusTag} from '../config/resources'
+import {normalizeRow,fmtTime} from '../config/columns'
+import {isAbnormal,createRequestGate} from '../utils/resource'
+import {cpath} from '../utils/path'
+const router=useRouter(),loading=ref(false),data=ref({}),pods=ref([]),error=ref(''),updatedAt=ref(''),podsLimited=ref(false),gate=createRequestGate()
+const stat=computed(()=>data.value.stat || {}),usage=computed(()=>data.value.podUsage || {}),scopeLabel=computed(()=>store.namespace==='all' ? '授权命名空间范围':store.namespace)
+const cards=[{key:'nodes',label:'节点',cluster:true},{key:'namespaces',label:'命名空间',cluster:true},{key:'pods',label:'Pod'},{key:'deployments',label:'Deployment'},{key:'services',label:'Service'},{key:'unhealthyPods',label:'活跃异常 Pod'}]
+const componentErrors=computed(()=>Object.entries(data.value.errors || {}).map(([key,e])=>({key,message:e.message || String(e)})))
+const riskPods=computed(()=>pods.value.map(p=>normalizeRow('Pod',p)).filter(r=>isAbnormal(r.status) && !['Failed','Succeeded'].includes(r._raw.status?.phase) && !r._raw.metadata?.deletionTimestamp))
+const badNodes=computed(()=>(data.value.nodes || []).filter(n=>!n.ready || n.diskPressure || n.conditions?.some(c=>/Pressure|NetworkUnavailable/.test(c.type) && c.status==='True')))
+const metricSort=ref('cpu'),metricOrder=ref('descending')
+const topPods=computed(()=>[...(usage.value.items || [])].sort((a,b)=>{if(a[metricSort.value]==null)return 1;if(b[metricSort.value]==null)return -1;return (metricOrder.value==='ascending' ? 1:-1)*(a[metricSort.value]-b[metricSort.value])}).slice(0,10))
+function metricTableSort(v){if(v.prop){metricSort.value=v.prop;metricOrder.value=v.order || 'descending'}}
+const phaseRows=computed(()=>{const entries=Object.entries(data.value.podPhases || {}),total=entries.reduce((sum,[,n])=>sum+n,0);return entries.map(([name,count])=>({name,count,percent:total ? Math.round(count/total*100):0}))})
+const number=v=>v==null ? '—':v
+const pct=v=>v==null ? '—':`${v}%`
+function listPath(plural){return cpath(`/r/${plural==='deployments' ? 'apps':'_core'}/v1/${plural==='unhealthyPods' ? 'pods':plural}`)+(plural==='unhealthyPods' ? '?state=abnormal':'')}
+function jump(plural,query){router.push({path:listPath(plural),query})}
+function podPath(row){return cpath(`/r/_core/v1/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}`)}
+function diagnosis(row){const st=row._raw.status || {},messages=[st.message,...(st.conditions || []).filter(c=>c.status!=='True').map(c=>c.message)];return messages.filter(Boolean).join('；') || row.reason || '检查事件与容器状态'}
+function nodeDiagnosis(row){return [...(row.conditions || []).filter(c=>c.type!=='Ready' && c.status==='True').map(c=>`${c.type}: ${c.message || c.reason || ''}`),...(row.taints || []).map(t=>`${t.key}${t.value ? '='+t.value:''}:${t.effect}`)].join('；') || '无已报告压力或污点'}
+async function load(){const id=gate.next(),namespace=store.namespace,clusterId=store.currentClusterId;loading.value=true;error.value='';try{const result=await api.overview(namespace);if(!gate.current(id))return;data.value=result;updatedAt.value=new Date().toLocaleString('zh-CN');try{const p=await api.list('','v1','pods',{namespace,clusterId,limit:500});if(gate.current(id)){pods.value=p.items || [];podsLimited.value=!!p.metadata?.continue}}catch(e){if(gate.current(id)){pods.value=[];error.value='诊断 Pod 加载失败：'+e.message}}}catch(e){if(gate.current(id)){data.value={};pods.value=[];error.value=e.message || '概览读取失败'}}finally{if(gate.current(id))loading.value=false}}
+onMounted(()=>{load();window.addEventListener('kp:refresh',load)});watch(()=>store.namespace,load);onUnmounted(()=>{gate.invalidate();window.removeEventListener('kp:refresh',load)})
 </script>
-
 <style scoped>
-.ns-link {
-  color: var(--kp-brand);
-  cursor: pointer;
-  border-bottom: 1px dashed transparent;
-}
-.ns-link:hover { border-bottom-color: currentColor; }
-
-/* 统计卡口径标注：集群级固定「全集群」，命名空间级随筛选状态变化 */
-.kp-scope {
-  display: inline-block; margin-left: 6px; padding: 1px 5px;
-  border-radius: 3px; font-size: 10px; font-weight: 500; line-height: 1.4;
-  vertical-align: 1px; color: var(--kp-muted);
-  background: var(--kp-surface-2); border: 1px solid var(--kp-border);
-}
-.kp-scope.is-ns {
-  color: var(--kp-brand); border-color: var(--kp-brand-border); background: #eef4ff;
-}
-
-/* Pod 资源使用率（按 Pod 逐个列出） */
-.usage-meta { font-size: 12px; font-weight: 400; margin-left: auto; }
-.pod-cell-name { font-size: 12.5px; color: var(--kp-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pod-cell-ns { font-size: 11px; color: var(--kp-muted); margin-top: 1px; }
-.usage-note { margin-top: 10px; font-size: 11.5px; line-height: 1.6; }
-
-.phase-row {
-  margin-bottom: 10px; padding: 6px 8px; margin-left: -8px; margin-right: -8px;
-  border-radius: var(--kp-r-sm); transition: background .14s;
-}
-.phase-row:hover { background: #f8fafc; }
-.phase-row.is-open { background: #f8fafc; }
-.phase-head {
-  display: flex; align-items: center; gap: 7px; cursor: pointer;
-  font-size: 12.5px; margin-bottom: 5px;
-}
-.phase-caret {
-  font-size: 11px; color: var(--kp-faint); transition: transform .16s;
-}
-.phase-row.is-open .phase-caret { transform: rotate(90deg); color: var(--kp-brand); }
-.phase-name { color: var(--kp-text); }
-.phase-count { font-weight: 600; color: var(--kp-text); font-variant-numeric: tabular-nums; }
-.phase-pct { margin-left: auto; }
-.phase-detail { margin-top: 10px; padding-top: 4px; border-top: 1px dashed var(--kp-border); }
-.phase-list { max-height: 250px; overflow-y: auto; margin: 0 -4px; }
-.phase-pod {
-  display: flex; align-items: center; gap: 8px; padding: 6px 6px; border-radius: 5px;
-  cursor: pointer; transition: background .12s;
-}
-.phase-pod:hover { background: #eef4ff; }
-.phase-pod-main { min-width: 0; flex: 1; }
-.phase-pod-name {
-  font-size: 12.5px; color: var(--kp-brand); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
-}
-.phase-pod-sub { font-size: 11px; color: var(--kp-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.phase-pod-age { font-size: 11px; color: var(--kp-faint); white-space: nowrap; }
-.phase-foot {
-  display: flex; align-items: center; justify-content: space-between;
-  padding-top: 6px; font-size: 11.5px;
-}
+.risk-panel{margin-bottom:16px}.risk-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}.risk-summary button{font:inherit;text-align:left;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:14px;cursor:pointer}.risk-summary strong{font-size:25px;display:block;color:#9a3412}.overview-stats{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:16px}.overview-stats .kp-stat{min-width:0;color:var(--kp-text)}.overview-stats .value{font-size:25px}.kp-scope{font-size:11px;display:block;margin-top:4px;color:var(--kp-muted)}.overview-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:16px}.overview-grid>*{min-width:0}.wide{grid-column:1/-1}.phase-button{width:100%;display:flex;justify-content:space-between;gap:12px;padding:12px;margin:6px 0;border:1px solid var(--kp-border);border-radius:6px;background:#f8fafc;font:inherit;cursor:pointer}.kp-section-title{gap:12px;flex-wrap:wrap}a{color:var(--kp-brand)}@media(max-width:1250px){.overview-stats{grid-template-columns:repeat(3,1fr)}}@media(max-width:950px){.overview-grid{grid-template-columns:1fr}}@media(max-width:600px){.overview-stats{grid-template-columns:repeat(2,1fr)}.risk-summary{grid-template-columns:1fr}}
 </style>

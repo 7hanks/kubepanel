@@ -1,9 +1,11 @@
 import { loadAll, dump } from 'js-yaml'
 import {
   kubeRequest, resRequest, apiPath, KUBE_HEADERS, KubeError,
-  discoverResources, findResource, kubeContext,
+  discoverResources, findResource, kubeContext, discoveryErrors,
 } from './kube.js'
 import { parseCpu, parseMem, fmtCpu as fmtUsageCpu, fmtBytes } from './monitorService.js'
+import { scopedList } from './resourceScope.js'
+import { resourceAllowed, allowedNamespaces } from './access.js'
 
 /** 把并发请求统一转成「失败不抛、值为 null」，保证概览页部分可用 */
 async function safe(fn) {
@@ -11,10 +13,11 @@ async function safe(fn) {
 }
 
 /** GET /api/v1/cluster —— 当前所选集群的信息 */
-export async function clusterInfo(clusterId) {
+export async function clusterInfo(clusterId, account) {
+  const namespaces = account ? allowedNamespaces(account) : null
   const [version, nsRes, discovery] = await Promise.all([
     safe(() => kubeRequest('GET', '/version', { clusterId })),
-    safe(() => kubeRequest('GET', '/api/v1/namespaces', { clusterId })),
+    namespaces !== null ? Promise.resolve(null) : safe(async () => ({ data: await scopedList(account, { group: '', version: 'v1', plural: 'namespaces', namespaced: false }, { clusterId }) })),
     safe(() => discoverResources(false, clusterId)),
   ])
   const ctx = kubeContext(clusterId)
@@ -26,8 +29,8 @@ export async function clusterInfo(clusterId) {
     version: version?.data?.gitVersion || 'unknown',
     platform: version?.data?.platform || '-',
     authMode: ctx.authMode || '-',
-    resourceTypes: discovery?.length || 0,
-    namespaces: (nsRes?.data?.items || []).map(n => n.metadata.name).sort(),
+    resourceTypes: discovery ? discovery.filter(r => !account || resourceAllowed(account, r)).length : null,
+    namespaces: namespaces !== null ? [...namespaces].sort() : (nsRes?.data?.items || []).map(n => n.metadata.name).sort(),
   }
 }
 
@@ -101,20 +104,26 @@ function podUsageRows(metricsItems, podList) {
 }
 
 /** GET /api/v1/overview —— namespace 不为空时，Pod / Deployment / Service / 事件只统计该命名空间 */
-export async function overview(clusterId, namespace) {
+export async function overview(clusterId, namespace, account) {
   const ns = namespace && namespace !== 'all' && namespace !== '_all' ? String(namespace) : ''
-  const prefix = ns ? `/namespaces/${encodeURIComponent(ns)}` : ''
+  const errors = {}
+  const capture = async (key, fn) => {
+    try { return await fn() } catch (e) { errors[key] = { status: e.status || 502, message: e.message }; return null }
+  }
+  const read = (key, group, version, plural, namespaced, query, timeout) => capture(key, async () => ({ data: await scopedList(account,
+    { group, version, plural, namespaced }, { clusterId, namespace: namespaced ? ns || undefined : undefined, query, timeout }) }))
   const [nodes, pods, deps, svcs, events, metrics, podMetrics, nsRes, discovery] = await Promise.all([
-    safe(() => kubeRequest('GET', '/api/v1/nodes', { clusterId })),
-    safe(() => kubeRequest('GET', `/api/v1${prefix}/pods`, { clusterId })),
-    safe(() => kubeRequest('GET', `/apis/apps/v1${prefix}/deployments`, { clusterId })),
-    safe(() => kubeRequest('GET', `/api/v1${prefix}/services`, { clusterId })),
-    safe(() => kubeRequest('GET', `/api/v1${prefix}/events?limit=100`, { clusterId })),
-    safe(() => kubeRequest('GET', '/apis/metrics.k8s.io/v1beta1/nodes', { timeout: 5000, clusterId })),
-    safe(() => kubeRequest('GET', `/apis/metrics.k8s.io/v1beta1${prefix}/pods`, { timeout: 5000, clusterId })),
-    safe(() => kubeRequest('GET', '/api/v1/namespaces', { clusterId })),
-    safe(() => discoverResources(false, clusterId)),
+    read('nodes', '', 'v1', 'nodes', false),
+    read('pods', '', 'v1', 'pods', true),
+    read('deployments', 'apps', 'v1', 'deployments', true),
+    read('services', '', 'v1', 'services', true),
+    read('events', '', 'v1', 'events', true, { limit: 100 }),
+    read('nodeMetrics', 'metrics.k8s.io', 'v1beta1', 'nodes', false, {}, 5000),
+    read('podMetrics', 'metrics.k8s.io', 'v1beta1', 'pods', true, {}, 5000),
+    read('namespaces', '', 'v1', 'namespaces', false),
+    capture('discovery', () => discoverResources(false, clusterId)),
   ])
+  if (discovery && discoveryErrors(clusterId).length) errors.discovery = { status: 206, message: '部分 API 类型发现失败', components: discoveryErrors(clusterId) }
 
   const usage = {}
   for (const n of metrics?.data?.items || []) usage[n.metadata.name] = n.usage || {}
@@ -129,7 +138,12 @@ export async function overview(clusterId, namespace) {
       version: n.status?.nodeInfo?.kubeletVersion || '-',
       cpu: u ? fmtCpu(u.cpu) : (n.status?.capacity?.cpu || '-'),
       memory: u ? fmtMem(u.memory) : (n.status?.capacity?.memory || '-'),
-      pods: n.status?.capacity?.pods || '-',
+      pods: pods ? (pods.data?.items || []).filter(p => p.spec?.nodeName === n.metadata.name && !['Failed', 'Succeeded'].includes(p.status?.phase)).length : null,
+      allocatable: n.status?.allocatable || {},
+      capacity: n.status?.capacity || {},
+      conditions: n.status?.conditions || [],
+      taints: n.spec?.taints || [],
+      diskPressure: (n.status?.conditions || []).some(c => c.type === 'DiskPressure' && c.status === 'True'),
       age: age(n.metadata.creationTimestamp),
     }
   })
@@ -137,12 +151,15 @@ export async function overview(clusterId, namespace) {
   const podList = pods?.data?.items || []
   const podPhases = {}
   let unhealthyPods = 0
+  let failedPods = 0
   for (const p of podList) {
     const phase = p.status?.phase || 'Unknown'
     podPhases[phase] = (podPhases[phase] || 0) + 1
     const bad = (p.status?.containerStatuses || []).some(c =>
       c.state?.waiting && /error|crashloop|imagepull|invalid/i.test(c.state.waiting.reason || ''))
-    if (bad || !['Running', 'Succeeded'].includes(phase)) unhealthyPods++
+    if (phase === 'Failed') failedPods++
+    const ready = (p.status?.conditions || []).some(c => c.type === 'Ready' && c.status === 'True')
+    if (!['Succeeded', 'Failed'].includes(phase) && !p.metadata?.deletionTimestamp && (bad || phase !== 'Running' || !ready)) unhealthyPods++
   }
 
   const eventRows = (events?.data?.items || [])
@@ -157,12 +174,13 @@ export async function overview(clusterId, namespace) {
   return {
     namespace: ns || 'all',
     stat: {
-      nodes: nodeRows.length,
-      namespaces: (nsRes?.data?.items || []).length,
-      pods: podList.length,
-      deployments: (deps?.data?.items || []).length,
-      services: (svcs?.data?.items || []).length,
-      unhealthyPods,
+      nodes: nodes ? nodeRows.length : null,
+      namespaces: nsRes ? (nsRes.data?.items || []).length : null,
+      pods: pods ? podList.length : null,
+      deployments: deps ? (deps.data?.items || []).length : null,
+      services: svcs ? (svcs.data?.items || []).length : null,
+      unhealthyPods: pods ? unhealthyPods : null,
+      failedPods: pods ? failedPods : null,
     },
     nodes: nodeRows,
     events: eventRows,
@@ -171,13 +189,14 @@ export async function overview(clusterId, namespace) {
       ? { available: true, ...podUsageRows(podMetrics.data?.items || [], podList) }
       : { available: false, sampled: 0, total: podList.length, items: [] },
     metricsAvailable: !!metrics,
-    resourceTypes: discovery?.length || 0,
-    partial: !nodes || !pods,
+    resourceTypes: discovery ? discovery.filter(r => !account || resourceAllowed(account, r)).length : null,
+    errors,
+    partial: Object.keys(errors).length > 0,
   }
 }
 
 /** POST /api/v1/apply —— 多文档 YAML，服务端 Apply（可新建或更新任意资源，含 CRD 实例） */
-export async function applyYaml(text, defaultNamespace, clusterId) {
+export async function applyYaml(text, defaultNamespace, clusterId, { dryRun = false, force = false, authorize } = {}) {
   let docs
   try { docs = loadAll(text) } catch (e) { throw new KubeError(400, `YAML 解析失败：${e.message}`) }
   docs = docs.filter(d => d && typeof d === 'object' && !Array.isArray(d))
@@ -193,27 +212,32 @@ export async function applyYaml(text, defaultNamespace, clusterId) {
       const r = await findResource(doc.apiVersion, doc.kind, clusterId)
       if (!r) throw new Error(`集群中未发现资源类型 ${doc.apiVersion} ${doc.kind}，请确认 CRD 已安装`)
       const ns = doc.metadata.namespace || defaultNamespace || (r.namespaced ? 'default' : undefined)
+      if (!r.namespaced && doc.metadata.namespace) throw new KubeError(400, '集群级资源不能指定 namespace')
+      await authorize?.({ ...r, namespace: r.namespaced ? ns : undefined, verb: 'create' })
+      await authorize?.({ ...r, namespace: r.namespaced ? ns : undefined, verb: 'update' })
+      if (!r.verbs.includes('patch')) throw new KubeError(405, '该资源不支持服务端 Apply')
+      if (r.namespaced) doc.metadata.namespace = ns
       const p = apiPath({
         group: r.group, version: r.version, plural: r.plural,
         namespace: r.namespaced ? ns : undefined,
         name: doc.metadata.name,
       })
-      const qs = '?fieldManager=kubepanel&force=true'
+      const qs = `?${new URLSearchParams({ fieldManager: 'kubepanel', ...(force ? { force: 'true' } : {}), ...(dryRun ? { dryRun: 'All' } : {}) })}`
       await kubeRequest('PATCH', p + qs, {
         body: dump(doc, { noRefs: true, lineWidth: 120 }),
         headers: KUBE_HEADERS.applyYaml,
         clusterId,
       })
-      results.push({ ok: true, name: label, message: `${doc.metadata.namespace || ns || '集群级'} · 已应用` })
+      results.push({ ok: true, name: label, operation: dryRun ? 'dryRun' : 'apply', message: `${doc.metadata.namespace || ns || '集群级'} · ${dryRun ? '服务端预检通过' : '已应用'}` })
     } catch (e) {
       results.push({ ok: false, name: label, message: e.message })
     }
   }
-  return { results }
+  return { ok: results.every(r => r.ok), results, dryRun: !!dryRun, force: !!force }
 }
 
 /** 扩缩容：merge-patch spec.replicas，兼容 Deployment / StatefulSet / ReplicaSet */
-export async function scaleResource(meta, namespace, name, replicas, clusterId) {
+export async function scaleResource(meta, namespace, name, replicas, clusterId, { dryRun = false } = {}) {
   const n = Number(replicas)
   if (!Number.isInteger(n) || n < 0) throw new KubeError(400, 'replicas 必须是非负整数')
   return resRequest('PATCH', meta, {
@@ -221,22 +245,24 @@ export async function scaleResource(meta, namespace, name, replicas, clusterId) 
     body: { spec: { replicas: n } },
     headers: KUBE_HEADERS.mergePatch,
     clusterId,
+    query: dryRun ? { dryRun: 'All' } : {},
   })
 }
 
 /** 滚动重启：写 restartedAt 注解触发 Pod 模板变更（等价 kubectl rollout restart） */
-export async function restartWorkload(meta, namespace, name, clusterId) {
+export async function restartWorkload(meta, namespace, name, clusterId, { dryRun = false } = {}) {
   return resRequest('PATCH', meta, {
     namespace, name,
     body: { spec: { template: { metadata: { annotations: { 'kubectl.kubernetes.io/restartedAt': new Date().toISOString() } } } } },
     headers: KUBE_HEADERS.mergePatch,
     clusterId,
+    query: dryRun ? { dryRun: 'All' } : {},
   })
 }
 
 /** 节点 cordon / uncordon */
-export async function cordonNode(name, unschedulable, clusterId) {
-  return kubeRequest('PATCH', `/api/v1/nodes/${encodeURIComponent(name)}`, {
+export async function cordonNode(name, unschedulable, clusterId, { dryRun = false } = {}) {
+  return kubeRequest('PATCH', `/api/v1/nodes/${encodeURIComponent(name)}${dryRun ? '?dryRun=All' : ''}`, {
     body: { spec: { unschedulable: !!unschedulable } },
     headers: KUBE_HEADERS.mergePatch,
     clusterId,

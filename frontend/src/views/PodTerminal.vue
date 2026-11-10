@@ -7,7 +7,7 @@
       <el-select v-model="shell" style="width:150px">
         <el-option v-for="s in ['/bin/sh', '/bin/bash', '/bin/ash', 'sh']" :key="s" :label="s" :value="s" />
       </el-select>
-      <el-tag :type="status === 'open' ? 'success' : status === 'error' ? 'danger' : 'info'" size="small">{{ statusText }}</el-tag>
+      <el-tag disable-transitions :type="status === 'open' ? 'success' : status === 'error' ? 'danger' : 'info'" size="small">{{ statusText }}</el-tag>
       <span class="spacer" />
       <el-button @click="connect" :disabled="!container || status === 'open'">连接</el-button>
       <el-button @click="disconnect">断开</el-button>
@@ -44,6 +44,8 @@ let term = null
 let fit = null
 let ws = null
 let ro = null
+let connectionRequest=0
+let disposed=false
 
 function makeTerm() {
   if (term) return
@@ -82,15 +84,21 @@ function b64decode(b64) {
   return new TextDecoder().decode(bytes)
 }
 
-function connect() {
+async function connect() {
+  if (!can('pod:exec')) return ElMessage.error('没有容器终端权限')
   if (!container.value) return ElMessage.warning('请先选择容器')
   makeTerm()
   disconnect(false)
+  const request=++connectionRequest
   status.value = 'connecting'
   statusText.value = '连接中...'
   term.write('\r\n\x1b[36m[KubePanel] 正在连接容器...\x1b[0m\r\n')
 
-  const url = execWsUrl({ namespace, pod: name, container: container.value, shell: shell.value })
+  let ticket
+  try { ({ticket} = await api.streamTicket({purpose:'exec',clusterId:localStorage.getItem('kp_cluster'),namespace,pod:name})) }
+  catch (e) { if(!disposed && request===connectionRequest){status.value='error'; statusText.value=e.message || '授权失败'} return }
+  if(disposed || request!==connectionRequest)return
+  const url = execWsUrl({ namespace, pod: name, container: container.value, shell: shell.value, ticket })
   const socket = new WebSocket(url)
   ws = socket
   socket.binaryType = 'arraybuffer'
@@ -123,6 +131,7 @@ function connect() {
 }
 
 function disconnect(write = true) {
+  connectionRequest++
   if (ws) { try { ws.close() } catch (e) { /* ignore */ } ws = null }
   status.value = 'closed'; statusText.value = '未连接'
   if (write && term) term.write('\r\n\x1b[33m[已主动断开]\x1b[0m\r\n')
@@ -131,7 +140,7 @@ function disconnect(write = true) {
 watch(container, () => disconnect(false))
 
 onMounted(async () => {
-  if (!can('cluster:update') && !can('cluster:create')) {
+  if (!can('pod:exec')) {
     ElMessage.error('当前账号只有查看权限，不能进入容器终端')
     router.back()
     return
@@ -146,5 +155,5 @@ onMounted(async () => {
   } catch (e) { ElMessage.error('无法获取 Pod 信息：' + e.message) }
 })
 
-onUnmounted(() => { if (ro) ro.disconnect(); disconnect(false); if (term) term.dispose() })
+onUnmounted(() => { disposed=true; if (ro) ro.disconnect(); disconnect(false); if (term) term.dispose() })
 </script>

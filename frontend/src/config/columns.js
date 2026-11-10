@@ -24,16 +24,24 @@ export function phaseOf(kind, item) {
 
   switch (kind) {
     case 'Pod': {
+      if (st.reason) return st.reason
+      for (const c of st.initContainerStatuses || []) {
+        if (c.state?.waiting) return `Init:${c.state.waiting.reason || 'Waiting'}`
+        if (c.state?.terminated?.exitCode > 0) return `Init:${c.state.terminated.reason || 'Error'}`
+        if (!c.state?.terminated && !c.started) return 'Initializing'
+      }
       const waiting = (st.containerStatuses || []).find(c => c.state?.waiting)
       if (waiting) return waiting.state.waiting.reason || 'Waiting'
       const terminated = (st.containerStatuses || []).find(c => c.state?.terminated && c.state.terminated.exitCode !== 0)
       if (terminated) return terminated.state.terminated.reason || 'Error'
+      if (st.phase === 'Running' && ((st.conditions || []).some(c => c.type === 'Ready' && c.status !== 'True') || (st.containerStatuses || []).some(c => !c.ready))) return 'NotReady'
       return st.phase || 'Unknown'
     }
     case 'Deployment':
     case 'StatefulSet':
     case 'ReplicaSet': {
       const want = sp.replicas ?? st.replicas ?? 0
+      if (want === 0) return 'ScaledToZero'
       const ready = st.readyReplicas || 0
       if (want > 0 && ready >= want && st.availableReplicas !== 0) return 'Running'
       return ready > 0 ? 'Progressing' : 'Pending'
@@ -71,12 +79,15 @@ export function normalizeRow(kind, item) {
   const cs = st.containerStatuses || []
   const row = {
     _raw: item,
-    uid: md.uid || md.name,
+    uid: md.uid || `${md.namespace || '_all'}/${md.name}`,
     name: md.name || '-',
     namespace: md.namespace || '-',
     created: fmtTime(md.creationTimestamp),
     age: ago(md.creationTimestamp),
     status: phaseOf(kind, item),
+    owner: (md.ownerReferences || []).map(o => `${o.kind}/${o.name}`).join(', ') || '-',
+    reason: st.reason || [...(st.initContainerStatuses || []),...(st.containerStatuses || [])].map(c => c.state?.waiting?.reason || c.state?.terminated?.reason).filter(Boolean).join(', ') || '-',
+    createdAt: Date.parse(md.creationTimestamp) || 0,
     labels: md.labels || {},
     annotations: md.annotations || {},
   }
@@ -84,7 +95,7 @@ export function normalizeRow(kind, item) {
   switch (kind) {
     case 'Pod':
       row.ready = `${cs.filter(c => c.ready).length}/${sp.containers?.length || cs.length || 0}`
-      row.restarts = cs.reduce((n, c) => n + (c.restartCount || 0), 0)
+      row.restarts = [...cs, ...(st.initContainerStatuses || [])].reduce((n, c) => n + (c.restartCount || 0), 0)
       row.podIP = st.podIP || '-'
       row.node = sp.nodeName || '-'
       row.images = (sp.containers || []).map(c => c.image).join(', ')
@@ -268,7 +279,7 @@ export function yamlTemplate(meta, namespace) {
       spec: { containers: [{ name: 'demo', image: 'busybox:1.36', command: ['sh', '-c', 'sleep 3600'] }] },
     },
     ConfigMap: { data: { key1: 'value1' } },
-    Secret: { type: 'Opaque', stringData: { username: 'admin', password: 'change-me' } },
+    Secret: { type: 'Opaque', stringData: {} },
     Namespace: { metadata: { name: '' } },
     Ingress: {
       spec: {

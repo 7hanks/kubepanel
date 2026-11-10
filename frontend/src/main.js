@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+import { DataBoard, Box, Grid, Files, Operation, CopyDocument, AlarmClock, Timer, TrendCharts, Connection, Share, Lock, Link, Tickets, Key, User, PieChart, ScaleToOriginal, UserFilled, Stamp, Avatar, Postcard, FolderOpened, Coin, Management, Monitor, Collection, Bell, SetUp, MoreFilled, EditPen, Document, Expand, Fold, Warning, Refresh, ArrowDown, OfficeBuilding } from '@element-plus/icons-vue'
 import '@xterm/xterm/css/xterm.css'
 import './styles.css'
 
@@ -11,8 +11,8 @@ import router from './router'
 
 const app = createApp(App)
 
-// 注册全部 Element Plus 图标，模板里可直接用 <el-icon><Refresh /></el-icon>
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+// 仅注册导航和动态图标；各页面静态图标通过本地显式导入。
+for (const [key, component] of Object.entries({DataBoard,Box,Grid,Files,Operation,CopyDocument,AlarmClock,Timer,TrendCharts,Connection,Share,Lock,Link,Tickets,Key,User,PieChart,ScaleToOriginal,UserFilled,Stamp,Avatar,Postcard,FolderOpened,Coin,Management,Monitor,Collection,Bell,SetUp,MoreFilled,EditPen,Document,Expand,Fold,Warning,Refresh,ArrowDown,OfficeBuilding})) {
   app.component(key, component)
 }
 

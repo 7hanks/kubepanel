@@ -4,7 +4,9 @@ import path from 'node:path'
 import http from 'node:http'
 import https from 'node:https'
 import { config } from './config.js'
-import { kubeRequest, KubeError } from './kube.js'
+import { sealSecret, openSecret } from './secretStore.js'
+import { KubeError } from './kube.js'
+import { scopedList } from './resourceScope.js'
 
 /**
  * 镜像仓库（Harbor）对接。
@@ -20,24 +22,20 @@ const healthCache = new Map()   // id -> { at, ok, version, message }
 function readAll() {
   try {
     const list = JSON.parse(fs.readFileSync(FILE, 'utf8'))
-    return Array.isArray(list) ? list : []
+    if (!Array.isArray(list)) throw new Error('expected array')
+    return list.map(record => ({ ...record, password: openSecret(record.password) }))
   } catch (e) {
-    if (e.code !== 'ENOENT') console.warn(`[KubePanel] 镜像仓库配置不可用：${e.message}`)
-    return []
+    if (e.code === 'ENOENT') return []
+    throw new KubeError(503, '镜像仓库配置读取失败或损坏，请恢复备份')
   }
 }
 
 function writeAll(list) {
   fs.mkdirSync(config.dataDir, { recursive: true, mode: 0o700 })
   const tmp = `${FILE}.${process.pid}.tmp`
-  fs.writeFileSync(tmp, JSON.stringify(list, null, 2), { mode: 0o600 })
+  fs.writeFileSync(tmp, JSON.stringify(list.map(record => ({ ...record, password: sealSecret(record.password) })), null, 2), { mode: 0o600 })
   fs.renameSync(tmp, FILE)
   try { fs.chmodSync(FILE, 0o600) } catch (e) { /* ignore */ }
-}
-
-function maskPassword(pwd) {
-  if (!pwd) return ''
-  return '••••••••'
 }
 
 function publicView(r) {
@@ -49,7 +47,8 @@ function publicView(r) {
     host: hostOf(r.url),
     username: r.username || '',
     hasPassword: !!r.password,
-    insecure: r.insecure !== false,
+    insecure: r.insecure === true,
+    hasCa: !!r.ca,
     createdAt: r.createdAt,
     health: healthCache.get(r.id) || null,
   }
@@ -62,8 +61,15 @@ export function hostOf(url) {
 function normalizeUrl(url) {
   let u = String(url || '').trim()
   if (!u) throw new KubeError(400, '请填写仓库地址')
-  if (!/^https?:\/\//i.test(u)) u = `https://${u}`
-  return u.replace(/\/+$/, '')
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(u)) u = `https://${u}`
+  let parsed
+  try { parsed = new URL(u) } catch { throw new KubeError(400, '仓库地址不合法') }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.search || parsed.hash) throw new KubeError(400, '仓库地址不合法')
+  return parsed.toString().replace(/\/+$/, '')
+}
+
+export function registryTlsOptions(cfg = {}) {
+  return { rejectUnauthorized: cfg.insecure !== true, ...(cfg.ca ? { ca: String(cfg.ca) } : {}) }
 }
 
 /** 通用 Harbor 请求：自签证书场景可关闭校验 */
@@ -80,11 +86,10 @@ function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000 } = {}) {
       protocol: base.protocol,
       hostname: base.hostname,
       port: base.port || (isHttps ? 443 : 80),
-      path: reqPath,
+      path: base.pathname.replace(/\/$/, '') + reqPath,
       method,
       headers,
-      // NodePort + IP 访问时证书通常不匹配，默认放开校验（可在界面关闭）
-      rejectUnauthorized: cfg.insecure === false,
+      ...registryTlsOptions(cfg),
       timeout,
     }, res => {
       const chunks = []
@@ -117,7 +122,7 @@ export function getRegistry(id) {
   return r
 }
 
-export async function addRegistry({ name, url, username, password, insecure }) {
+export async function addRegistry({ name, url, username, password, insecure, ca }) {
   const finalUrl = normalizeUrl(url)
   const list = readAll()
   if (list.some(r => r.url === finalUrl)) throw new KubeError(400, '该地址已经添加过了')
@@ -128,7 +133,8 @@ export async function addRegistry({ name, url, username, password, insecure }) {
     url: finalUrl,
     username: String(username || '').trim(),
     password: String(password || ''),
-    insecure: insecure !== false,
+    insecure: insecure === true,
+    ca: String(ca || ''),
     createdAt: new Date().toISOString(),
   }
   list.push(rec)
@@ -146,7 +152,8 @@ export async function updateRegistry(id, patch = {}) {
     name: patch.name !== undefined ? String(patch.name).trim() || cur.name : cur.name,
     url: patch.url !== undefined ? normalizeUrl(patch.url) : cur.url,
     username: patch.username !== undefined ? String(patch.username).trim() : cur.username,
-    insecure: patch.insecure !== undefined ? !!patch.insecure : cur.insecure,
+    insecure: patch.insecure !== undefined ? patch.insecure === true : cur.insecure === true,
+    ca: patch.ca !== undefined ? String(patch.ca || '') : cur.ca || '',
   }
   // 密码留空表示「不修改」
   if (patch.password) next.password = String(patch.password)
@@ -183,28 +190,41 @@ export async function testRegistry(id) {
   }
 }
 
-export async function listProjects(id) {
+function pagination(options, defaultSize = 100) {
+  const page = Number(options?.page ?? 1)
+  const pageSize = Number(options?.pageSize ?? defaultSize)
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new KubeError(400, '分页参数不合法')
+  return { page, pageSize, query: 'page=' + page + '&page_size=' + pageSize }
+}
+function pageResult(items, headers, options, paging) {
+  if (options === undefined) return items
+  const count = Number(headers['x-total-count'])
+  return { items, total: Number.isSafeInteger(count) && count >= 0 ? count : null, page: paging.page, pageSize: paging.pageSize }
+}
+export async function listProjects(id, options) {
   const rec = getRegistry(id)
-  const { data } = await harborRequest(rec, '/api/v2.0/projects?page=1&page_size=100&with_detail=true')
+  const paging = pagination(options)
+  const { data, headers } = await harborRequest(rec, `/api/v2.0/projects?${paging.query}&with_detail=true`)
   const items = Array.isArray(data) ? data : []
-  return items.map(p => ({
+  return pageResult(items.map(p => ({
     name: p.name,
     repoCount: p.repo_count ?? 0,
     public: !!p.public,
     createdAt: p.creation_time,
     updatedAt: p.update_time,
     pullCount: p.pull_count ?? 0,
-  }))
+  })), headers, options, paging)
 }
 
 /** Harbor 的仓库名是 project/repo，调用 artifacts 时需要去掉 project 前缀 */
-export async function listRepositories(id, project) {
+export async function listRepositories(id, project, options) {
   const rec = getRegistry(id)
   if (!project) throw new KubeError(400, '缺少 project 参数')
-  const { data } = await harborRequest(rec,
-    `/api/v2.0/projects/${encodeURIComponent(project)}/repositories?page=1&page_size=100`)
+  const paging = pagination(options)
+  const { data, headers } = await harborRequest(rec,
+    `/api/v2.0/projects/${encodeURIComponent(project)}/repositories?${paging.query}`)
   const items = Array.isArray(data) ? data : []
-  return items.map(r => {
+  return pageResult(items.map(r => {
     const full = r.name || ''
     const short = full.startsWith(`${project}/`) ? full.slice(project.length + 1) : full
     return {
@@ -215,18 +235,19 @@ export async function listRepositories(id, project) {
       updatedAt: r.update_time,
       pullRef: `${hostOf(rec.url)}/${full}`,
     }
-  })
+  }), headers, options, paging)
 }
 
-export async function listArtifacts(id, project, repository) {
+export async function listArtifacts(id, project, repository, options) {
   const rec = getRegistry(id)
   if (!project || !repository) throw new KubeError(400, '缺少 project / repository 参数')
   const short = repository.startsWith(`${project}/`) ? repository.slice(project.length + 1) : repository
-  const { data } = await harborRequest(rec,
-    `/api/v2.0/projects/${encodeURIComponent(project)}/repositories/${encodeURIComponent(short)}/artifacts?page=1&page_size=50&with_tag=true&with_label=false&with_scan_overview=false`)
+  const paging = pagination(options, 50)
+  const { data, headers } = await harborRequest(rec,
+    `/api/v2.0/projects/${encodeURIComponent(project)}/repositories/${encodeURIComponent(encodeURIComponent(short))}/artifacts?${paging.query}&with_tag=true&with_label=false&with_scan_overview=false`)
   const items = Array.isArray(data) ? data : []
   const host = hostOf(rec.url)
-  return items.map(a => ({
+  return pageResult(items.map(a => ({
     digest: a.digest,
     shortDigest: String(a.digest || '').replace('sha256:', '').slice(0, 12),
     tags: (a.tags || []).map(t => t.name),
@@ -236,28 +257,21 @@ export async function listArtifacts(id, project, repository) {
     pullRefs: (a.tags || []).length
       ? a.tags.map(t => `${host}/${project}/${short}:${t.name}`)
       : [`${host}/${project}/${short}@${a.digest}`],
-  }))
+  })), headers, options, paging)
 }
 
 /**
  * 从集群里自动发现 Harbor：找命名空间里带 NodePort 的 Service，
  * 用「节点 IP + nodePort」拼出可访问地址（优先 https 端口）。
  */
-export async function discoverRegistries(clusterId, namespace = 'harbor') {
+export async function discoverRegistries(clusterId, namespace = 'harbor', { account } = {}) {
   const out = []
-  let services = []
-  try {
-    const r = await kubeRequest('GET', '/api/v1/services', { clusterId, query: namespace ? { namespace } : {} })
-    services = r.data.items || []
-  } catch (e) {
-    // 指定命名空间不存在时退回全集群扫描
-    const r = await kubeRequest('GET', '/api/v1/services', { clusterId })
-    services = r.data.items || []
-  }
+  const response = await scopedList(account, { group: '', version: 'v1', plural: 'services', namespaced: true }, { clusterId, namespace })
+  const services = response.items || []
   let nodeIp = ''
   try {
-    const nodes = await kubeRequest('GET', '/api/v1/nodes', { clusterId })
-    const addrs = nodes.data.items?.[0]?.status?.addresses || []
+    const nodes = await scopedList(account, { group: '', version: 'v1', plural: 'nodes', namespaced: false }, { clusterId })
+    const addrs = nodes.items?.[0]?.status?.addresses || []
     nodeIp = (addrs.find(a => a.type === 'InternalIP') || addrs[0] || {}).address || ''
   } catch (e) { /* 没有节点读权限时留空 */ }
 

@@ -20,12 +20,24 @@ export const ACTIONS = [
   { key: 'delete', label: '删除', hint: '删除对象' },
 ]
 
-export const PERMISSIONS = OBJECTS.flatMap(o => ACTIONS.map(a => ({
+export const SENSITIVE_PERMISSIONS = [
+  {key:'cluster:import',label:'导入纳管集群'},
+  {key:'cluster:remove',label:'移除纳管集群'},
+  {key:'pod:exec',label:'容器终端'},
+  {key:'pod:logs',label:'容器日志'},
+  {key:'secret:read',label:'读取 Secret 内容'},
+  {key:'rbac:write',label:'修改 Kubernetes RBAC'},
+  {key:'node:maintain',label:'节点维护与驱逐'},
+  {key:'apply:force',label:'强制接管 Apply 字段'},
+  {key:'audit:list',label:'查看操作审计'},
+]
+
+export const PERMISSIONS = [...OBJECTS.flatMap(o => ACTIONS.map(a => ({
   key: `${o.key}:${a.key}`,
   object: o.key,
   action: a.key,
   label: `${o.label}（${a.label}）`,
-})))
+}))), ...SENSITIVE_PERMISSIONS.map(p=>({...p,object:p.key.split(':')[0],action:p.key.split(':')[1]}))]
 
 export const PERMISSION_LABEL = new Map(PERMISSIONS.map(p => [p.key, p.label]))
 

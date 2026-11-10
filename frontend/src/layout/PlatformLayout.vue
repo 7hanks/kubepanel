@@ -2,48 +2,45 @@
   <div class="plat-shell">
     <!-- 平台级左侧导航：集群列表 / 用户管理 / 镜像仓库 / 监控 -->
     <aside class="kp-side" :class="{ 'is-collapsed': collapsed }">
-      <div class="kp-brand" @click="go('/clusters')">
+      <router-link class="kp-brand" to="/clusters">
         <span class="mark">K</span><span class="kp-brand-text">KubePanel</span>
-      </div>
+      </router-link>
       <div class="kp-side-scroll">
         <div class="kp-group-title">平台</div>
         <template v-for="n in navs" :key="n.key">
           <!-- 带子页面的一级菜单（用户管理 → 用户 / 角色） -->
           <template v-if="n.children">
-            <div
-              class="kp-nav-item" :class="{ active: isGroupActive(n), open: opened[n.key] }"
-              :title="collapsed ? n.label : ''" @click="toggleGroup(n)"
-            >
+            <button type="button" class="kp-nav-item" :class="{ active: isGroupActive(n), open: opened[n.key] }"
+              :title="collapsed ? n.label : ''" 
+             @click="toggleGroup(n)">
               <el-icon><component :is="n.icon" /></el-icon>
               <span>{{ n.label }}</span>
               <el-icon class="kp-nav-caret"><ArrowDown /></el-icon>
-            </div>
+            </button>
             <div v-show="opened[n.key] && !collapsed" class="kp-subnav">
-              <div
-                v-for="c in n.children" :key="c.key"
+              <router-link v-for="c in n.children" :key="c.key"
                 class="kp-nav-item kp-subnav-item" :class="{ active: active === c.key }"
-                @click="go(c.path)"
-              >
+                
+               :to="c.path">
                 <span>{{ c.label }}</span>
-              </div>
+              </router-link>
             </div>
           </template>
-          <div
-            v-else
+          <router-link v-else
             class="kp-nav-item" :class="{ active: active === n.key }"
-            :title="collapsed ? n.label : ''" @click="go(n.path)"
-          >
+            :title="collapsed ? n.label : ''" 
+           :to="n.path">
             <el-icon><component :is="n.icon" /></el-icon>
             <span>{{ n.label }}</span>
-          </div>
+          </router-link>
         </template>
       </div>
       <div class="ps-foot">
-        <div class="kp-nav-item" :title="collapsed ? '展开菜单' : ''" @click="toggleCollapse">
+        <button type="button" class="kp-nav-item" :title="collapsed ? '展开菜单' : ''"  @click="toggleCollapse">
           <el-icon><component :is="collapsed ? 'Expand' : 'Fold'" /></el-icon>
           <span>收起菜单</span>
-        </div>
-        <div v-if="!collapsed" class="ps-ver">KubePanel v1.4.0</div>
+        </button>
+        <div v-if="!collapsed" class="ps-ver">KubePanel v1.5.0</div>
       </div>
     </aside>
 
@@ -58,9 +55,9 @@
           <slot name="actions" />
           <span class="ps-divider" />
           <el-dropdown @command="onCommand">
-            <span class="plat-user">
+            <button type="button" class="plat-user">
               <el-icon><UserFilled /></el-icon>{{ username }}<el-icon><ArrowDown /></el-icon>
-            </span>
+            </button>
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item v-if="roleLabel" disabled>{{ roleLabel }}</el-dropdown-item>
@@ -89,11 +86,12 @@ import { ElMessageBox } from 'element-plus'
 import {
   OfficeBuilding, Box, TrendCharts, UserFilled, ArrowDown, User,
 } from '@element-plus/icons-vue'
+import api from '../api'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import { CLUSTERS_PATH } from '../utils/path'
 import {
   canReadCluster, canReadUsers, canReadRegistry, canReadMonitor,
-  refreshSession, clearSession, roleName,
+  refreshSession, clearSession, roleName, can,
 } from '../utils/perm'
 
 const props = defineProps({ active: { type: String, default: 'clusters' } })
@@ -118,6 +116,7 @@ const navs = computed(() => {
       ].filter(c => canReadUsers()),
     },
     { key: 'registries', label: '镜像仓库', icon: Box, path: '/registries', hidden: !canReadRegistry() },
+    { key:'audit',label:'操作审计',icon:User,path:'/audit',hidden:!can('audit:list') },
     { key: 'monitor', label: '监控', icon: TrendCharts, path: '/monitor', hidden: !canReadMonitor() },
   ].filter(n => !n.hidden)
 })
@@ -144,10 +143,10 @@ function toggleCollapse() {
   localStorage.setItem('kp_plat_side_collapsed', collapsed.value ? '1' : '0')
 }
 function go(path) { if (router.currentRoute.value.path !== path) router.push(path) }
-function onCommand(cmd) {
-  if (cmd === 'logout') { clearSession(); router.push('/login') }
+async function onCommand(cmd) {
+  if (cmd === 'logout') { await api.logout().catch(() => {}); clearSession(); router.push('/login') }
   else if (cmd === 'password') pwdVisible.value = true
-  else if (cmd === 'about') ElMessageBox.alert('KubePanel v1.4.0 · 多集群 Kubernetes 控制台。', '关于', { confirmButtonText: '知道了' })
+  else if (cmd === 'about') ElMessageBox.alert('KubePanel v1.5.0 · 多集群 Kubernetes 控制台。', '关于', { confirmButtonText: '知道了' })
 }
 function afterPasswordChanged() {
   clearSession()
@@ -182,7 +181,7 @@ onMounted(async () => {
 .ps-sep { color: var(--kp-faint); }
 .plat-right { display: flex; align-items: center; gap: 10px; }
 .ps-divider { width: 1px; height: 18px; background: var(--kp-border); }
-.plat-user {
+.plat-user { background:transparent; border:0; font:inherit;
   display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12.5px;
   color: var(--kp-text-2); padding: 5px 8px; border-radius: var(--kp-r-sm); transition: background .14s;
 }

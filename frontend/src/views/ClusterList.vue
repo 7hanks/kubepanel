@@ -39,7 +39,7 @@
                   </div>
                   <div class="kp-mono kp-muted" style="margin-top:6px;font-size:12px;word-break:break-all">{{ c.server }}</div>
                 </div>
-                <el-tag :type="c.healthy ? 'success' : 'danger'" size="small" effect="light">{{ c.healthy ? '正常' : '异常' }}</el-tag>
+                <el-tag disable-transitions :type="c.healthy ? 'success' : 'danger'" size="small" effect="light">{{ c.healthy ? '正常' : '异常' }}</el-tag>
               </div>
 
               <el-divider style="margin:14px 0" />
@@ -52,6 +52,7 @@
                 <tr><td>来源</td><td class="kp-mono">{{ c.source }}</td></tr>
               </table>
 
+              <el-alert v-if="['expiring','expired'].includes(c.credentialExpiry?.status)" :type="c.credentialExpiry.status === 'expired' ? 'error':'warning'" :closable="false" style="margin-top:12px" :title="`客户端证书${c.credentialExpiry.status === 'expired' ? '已到期' : `将在 ${c.credentialExpiry.daysRemaining} 天后到期`} · ${c.credentialExpiry.notAfter}`" />
               <div v-if="c.error" class="kp-danger" style="font-size:12px;margin-top:10px;word-break:break-all">{{ c.error }}</div>
 
               <div style="display:flex;gap:8px;margin-top:16px">
@@ -72,13 +73,14 @@
     <!-- 集群详情抽屉：点卡片名称或「详情」按钮打开，不影响当前选中的集群 -->
     <el-drawer v-model="detailVisible" :title="`集群详情 · ${detail?.name || ''}`" size="62%" destroy-on-close>
       <div v-loading="detailLoading">
+        <el-alert v-if="['expiring','expired'].includes(detail?.credentialExpiry?.status)" :type="detail.credentialExpiry.status === 'expired' ? 'error':'warning'" :closable="false" :title="`客户端证书${detail.credentialExpiry.status === 'expired' ? '已到期' : `将在 ${detail.credentialExpiry.daysRemaining} 天后到期`} · ${detail.credentialExpiry.notAfter}`" style="margin-bottom:12px" />
         <el-alert v-if="detail?.error" type="error" show-icon :closable="false" :title="detail.error" />
 
         <template v-if="detail && !detail.error">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
             <span class="status-dot ok" />
             <strong style="font-size:16px">{{ detail.name }}</strong>
-            <el-tag type="success" size="small">连接正常</el-tag>
+            <el-tag disable-transitions type="success" size="small">连接正常</el-tag>
             <span class="kp-mono kp-muted" style="font-size:12px">{{ detail.server }}</span>
           </div>
 
@@ -102,25 +104,25 @@
             <tr><td>凭据来源</td><td class="kp-mono">{{ detail.source }}</td></tr>
             <tr><td>API 资源类型</td><td>{{ detail.resourceTypes }}</td></tr>
             <tr><td>可在界面移除</td><td>{{ detail.removable ? '是' : '否（环境变量 / ServiceAccount / 只读挂载）' }}</td></tr>
-            <tr><td>metrics-server</td><td>{{ detail.metricsAvailable ? '已安装（显示实时用量）' : '未安装（显示容量配额）' }}</td></tr>
+            <tr><td>metrics-server</td><td>{{ detail.metricsAvailable ? '已安装（显示实时用量）' : '不可用（实际用量显示未知）' }}</td></tr>
           </table>
 
           <div class="kp-section-title" style="margin-top:20px">命名空间（{{ detail.namespaces?.length || 0 }}）</div>
           <div class="kp-tag-row">
-            <el-tag v-for="nsx in detail.namespaces || []" :key="nsx" size="small" effect="plain">{{ nsx }}</el-tag>
+            <el-tag disable-transitions v-for="nsx in detail.namespaces || []" :key="nsx" size="small" effect="plain">{{ nsx }}</el-tag>
           </div>
 
           <div class="kp-section-title" style="margin-top:20px">节点状态</div>
           <el-table :data="detail.nodes || []" size="small" border stripe>
             <el-table-column prop="name" label="节点" min-width="120" />
             <el-table-column label="状态" width="95">
-              <template #default="{ row: n }"><el-tag :type="n.ready ? 'success' : 'danger'" size="small">{{ n.ready ? 'Ready' : 'NotReady' }}</el-tag></template>
+              <template #default="{ row: n }"><el-tag disable-transitions :type="n.ready ? 'success' : 'danger'" size="small">{{ n.ready ? 'Ready' : 'NotReady' }}</el-tag></template>
             </el-table-column>
             <el-table-column label="可调度" width="90"><template #default="{ row: n }">{{ n.unschedulable ? '否' : '是' }}</template></el-table-column>
             <el-table-column prop="version" label="Kubelet" width="110" />
-            <el-table-column prop="cpu" label="CPU" width="110" />
-            <el-table-column prop="memory" label="内存" width="110" />
-            <el-table-column prop="pods" label="Pod 配额" width="100" />
+            <el-table-column label="CPU 实际" width="110"><template #default="{row:n}">{{detail.metricsAvailable ? n.cpu : '—'}}</template></el-table-column><el-table-column label="CPU 容量 / 可分配" min-width="160"><template #default="{row:n}">{{n.capacity?.cpu || '—'}} / {{n.allocatable?.cpu || '—'}}</template></el-table-column>
+            <el-table-column label="内存实际" width="110"><template #default="{row:n}">{{detail.metricsAvailable ? n.memory : '—'}}</template></el-table-column>
+            <el-table-column label="授权范围内实际 Pod / 可分配" min-width="190"><template #default="{row:n}">{{n.pods ?? '—'}} / {{n.allocatable?.pods || '—'}}</template></el-table-column>
             <el-table-column prop="age" label="运行时间" width="100" />
           </el-table>
 
@@ -163,7 +165,7 @@
           <div class="kp-section-title" style="margin-top:20px">近期事件</div>
           <el-table :data="detail.events || []" size="small" border stripe max-height="240">
             <el-table-column label="类型" width="90">
-              <template #default="{ row: ev }"><el-tag :type="ev.type === 'Warning' ? 'warning' : 'success'" size="small">{{ ev.type }}</el-tag></template>
+              <template #default="{ row: ev }"><el-tag disable-transitions :type="ev.type === 'Warning' ? 'warning' : 'success'" size="small">{{ ev.type }}</el-tag></template>
             </el-table-column>
             <el-table-column prop="namespace" label="命名空间" width="130" show-overflow-tooltip />
             <el-table-column prop="reason" label="原因" width="140" show-overflow-tooltip />
@@ -211,7 +213,7 @@ import { Plus, Refresh, Delete, OfficeBuilding } from '@element-plus/icons-vue'
 import api from '../api'
 import { store } from '../store'
 import { cpath } from '../utils/path'
-import { canCreate, canDelete } from '../utils/perm'
+import { can } from '../utils/perm'
 import PlatformLayout from '../layout/PlatformLayout.vue'
 
 const router = useRouter()
@@ -220,8 +222,8 @@ const adding = ref(false)
 const testing = ref('')
 const addVisible = ref(false)
 const clusters = ref([])
-const canAdd = computed(() => canCreate('cluster'))
-const canRemove = computed(() => canDelete('cluster'))
+const canAdd = computed(() => can('cluster:import'))
+const canRemove = computed(() => can('cluster:remove'))
 const form = reactive({ name: '', kubeconfig: '' })
 const clustersDirHint = '/app/kube/clusters'
 const detailVisible = ref(false)

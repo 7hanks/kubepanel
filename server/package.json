@@ -1,20 +1,20 @@
 {
   "name": "kube-panel-server",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "private": true,
   "description": "KubePanel backend - Kubernetes REST proxy, auth, logs and web terminal",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check src/config.js && node --check src/permissions.js && node --check src/roleService.js && node --check src/userService.js && node --check src/kube.js && node --check src/clusterService.js && node --check src/auth.js && node --check src/userStore.js && node --check src/actions.js && node --check src/logs.js && node --check src/terminal.js && node --check src/routes.js && node --check src/registryService.js && node --check src/monitorService.js"
+    "check": "node scripts/check.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.js"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "@kubernetes/client-node": "^2.0.2",
-    "cors": "^2.8.6",
     "express": "^5.3.0",
     "js-yaml": "^5.5.0",
     "jsonwebtoken": "^9.0.3",

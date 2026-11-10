@@ -24,7 +24,7 @@
             <template #default="{ row }">
               <div style="display:flex;align-items:center;gap:6px">
                 <strong style="font-weight:600">{{ row.name }}</strong>
-                <el-tag v-if="row.builtin" size="small" type="info" effect="plain">预置</el-tag>
+                <el-tag disable-transitions v-if="row.builtin" size="small" type="info" effect="plain">预置</el-tag>
               </div>
               <div class="kp-mono kp-muted" style="font-size:11px;margin-top:2px">{{ row.id }}</div>
             </template>
@@ -43,6 +43,7 @@
               >{{ p }}</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="作用范围" min-width="230"><template #default="{row}"><div v-for="f in scopeFields" :key="f.key">{{f.label}}：{{(row.scope?.[f.key] ?? ['*']).join(', ') || '无授权'}}</div></template></el-table-column>
           <el-table-column label="账号数" width="90" align="center">
             <template #default="{ row }">
               <span :class="row.userCount ? '' : 'kp-muted'">{{ row.userCount || 0 }}</span>
@@ -116,6 +117,8 @@
               </div>
             </div>
           </el-form-item>
+          <el-form-item label="敏感操作"><el-checkbox-group v-model="form.sensitive"><el-checkbox v-for="p in sensitivePermissions" :key="p.key" :value="p.key">{{p.label}}</el-checkbox></el-checkbox-group></el-form-item>
+          <el-form-item v-for="field in scopeFields" :key="field.key" :label="field.label"><div style="width:100%"><el-select v-model="form.scope[field.key]" multiple filterable allow-create default-first-option style="width:100%" :aria-label="field.label" placeholder="输入后按 Enter 添加，也支持逗号分隔；* 为全部，空列表为不授权"><el-option label="全部 (*)" value="*" /></el-select><p class="kp-muted" style="font-size:12px">{{field.hint}}</p></div></el-form-item>
         </el-form>
         <template #footer>
           <el-button @click="formVisible = false">取消</el-button>
@@ -132,6 +135,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import PlatformLayout from '../layout/PlatformLayout.vue'
 import api from '../api'
+import {parseScope} from '../utils/scope'
 import { canCreate, canUpdate, canDelete } from '../utils/perm'
 
 const loading = ref(false)
@@ -139,6 +143,9 @@ const saving = ref(false)
 const roles = ref([])
 const objects = ref([])
 const actions = ref([])
+const sensitivePermissions=ref([])
+const scopeFields=[{key:'clusters',label:'集群',hint:'填集群 ID，或 *。'},{key:'namespaces',label:'命名空间',hint:'受限命名空间角色不能读取集群级资源。'},{key:'resources',label:'资源',hint:'使用 group/plural，例如 _core/pods、apps/deployments，或 *。'}]
+const scopeOf=row=>Object.fromEntries(scopeFields.map(f=>[f.key,[...(row?.scope?.[f.key] ?? ['*'])]]))
 
 const canCreateRole = computed(() => canCreate('user'))
 const canUpdateRole = computed(() => canUpdate('user'))
@@ -146,7 +153,7 @@ const canDeleteRole = computed(() => canDelete('user'))
 
 const formVisible = ref(false)
 const editing = ref(null)
-const form = reactive({ name: '', description: '', checked: {} })
+const form = reactive({ name: '', description: '', checked: {}, sensitive:[], scope:scopeOf() })
 
 /** 表格行：每个对象一行，checked 是 action -> boolean */
 const permRows = computed(() => objects.value.map(o => ({
@@ -211,7 +218,7 @@ function permissionsFromForm() {
       if (form.checked[o.key]?.[a.key]) out.push(`${o.key}:${a.key}`)
     }
   }
-  return out
+  return [...out,...form.sensitive]
 }
 
 function permissionsToForm(list = []) {
@@ -222,25 +229,26 @@ function permissionsToForm(list = []) {
     if (checked[obj] && actions.value.some(a => a.key === act)) checked[obj][act] = true
   }
   form.checked = checked
+  form.sensitive=list.filter(p=>sensitivePermissions.value.some(x=>x.key===p))
 }
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', description: '' })
+  Object.assign(form, { name: '', description: '', scope:scopeOf() })
   permissionsToForm([])
   formVisible.value = true
 }
 
 function openEdit(row) {
   editing.value = row
-  Object.assign(form, { name: row.name, description: row.description || '' })
+  Object.assign(form, { name: row.name, description: row.description || '',scope:scopeOf(row) })
   permissionsToForm(row.permissions)
   formVisible.value = true
 }
 
 function openCopy(row) {
   editing.value = null
-  Object.assign(form, { name: `${row.name} 副本`, description: row.description || '' })
+  Object.assign(form, { name: `${row.name} 副本`, description: row.description || '',scope:scopeOf(row) })
   permissionsToForm(row.permissions)
   formVisible.value = true
 }
@@ -249,6 +257,8 @@ async function submitForm() {
   if (saving.value) return
   const name = form.name.trim()
   if (!name) return ElMessage.warning('请输入角色名称')
+  let scope
+  try { scope=parseScope(form.scope) } catch(e) { return ElMessage.error(e.message) }
   const permissions = permissionsFromForm()
   if (!permissions.length) {
     try {
@@ -260,7 +270,7 @@ async function submitForm() {
   }
   saving.value = true
   try {
-    const body = { name, description: form.description.trim(), permissions }
+    const body = { name, description: form.description.trim(), permissions,scope }
     if (editing.value) {
       await api.updateRole(editing.value.id, body)
       ElMessage.success('角色已更新')
@@ -301,6 +311,7 @@ async function load() {
     roles.value = r.roles || []
     objects.value = r.objects || []
     actions.value = r.actions || []
+    sensitivePermissions.value=r.sensitivePermissions || []
     if (!Object.keys(form.checked).length) ensureRows()
   } catch (e) {
     // 拦截器已提示
