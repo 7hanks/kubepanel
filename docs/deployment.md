@@ -13,7 +13,7 @@
 1. 本地完成代码评审、后端 check/test、前端 test/build、清单测试与脚本语法检查。提交本地 Git，得到最终 revision；之后不要修改该 revision 的源码。
 2. 从该 commit 归档到一个**不存在的暂存目录**，由工具生成元数据，不复制工作区中的 `.env`、依赖或本地资料。把该目录或其 tar 包传到服务器全新暂存目录。
 3. 服务器核验清单，从相同源码运行测试并构建候选镜像；备份后在 loopback 随机端口启动候选容器，候选使用生产数据快照的私有副本，绝不共享生产可写数据卷。
-4. 候选通过探针、版本清单、人工登录和只读资源检查后，切生产，保留原容器与原镜像用于回滚。切换前暂停原写入者并做最终一致备份。发布过程有短暂停机。
+4. 候选通过探针、版本清单、登录和只读资源检查后，切生产，保留原容器与原镜像用于回滚。切换前暂停原写入者并做最终一致备份。发布过程有短暂停机。
 5. 生产通过检查后，推送已验证的同一 commit 到 GitHub main，等待 CI。
 6. 比对本地 HEAD、GitHub main、服务器 `RELEASE`、源码 `SHA256SUMS` 摘要、运行镜像标签以及探针。只有全部相等才算发布完成；任何后续代码修复都要产生新 revision 并重复该流程。
 
@@ -39,15 +39,25 @@ sudo BASE_DIR=/opt/kubepanel CONTAINER=kubepanel bash deploy/backup.sh
 
 ## 发布脚本
 
-Linux 主机需要 root、Docker（含 BuildKit）、Bash、Python 3.8+、curl、flock；服务器能访问锁定依赖的 npm 仓库及基础镜像。环境文件放在 `/opt/kubepanel/.env`，或通过 `ENV_FILE` 指定源码目录之外的私有文件。旧配置若在 app/.env，首次升级先私密备份并复制到 base/.env；发布器拒绝把仍依赖 app 内配置的实例切换到纯源码链接。首次部署显式设置强密码；数据卷属主为 10001。
+Linux 主机需要 root、Docker、Bash、Python 3.8+、curl、flock；服务器能访问锁定依赖的 npm 仓库及基础镜像。先按 README 创建属主为 `10001:10001` 的 data/clusters 目录。发布脚本使用 `docker run`，直接从当前进程取得启动参数，不需要准备环境变量配置文件。
+
+设置初始密码并发布（以 root 执行，将密码占位符及源码路径替换为实际值）：
 
 ```bash
-sudo BASE_DIR=/opt/kubepanel ENV_FILE=/opt/kubepanel/.env \
+SOURCE_DIR=/secure-staging/kubepanel-REPLACE_WITH_FULL_GIT_SHA
+DASHBOARD_USERNAME=admin DASHBOARD_PASSWORD='REPLACE_WITH_YOUR_STRONG_PASSWORD' \
+  BASE_DIR=/opt/kubepanel \
   BIND_ADDRESS=0.0.0.0 HOST_PORT=9090 \
-  bash /secure-staging/kubepanel-<revision>/deploy/release.sh /secure-staging/kubepanel-<revision>
+  bash "$SOURCE_DIR/deploy/release.sh" "$SOURCE_DIR"
 ```
 
-这是独立 `docker run` 发布器；Compose 管理或特殊 Docker 网络 / 额外挂载的实例，先由维护者确认并保留所有原启动参数，再采用对应的切换方式。脚本不主动迁移外部部署编排。不要在同一实例上混用 Compose 自动重建与此发布器。
+也可以使用 README 中的 `read -rsp` 方式读取并 export 密码，再执行脚本。发布器以 `-e 变量名` 将值传给 Docker，不把密码值展开到 Docker 命令参数。密码仍会进入 Docker 容器配置，请保密 container inspect 与备份。
+
+升级时保持原 `DASHBOARD_USERNAME`；若原实例显式设置了 `DASHBOARD_SECRET`，必须继续 export 同一密钥。`DASHBOARD_TOKEN_TTL`、`TRUST_PROXY`、`DASHBOARD_COOKIE_SECURE`、终端超时等自定义参数也需继续传入。界面修改过的密码从数据卷读取，启动密码不会覆盖它。脚本不会从旧容器自动复制配置，也不会自动读取主机上的 .env 文件。
+
+这是独立 Docker 发布器；由其他编排工具管理、使用特殊 Docker 网络或额外挂载的实例，需先保留原启动参数并采用对应切换方式。脚本不迁移外部编排。
+
+为兼容已有的发布自动化，显式设置 `ENV_FILE` 时仍可读取源码目录之外的旧私有文件，并将它纳入备份；该选项不会被自动启用，新安装使用上面的直接传参方式。备份脚本也继续保护旧配置文件，不因仓库删除示例而删除运行凭据。
 
 脚本使用发布锁；拒绝覆盖同 revision 的已有发布目录；运行镜像内测试；创建私有备份和候选快照；loopback 候选通过检查后保留旧容器名称为 `kubepanel-rollback-<UTC>`，按原数据卷启动新版本。生产检查失败时移除失败的新容器并恢复旧容器，保留诊断快照、旧镜像和全部备份。发布路径、candidate 路径、备份路径均在构建上下文之外。不会执行 `docker compose down -v`、volume prune 或删除运行目录。
 
@@ -56,7 +66,8 @@ sudo BASE_DIR=/opt/kubepanel ENV_FILE=/opt/kubepanel/.env \
 ## 核验与回滚
 
 ```bash
-bash /opt/kubepanel/releases/<revision>/deploy/verify.sh /opt/kubepanel/releases/<revision> http://127.0.0.1:9090
+SOURCE_DIR=$(readlink -f /opt/kubepanel/app)
+bash "$SOURCE_DIR/deploy/verify.sh" "$SOURCE_DIR" http://127.0.0.1:9090
 docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' kubepanel
 ```
 

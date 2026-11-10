@@ -14,8 +14,20 @@ if [[ -n "$CANDIDATE_CHECK" && (! -f "$CANDIDATE_CHECK" || ! -x "$CANDIDATE_CHEC
   echo 'CANDIDATE_CHECK must name an executable file' >&2
   exit 2
 fi
-if [[ -z ${ENV_FILE:-} ]]; then
-  if [[ -f "$BASE_DIR/.env" ]]; then ENV_FILE="$BASE_DIR/.env"; else ENV_FILE="$BASE_DIR/app/.env"; fi
+docker_env=()
+if [[ -n ${ENV_FILE:-} ]]; then
+  # Explicit legacy compatibility only; no environment file is auto-loaded.
+  [[ -f "$ENV_FILE" ]] || { echo 'Selected ENV_FILE is unavailable' >&2; exit 2; }
+  docker_env+=(--env-file "$ENV_FILE")
+else
+  [[ -n ${DASHBOARD_PASSWORD:-} ]] || { echo 'Set DASHBOARD_PASSWORD for docker run deployment' >&2; exit 2; }
+  for name in DASHBOARD_USERNAME DASHBOARD_PASSWORD DASHBOARD_SECRET DASHBOARD_TOKEN_TTL DASHBOARD_AUTH_ENABLED DASHBOARD_COOKIE_SECURE TRUST_PROXY KUBE_REQUEST_TIMEOUT TERMINAL_IDLE_MS TERMINAL_MAX_MS KUBE_CONFIG_B64 KUBECONFIG TZ; do
+    if [[ -v "$name" ]]; then
+      export "$name"
+      # Docker reads the exported value; do not expand secrets into its argv.
+      docker_env+=(-e "$name")
+    fi
+  done
 fi
 mkdir -p -- "$BASE_DIR/releases"
 base=$(realpath -e -- "$BASE_DIR")
@@ -26,8 +38,10 @@ revision=$(cat "$source_dir/RELEASE")
 image="$IMAGE_REPOSITORY:$revision"
 destination="$base/releases/$revision"
 [[ ! -e "$destination" ]] || { echo 'Immutable release already exists; use a new revision' >&2; exit 2; }
-[[ -f "$ENV_FILE" && -d "$base/data" && -d "$base/clusters" ]] || { echo 'Missing environment or runtime directories' >&2; exit 2; }
-[[ $(realpath -e -- "$ENV_FILE") != "$base/app/"* ]] || { echo 'Move ENV_FILE outside app before publishing the source pointer' >&2; exit 2; }
+[[ -d "$base/data" && -d "$base/clusters" ]] || { echo 'Missing runtime directories' >&2; exit 2; }
+if [[ -n ${ENV_FILE:-} ]]; then
+  [[ $(realpath -e -- "$ENV_FILE") != "$base/app/"* ]] || { echo 'Move ENV_FILE outside app before publishing the source pointer' >&2; exit 2; }
+fi
 [[ ! -e "$base/app" || -d "$base/app" ]] || { echo 'app must be a directory or directory symlink' >&2; exit 2; }
 [[ "$source_dir" != "$base/data"* && "$source_dir" != "$base/clusters"* ]] || exit 2
 cp -a -- "$source_dir" "$destination"
@@ -36,7 +50,7 @@ python3 "$destination/deploy/manifest.py" verify "$destination" >/dev/null
 docker build --target verification -t "$image-verification" "$destination"
 docker build --build-arg BUILD_REVISION="$revision" --build-arg SOURCE_MANIFEST_SHA256="$manifest_sha" -t "$image" "$destination"
 [[ $(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image") == "$revision" ]] || exit 1
-backup=$(BASE_DIR="$base" CONTAINER="$CONTAINER" ENV_FILE="$ENV_FILE" bash "$destination/deploy/backup.sh")
+backup=$(BASE_DIR="$base" CONTAINER="$CONTAINER" ENV_FILE="${ENV_FILE:-}" bash "$destination/deploy/backup.sh")
 work=$(mktemp -d "$base/.candidate-XXXXXX")
 candidate="$CONTAINER-candidate-${revision:0:12}"
 previous="$CONTAINER-rollback-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -83,7 +97,7 @@ trap 'exit 130' INT TERM
 tar -xzf "$backup/runtime.tar.gz" -C "$work" data clusters
 chown -R 10001:10001 "$work/data" "$work/clusters"
 docker run -d --name "$candidate" --cap-drop ALL --security-opt no-new-privileges:true --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-  --env-file "$ENV_FILE" -e BUILD_REVISION="$revision" -e SOURCE_MANIFEST_SHA256="$manifest_sha" \
+  "${docker_env[@]}" -e BUILD_REVISION="$revision" -e SOURCE_MANIFEST_SHA256="$manifest_sha" \
   -p 127.0.0.1::8080 -v "$work/data:/app/data" -v "$work/clusters:/app/kube/clusters" "$image" >/dev/null
 candidate_port=$(docker port "$candidate" 8080/tcp | awk -F: '{print $NF}')
 wait_ready() {
@@ -115,10 +129,10 @@ if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   old_renamed=1
 fi
 # Take the authoritative final backup with the old writer stopped.
-backup=$(BASE_DIR="$base" CONTAINER="$previous" ENV_FILE="$ENV_FILE" bash "$destination/deploy/backup.sh")
+backup=$(BASE_DIR="$base" CONTAINER="$previous" ENV_FILE="${ENV_FILE:-}" bash "$destination/deploy/backup.sh")
 new_started=1
 docker run -d --name "$CONTAINER" --restart unless-stopped --cap-drop ALL --security-opt no-new-privileges:true \
-  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m --env-file "$ENV_FILE" \
+  --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m "${docker_env[@]}" \
   -e BUILD_REVISION="$revision" -e SOURCE_MANIFEST_SHA256="$manifest_sha" \
   -p "$BIND_ADDRESS:$HOST_PORT:8080" -v "$base/data:/app/data" -v "$base/clusters:/app/kube/clusters" "$image" >/dev/null
 wait_ready "http://127.0.0.1:$HOST_PORT"

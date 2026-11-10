@@ -72,7 +72,7 @@ def stage(repo, sha, dest):
             name = pathlib.PurePosixPath(entry.name)
             if name.is_absolute() or '..' in name.parts or not (entry.isfile() or entry.isdir()):
                 raise ValueError('unsafe Git archive member')
-            if name.name.startswith('.env') and name.name != '.env.example':
+            if name.name.startswith('.env'):
                 raise ValueError('private environment file in source')
             if any(part in {'node_modules', '.git', '.local', 'data', 'clusters'} for part in name.parts):
                 raise ValueError('runtime directory in source')

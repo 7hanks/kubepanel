@@ -1,5 +1,5 @@
-# Create kubepanel-auth separately from a private env file; no default password is shipped.
-# kubectl -n kube-system create secret generic kubepanel-auth --from-env-file=/secure/kubepanel.env
+# Create kubepanel-auth separately; replace the placeholder with your initial password.
+# kubectl -n kube-system create secret generic kubepanel-auth --from-literal=DASHBOARD_PASSWORD='REPLACE_WITH_A_STRONG_PASSWORD'
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

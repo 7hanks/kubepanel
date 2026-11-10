@@ -14,7 +14,6 @@ deploy/screenshots
 .env
 .env.local
 **/.env.*
-!.env.example
 clusters
 **/clusters
 backups
