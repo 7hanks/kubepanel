@@ -3,13 +3,13 @@
     <div class="kp-toolbar">
       <el-button :icon="ArrowLeft" @click="$router.back()">返回</el-button>
       <span style="font-weight:600">{{ namespace }} / {{ name }}</span>
-      <el-select v-model="container" style="width:180px"><el-option v-for="c in containers" :key="c" :label="c" :value="c" /></el-select>
-      <el-select v-model="shell" style="width:150px">
-        <el-option v-for="s in ['/bin/sh', '/bin/bash', '/bin/ash', 'sh']" :key="s" :label="s" :value="s" />
+      <el-select v-model="container" aria-label="终端容器" style="width:180px"><el-option v-for="c in containers" :key="c" :label="c" :value="c" /></el-select>
+      <el-select v-model="shell" aria-label="终端 Shell" style="width:150px">
+        <el-option v-for="s in ['/bin/sh', '/bin/bash', 'sh', 'bash']" :key="s" :label="s" :value="s" />
       </el-select>
       <el-tag disable-transitions :type="status === 'open' ? 'success' : status === 'error' ? 'danger' : 'info'" size="small">{{ statusText }}</el-tag>
       <span class="spacer" />
-      <el-button @click="connect" :disabled="!container || status === 'open'">连接</el-button>
+      <el-button @click="connect" :disabled="!container || status === 'open' || status === 'connecting'">连接</el-button>
       <el-button @click="disconnect">断开</el-button>
       <el-button @click="term?.clear()">清屏</el-button>
     </div>
@@ -46,6 +46,8 @@ let ws = null
 let ro = null
 let connectionRequest=0
 let disposed=false
+let initialized=false
+let connectionTarget=''
 
 function makeTerm() {
   if (term) return
@@ -85,25 +87,34 @@ function b64decode(b64) {
 }
 
 async function connect() {
+  if (disposed) return
   if (!can('pod:exec')) return ElMessage.error('没有容器终端权限')
   if (!container.value) return ElMessage.warning('请先选择容器')
+  const target={namespace,pod:name,container:container.value,shell:shell.value,clusterId:String(route.params.clusterId || localStorage.getItem('kp_cluster') || '')}
+  const key=JSON.stringify(target)
+  if (status.value==='connecting' && connectionTarget===key) return
   makeTerm()
   disconnect(false)
+  connectionTarget=key
   const request=++connectionRequest
   status.value = 'connecting'
   statusText.value = '连接中...'
   term.write('\r\n\x1b[36m[KubePanel] 正在连接容器...\x1b[0m\r\n')
 
   let ticket
-  try { ({ticket} = await api.streamTicket({purpose:'exec',clusterId:localStorage.getItem('kp_cluster'),namespace,pod:name})) }
+  try { ({ticket} = await api.streamTicket({purpose:'exec',clusterId:target.clusterId,namespace,pod:name})) }
   catch (e) { if(!disposed && request===connectionRequest){status.value='error'; statusText.value=e.message || '授权失败'} return }
-  if(disposed || request!==connectionRequest)return
-  const url = execWsUrl({ namespace, pod: name, container: container.value, shell: shell.value, ticket })
+  if(disposed || request!==connectionRequest || target.container!==container.value || target.shell!==shell.value)return
+  if (!can('pod:exec')) {status.value='error';statusText.value='终端权限已失效';return}
+  const url = execWsUrl({ ...target, ticket })
   const socket = new WebSocket(url)
   ws = socket
   socket.binaryType = 'arraybuffer'
+  const current=()=>!disposed && request===connectionRequest && ws===socket
 
   socket.onopen = () => {
+    if (!current()) {try{socket.close()}catch{};return}
+    if (!can('pod:exec')) {disconnect(false);status.value='error';statusText.value='终端权限已失效';return}
     status.value = 'open'
     statusText.value = '已连接'
     term.write('\x1b[32m[KubePanel] 连接成功\x1b[0m\r\n')
@@ -111,6 +122,7 @@ async function connect() {
     socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
   }
   socket.onmessage = ev => {
+    if (!current()) return
     try {
       const msg = JSON.parse(ev.data)
       if (msg.type === 'stdout' || msg.type === 'stderr') term.write(b64decode(msg.data))
@@ -119,10 +131,13 @@ async function connect() {
     } catch (e) { /* 忽略非 JSON 消息 */ }
   }
   socket.onerror = () => {
+    if (!current()) return
     status.value = 'error'; statusText.value = '连接失败'
     term.write('\r\n\x1b[31m[错误] WebSocket 连接失败，请检查 Pod 状态与认证\x1b[0m\r\n')
   }
   socket.onclose = () => {
+    if (!current()) return
+    ws=null
     if (status.value === 'open' || status.value === 'connecting') {
       status.value = 'closed'; statusText.value = '连接已关闭'
       term.write('\r\n\x1b[33m[连接已关闭]\x1b[0m\r\n')
@@ -132,12 +147,14 @@ async function connect() {
 
 function disconnect(write = true) {
   connectionRequest++
-  if (ws) { try { ws.close() } catch (e) { /* ignore */ } ws = null }
+  const socket=ws;ws=null
+  if (socket) { try { socket.close() } catch (e) { /* ignore */ } }
+  connectionTarget=''
   status.value = 'closed'; statusText.value = '未连接'
   if (write && term) term.write('\r\n\x1b[33m[已主动断开]\x1b[0m\r\n')
 }
 
-watch(container, () => disconnect(false))
+watch([container,shell], () => {if(initialized && !disposed)connect()})
 
 onMounted(async () => {
   if (!can('pod:exec')) {
@@ -146,15 +163,21 @@ onMounted(async () => {
     return
   }
   await nextTick()
+  if (disposed) return
   makeTerm()
-  term.write('\x1b[36mKubePanel Web Terminal\x1b[0m\r\n点击右上角「连接」进入容器。\r\n\r\n')
+  term.write('\x1b[36mKubePanel Web Terminal\x1b[0m\r\n正在准备容器连接…\r\n\r\n')
   try {
     const pod = await api.get('', 'v1', 'pods', namespace, name)
+    if (disposed) return
     if(route.query.uid && route.query.uid!==pod.metadata?.uid)throw new Error('Pod 已重新创建，请重新选择容器')
     containers.value = [...(pod.spec?.containers || []),...(pod.spec?.initContainers || []),...(pod.spec?.ephemeralContainers || [])].map(c => c.name)
     if(route.query.container && !containers.value.includes(route.query.container))throw new Error('所选容器已不存在，请重新选择')
     container.value = containers.value.includes(route.query.container) ? route.query.container : containers.value[0] || ''
     if (['/bin/sh','/bin/bash','sh','bash'].includes(route.query.shell)) shell.value=route.query.shell
+    await nextTick()
+    if (disposed) return
+    initialized=true
+    connect()
   } catch (e) { ElMessage.error('无法获取 Pod 信息：' + e.message) }
 })
 

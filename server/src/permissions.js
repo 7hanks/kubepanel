@@ -27,7 +27,6 @@ export const SENSITIVE_PERMISSIONS = [
   {key:'pod:logs',label:'容器日志'},
   {key:'pod:files:read',label:'浏览与下载容器文件'},
   {key:'pod:files:write',label:'上传与修改容器文件'},
-  {key:'pod:batch-exec',label:'容器批量执行'},
   {key:'secret:read',label:'读取 Secret 内容'},
   {key:'rbac:write',label:'修改 Kubernetes RBAC'},
   {key:'node:maintain',label:'节点维护与驱逐'},

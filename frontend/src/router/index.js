@@ -19,6 +19,7 @@ const routes = [
     children: [
       { path: '', redirect: to => ({ name: 'overview', params: { clusterId: to.params.clusterId } }) },
       { path: 'overview', name: 'overview', component: () => import('../views/Overview.vue'), meta: { title: '集群概览' } },
+      { path: 'monitor', name: 'cluster-monitor', component: () => import('../views/Monitor.vue'), meta: { title: '监控', perm: ['monitor:list','monitor:detail'], clusterMonitor: true } },
       { path: 'r/:group/:version/:plural', name: 'resource-list', component: () => import('../views/ResourceList.vue') },
       { path: 'r/:group/:version/:plural/:namespace/:name', name: 'resource-detail', component: () => import('../views/ResourceDetail.vue') },
       { path: 'custom-resources', name: 'custom-resources', component: () => import('../views/CustomResources.vue'), meta: { title: '自定义资源' } },
@@ -41,7 +42,7 @@ router.beforeEach(async (to) => {
     clearSession()
     return {path:'/login',query:{redirect:to.fullPath}}
   }
-  if (to.meta.perm && !canAny(to.meta.perm)) {
+  if ((to.meta.perm && !canAny(to.meta.perm)) || (to.meta.clusterMonitor && !canAny(['cluster:list','cluster:detail']))) {
     const target = landingPath()
     if (target !== to.path) return target
   }

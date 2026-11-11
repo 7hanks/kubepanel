@@ -176,7 +176,7 @@ const baseGroups = computed(() => {
     { label: '平台角色', icon: 'UserFilled', path: '/roles', allowed: allow.value.users },
     { label: '镜像仓库', icon: 'Box', path: '/registries', allowed: allow.value.registry },
     { label: '监控', icon: 'TrendCharts', path: '/monitor', allowed: allow.value.monitor },
-  ].filter(item => item.allowed).map(item => ({ ...item, platform: true }))
+  ].filter(item => item.allowed).map(item => ({ ...item, platform: item.path !== '/monitor' }))
   return [...navGroups, { id: 'platform', title: '平台', icon: 'OfficeBuilding', items: platform }]
 })
 const permittedGroups = computed(() => visibleNavigationGroups(baseGroups.value, '', groupExpansion.value,
@@ -232,7 +232,7 @@ function isActive(path, platform = false) {
 function go(path) { if (route.path !== cpath(path)) router.push(cpath(path)) }
 function goClusterList() { router.push(CLUSTERS_PATH) }
 function switchCluster(id) {
-  router.push(cpath('/overview', id))
+  router.push(cpath(route.name==='cluster-monitor' ? '/monitor' : '/overview', id))
 }
 async function changeNs(ns) { if (await confirmContextChange()) store.setNamespace(ns) }
 
@@ -281,9 +281,9 @@ onMounted(async () => {
 onUnmounted(() => clearInterval(refreshTimer))
 
 watch(() => route.params.clusterId, id => {
-  if (!id || id === store.currentClusterId) return
-  store.setCluster(id)
-  store.init(true).catch(() => {})
+  if (!id) return
+  if (id !== store.currentClusterId) store.setCluster(id)
+  if (!store.ready) store.init(true).catch(() => {})
 })
 </script>
 

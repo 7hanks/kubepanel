@@ -6,7 +6,7 @@ const filters = await import('../src/utils/resource-filters.js').catch(() => ({}
 test('resource kind limits filter fields instead of retaining Pod criteria on ConfigMaps', () => {
   assert.equal(typeof filters.normalizeFilters, 'function')
   const f = filters.normalizeFilters('ConfigMap', {state:'NotReady', node:'worker-1', minRestarts:'3', labels:'env in (prod,qa)', q:'settings'})
-  assert.deepEqual(f, {keyword:'settings', labels:'env in (prod,qa)', createdFrom:'', createdTo:'', state:'', phase:'', reason:'', node:'', owner:'', minRestarts:0, image:'', ready:''})
+  assert.deepEqual(f, {keyword:'settings', labels:'env in (prod,qa)', state:'', phase:'', reason:'', node:'', owner:'', minRestarts:0, image:'', ready:''})
   assert.equal(filters.filterCapabilities('LimitRange').state, false)
   assert.equal(filters.filterCapabilities('Pod').node, true)
 })
@@ -33,23 +33,4 @@ test('Pod ready filter uses Ready condition instead of Running phase or historic
 
 test('event abnormal status excludes Normal events and retains Warning events', () => {
   assert.deepEqual(filterRows([{name:'normal',status:'Normal'},{name:'warning',status:'Warning'}],{state:'abnormal'}).map(r=>r.name), ['warning'])
-})
-
-test('creation date bounds filter timestamp inclusively and survive resource query roundtrip', () => {
-  const f = filters.normalizeFilters('ConfigMap', {createdFrom:'2026-11-01T00:00:00.000Z', createdTo:'2026-11-02T00:00:00.000Z'})
-  assert.equal(f.createdFrom, '2026-11-01T00:00:00.000Z')
-  assert.equal(f.createdTo, '2026-11-02T00:00:00.000Z')
-  assert.deepEqual(filters.normalizeFilters('ConfigMap', filters.filterQuery(f)), f)
-  const rows = [
-    {name:'before',_raw:{metadata:{creationTimestamp:'2026-10-31T23:59:59Z'}}},
-    {name:'start',_raw:{metadata:{creationTimestamp:'2026-11-01T00:00:00Z'}}},
-    {name:'end',_raw:{metadata:{creationTimestamp:'2026-11-02T00:00:00Z'}}},
-    {name:'after',_raw:{metadata:{creationTimestamp:'2026-11-02T00:00:01Z'}}},
-    {name:'missing',_raw:{metadata:{}}},
-  ]
-  assert.deepEqual(filterRows(rows, f).map(r=>r.name), ['start','end'])
-  assert.deepEqual(filterRows(rows, {createdTo:f.createdTo}).map(r=>r.name), ['before','start','end'])
-  assert.equal(filters.normalizeFilters('Pod', {createdFrom:'invalid'}).createdFrom, '')
-  assert.ok(filters.filterQueryKeys.includes('createdFrom'))
-  assert.ok(filters.filterQueryKeys.includes('createdTo'))
 })

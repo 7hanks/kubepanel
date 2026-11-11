@@ -7,7 +7,7 @@ import {spawnSync} from 'node:child_process'
 process.env.DASHBOARD_SECRET='fixture-container-tools-32-characters'
 process.env.DASHBOARD_PASSWORD='Fixture-Tools-2026'
 const tools=await import('../src/containerTools.js').catch(()=>({}))
-const account={username:'qa',permissions:['cluster:list','pod:files:read','pod:files:write','pod:batch-exec'],scope:{clusters:['dev'],namespaces:['team'],resources:['_core/pods']}}
+const account={username:'qa',permissions:['cluster:list','pod:files:read','pod:files:write'],scope:{clusters:['dev'],namespaces:['team'],resources:['_core/pods']}}
 const target={namespace:'team',pod:'web',container:'app',uid:'pod1'}
 const pod={metadata:{uid:'pod1'},spec:{containers:[{name:'app'}]},status:{phase:'Running',containerStatuses:[{name:'app',state:{running:{}}}]}}
 const fixture=()=>{const calls=[];return {calls,service:tools.createContainerTools({readPod:async()=>pod,execute:async(_t,command,options)=>{calls.push({command,options});return {stdout:Buffer.from(''),stderr:'',exitCode:0}},audit:()=>{}})}}
@@ -33,18 +33,6 @@ test('stale Pod identity and non-running target cannot execute',async()=>{
  await assert.rejects(service.file(account,'dev',{...target,uid:'old',action:'list',path:'/'}),{status:409})
  await assert.rejects(service.file(account,'dev',{...target,container:'missing',action:'list',path:'/'}),{status:400})
  assert.equal(calls.length,0)
-})
-test('batch reports each target failure and never executes when not confirmed or oversized',async()=>{
- assert.equal(typeof tools.createContainerTools,'function')
- const {service,calls}=fixture()
- await assert.rejects(service.batch(account,'dev',{targets:[target],command:'id'}),{status:400})
- await assert.rejects(service.batch(account,'dev',{targets:Array(11).fill(target),command:'id',confirmed:true}),{status:400})
- const result=await service.batch(account,'dev',{targets:[target,{...target,uid:'old'}],command:'printf ok',confirmed:true})
- assert.equal(result.results.length,2)
- assert.equal(result.results[0].ok,true)
- assert.equal(result.results[1].ok,false)
- assert.equal(calls.length,1)
- assert.deepEqual(calls[0].command,['/bin/sh','-c','printf ok'])
 })
 
 test('uploads consume the exact byte count without stdin EOF and await the remote exit status',async()=>{

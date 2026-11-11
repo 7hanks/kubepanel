@@ -284,17 +284,15 @@ router.use((req, res, next) => {
 })
 
 // ---------------- 集群信息 ----------------
-for (const [path,method] of [['/v1/container/files','file'],['/v1/container/batch-exec','batch']]) {
- router.post(path,wrap(async(req,res)=>{
+router.post('/v1/container/files',wrap(async(req,res)=>{
   const controller=new AbortController()
   const close=()=>{if(!res.writableEnded)controller.abort()}
   res.on('close',close)
   const initial={...req.account,sessionId:req.session?.id}
   const live=()=>{const account=activeStreamAccount(initial);if(!account)throw Object.assign(new Error('会话已失效'),{status:401});return account}
-  try{res.setHeader('Cache-Control','no-store');res.json(await containerTools[method](req.account,req.clusterId,req.body||{},{signal:controller.signal,live}))}
+  try{res.setHeader('Cache-Control','no-store');res.json(await containerTools.file(req.account,req.clusterId,req.body||{},{signal:controller.signal,live}))}
   finally{res.off('close',close)}
- }))
-}
+}))
 router.get('/v1/cluster', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => res.json(await clusterInfo(req.clusterId, req.account))))
 router.get('/v1/overview', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => res.json(await overview(req.clusterId, nsOf(req), req.account))))
 router.get('/v1/resources', requirePerm('cluster:list', 'cluster:detail'), wrap(async (req, res) => {

@@ -89,13 +89,6 @@ export function createContainerTools({readPod=async t=>(await resRequest('GET',{
    if(action==='read'){if(result.stdout.length>FILE_LIMIT)fail(413,'文件超过 1 MiB，无法在线读取');return {path,base64:result.stdout.toString('base64'),bytes:result.stdout.length}}
    return {ok:true,path}
   }),
-  batch:(account,clusterId,body,{signal,live}={})=>limited(account,async()=>{
-   if(body.confirmed!==true||typeof body.command!=='string'||!body.command.trim()||body.command.length>8192||!Array.isArray(body.targets)||!body.targets.length||body.targets.length>10)fail(400,'请确认命令并选择 1–10 个容器')
-   body.targets.forEach(t=>authorize(account,clusterId,t,'pod:batch-exec'))
-   const results=new Array(body.targets.length);let cursor=0
-   const worker=async()=>{while(cursor<body.targets.length){const i=cursor++,target=body.targets[i];try{const r=await run(account,clusterId,target,'pod:batch-exec',['/bin/sh','-c',body.command],{signal,timeoutMs:6000,maxBytes:256*1024},live);results[i]={...target,ok:r.exitCode===0,exitCode:r.exitCode,stdout:r.stdout.toString('utf8'),stderr:r.stderr}}catch(e){results[i]={...target,ok:false,message:e.message,status:e.status||500}}}}
-   await Promise.all([worker(),worker()]);return {results,ok:results.every(r=>r.ok)}
-  }),
  }
 }
 export const containerTools=createContainerTools()

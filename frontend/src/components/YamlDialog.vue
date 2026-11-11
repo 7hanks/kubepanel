@@ -15,15 +15,15 @@
       <el-tag disable-transitions v-else type="warning" size="small" effect="plain">{{ compact ? '编辑中 · 精简' : '编辑中' }}</el-tag>
     </div>
     <slot name="toolbar" />
-    <div class="yaml-editor-options">
-      <el-checkbox v-model="hideManaged">隐藏 ManagedFields</el-checkbox>
-      <el-checkbox v-model="hideStatus">隐藏 Status</el-checkbox>
-      <span style="flex:1" />
-      <el-select v-model="editorTheme" aria-label="编辑器主题" style="width:130px" size="small"><el-option label="浅色" value="light"/><el-option label="深色" value="dark"/></el-select>
-    </div>
     <el-alert v-if="preview.error" :title="preview.error" type="warning" :closable="false" style="margin-bottom:10px" />
     <div v-if="diffOpen" class="yaml-compare"><YamlDiff :before="content" :after="text" /></div>
-    <div v-else class="yaml-editor-frame"><YamlEditor :model-value="workingText" :readonly="!editing || importing" :hide-managed="hideManaged" :hide-status="hideStatus" :dark="editorTheme==='dark'" @update:model-value="value=>updateText({target:{value}})" @dblclick="onDblClick" /></div>
+    <textarea v-else
+      :value="workingText" class="kp-yaml" spellcheck="false" aria-label="资源 YAML" :readonly="!editing || importing"
+      :class="{ 'is-readonly': !editing }"
+      :title="dblHint"
+      @input="updateText"
+      @dblclick="onDblClick"
+    />
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-top:10px" />
     <template #footer>
       <div class="yaml-footer" style="display:flex;align-items:center;gap:8px;width:100%">
@@ -52,7 +52,6 @@ import { registerUnsavedGuard } from '../utils/navigation'
 import { EditPen } from '@element-plus/icons-vue'
 import YamlViewToggle from './YamlViewToggle.vue'
 import YamlDiff from './YamlDiff.vue'
-import YamlEditor from './YamlEditor.vue'
 import { yamlPreview } from '../utils/yaml-preview'
 import { importYamlDraft, MAX_YAML_IMPORT_BYTES } from '../utils/yaml-import'
 
@@ -76,7 +75,6 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'save'])
 
 const text = ref(props.content)
-const hideManaged=ref(true),hideStatus=ref(true),editorTheme=ref('light')
 const viewMode = ref('full')
 const compact = computed(() => viewMode.value === 'compact')
 const preview = computed(() => yamlPreview(text.value, compact.value))
@@ -227,9 +225,7 @@ function downloadFile() {
   display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;
 }
 .yaml-bar .el-button + .el-button { margin-left: 0; }
-.yaml-editor-options {display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:6px 10px;background:var(--kp-surface-2);flex-shrink:0;border:1px solid var(--kp-border);border-bottom:0;border-radius:6px 6px 0 0}
-.yaml-editor-frame {flex:1;min-height:120px;overflow:hidden}
-/* 打开即是大窗口（参考 Kuboard）：默认占满大部分视口，编辑器自动撑满；错误提示与页脚始终可见 */
+/* 默认大窗口；编辑区自适应，错误提示与页脚始终可见。 */
 :global(.yaml-resource-dialog) { display: flex; flex-direction: column; max-width: 1680px; height: 88dvh; }
 :global(.yaml-resource-dialog .el-dialog__body) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 :global(.yaml-resource-dialog .el-dialog__header), :global(.yaml-resource-dialog .el-dialog__footer) { flex-shrink: 0; }

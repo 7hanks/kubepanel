@@ -1,10 +1,10 @@
 <template>
-  <PlatformLayout active="monitor">
-    <template #actions>
+  <component :is="clusterContext ? 'div' : PlatformLayout" active="monitor">
+    <template v-if="!clusterContext" #actions>
       <el-button size="small" :loading="loading" circle @click="reload"><el-icon><Refresh /></el-icon></el-button>
     </template>
 
-    <main class="plat-main">
+    <main class="plat-main" :class="{'monitor-cluster-main':clusterContext}">
       <div class="page-head">
         <div>
           <h1>监控</h1>
@@ -13,6 +13,7 @@
             未接入 Grafana 时，下方「内置指标」直接读 metrics-server，同样能看到 CPU / 内存。
           </p>
         </div>
+        <el-button v-if="clusterContext" :loading="loading" :icon="Refresh" @click="reload">刷新</el-button>
       </div>
 
       <el-tabs v-model="tab" class="mon-tabs">
@@ -236,11 +237,12 @@
         </div>
       </template>
     </el-dialog>
-  </PlatformLayout>
+  </component>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Refresh, DataLine, TopRight, TrendCharts, Cpu, Coin, Odometer, Histogram,
@@ -249,6 +251,11 @@ import {
 import { can } from '../utils/perm'
 import PlatformLayout from '../layout/PlatformLayout.vue'
 import api from '../api'
+import { store } from '../store'
+
+const route=useRoute()
+const clusterContext=computed(()=>!!route.params.clusterId)
+let disposed=false,metricsRequest=0,dashboardRequest=0
 
 const ACTIVE_KEY = 'kp_monitor_active'
 const envOptions = ['生产', '预发', '测试', '开发', '灾备', '默认']
@@ -329,23 +336,28 @@ function applyView(c) {
 async function loadConfig() {
   try {
     const c = await api.monitor()
+    if (disposed) return
     applyView(c)
     await loadDashboards()
   } catch (e) { /* 拦截器已提示 */ }
 }
 
 async function loadDashboards() {
+  const request=++dashboardRequest
   const inst = activeInstance.value
   if (!inst) { dashboards.value = []; current.value = null; return }
   dashLoading.value = true
   dashError.value = ''
   try {
-    dashboards.value = await api.dashboards(inst.id)
+    const data=await api.dashboards(inst.id)
+    if(disposed || request!==dashboardRequest || inst.id!==activeId.value) return
+    dashboards.value = data
     if (!current.value && dashboards.value.length) current.value = dashboards.value[0]
   } catch (e) {
+    if(disposed || request!==dashboardRequest) return
     dashError.value = e.message || '读取失败'
     dashboards.value = []
-  } finally { dashLoading.value = false }
+  } finally { if(!disposed && request===dashboardRequest)dashLoading.value = false }
 }
 
 function selectInstance(it) {
@@ -510,34 +522,40 @@ const nodeRows = computed(() => {
 const podRows = computed(() => (metrics.pods.items || []).slice(0, 20))
 
 async function loadMetrics() {
+  const request=++metricsRequest
   metricsLoading.value = true
   try {
     const [n, p] = await Promise.all([
       api.nodeMetrics().catch(() => ({ available: false, items: [] })),
-      api.podMetrics('all').catch(() => ({ available: false, items: [] })),
+      api.podMetrics(clusterContext.value ? store.namespace : 'all').catch(() => ({ available: false, items: [] })),
     ])
+    if(disposed || request!==metricsRequest) return
     metrics.nodes = n
     metrics.pods = p
     metrics.nodeCpu = (n.items || []).reduce((a, x) => a + parseCpu(x.usage?.cpu), 0)
     metrics.nodeMem = (n.items || []).reduce((a, x) => a + parseMem(x.usage?.memory), 0)
     metrics.podCpu = p.totalCpu || 0
     metrics.podMem = p.totalMemory || 0
-  } finally { metricsLoading.value = false }
+  } finally { if(!disposed && request===metricsRequest)metricsLoading.value = false }
 }
 
 async function reload() {
+  if (disposed || loading.value) return
   loading.value = true
-  await Promise.all([loadConfig(), loadMetrics()])
-  loading.value = false
+  try { await Promise.all([loadConfig(), loadMetrics()]) }
+  finally { if(!disposed)loading.value = false }
 }
 
-onMounted(reload)
+watch(()=>store.namespace,()=>{if(clusterContext.value)loadMetrics()})
+onMounted(()=>{window.addEventListener('kp:refresh',reload);return reload()})
+onUnmounted(()=>{disposed=true;metricsRequest++;dashboardRequest++;window.removeEventListener('kp:refresh',reload)})
 </script>
 
 <style scoped>
 .plat-page { min-height: 100vh; background: var(--kp-bg); }
 .plat-main { max-width: 1280px; margin: 0 auto; padding: 24px 22px 48px; }
-.page-head { margin-bottom: 12px; }
+.monitor-cluster-main { max-width:none; margin:0; padding:0; }
+.page-head { margin-bottom: 12px; display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
 .page-head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
 .page-head p { margin: 6px 0 0; font-size: 12px; max-width: 820px; line-height: 1.6; }
 .mon-tabs :deep(.el-tabs__nav-wrap::after) { display: none; }

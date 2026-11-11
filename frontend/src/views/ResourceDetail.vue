@@ -6,7 +6,9 @@
       <el-tag disable-transitions :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
       <span class="spacer" />
       <el-button v-if="meta.kind === 'Pod' && canUpdateRes && canDeleteRes" type="warning" plain :loading="restarting" @click="doRestartPod">重启 Pod</el-button>
-      <el-button v-if="['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.kind) && (can('pod:logs') || can('pod:exec') || can('pod:files:read') || can('pod:batch-exec'))" type="primary" plain @click="accessVisible=true">日志/终端</el-button>
+      <el-button v-if="meta.kind === 'Pod' && can('pod:logs')" type="primary" plain @click="goLogs">查看日志</el-button>
+      <el-button v-if="meta.kind === 'Pod' && can('pod:exec')" type="primary" plain @click="goTerminal">进入终端</el-button>
+      <el-button v-if="['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.kind) && can('pod:files:read')" @click="filesVisible=true">文件浏览器</el-button>
       <el-button v-if="scalable && canUpdateRes" @click="doScale">扩缩容</el-button>
       <el-button v-if="restartable && canUpdateRes" @click="doRestart">重启</el-button>
       <el-button v-if="canUpdateRes" @click="editYaml">编辑 YAML</el-button>
@@ -124,7 +126,7 @@
       </el-tab-pane>
     </el-tabs>
 
-    <ContainerAccessDialog v-model="accessVisible" :resource="obj" />
+    <ContainerFilePicker v-model="filesVisible" :resource="obj" />
     <YamlDialog
       v-model="yamlDialogVisible" :title="`编辑 ${name}`" :content="yamlDialogText"
       :saving="yamlDialogSaving" :readonly="!canUpdateRes" :preflight="preflightYaml" :target="yamlTarget" submit-label="保存"
@@ -153,12 +155,12 @@ import { can, canResource, canUpdate, canDelete } from '../utils/perm'
 import { store } from '../store'
 import { relatedPods, createRequestGate, targetDescription } from '../utils/resource'
 import ResourceOperations from '../components/ResourceOperations.vue'
-import ContainerAccessDialog from '../components/ContainerAccessDialog.vue'
+import ContainerFilePicker from '../components/ContainerFilePicker.vue'
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
 
 const route = useRoute()
-const accessVisible=ref(false)
+const filesVisible=ref(false)
 const router = useRouter()
 const meta = computed(() => metaFromRoute(route.params, store.discovery))
 const name = computed(() => route.params.name)
