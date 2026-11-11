@@ -111,11 +111,14 @@ watch([container, tailLines, timestamps, previous], () => { if (container.value)
 onMounted(async () => {
   try {
     const pod = await api.get('', 'v1', 'pods', namespace, name)
+    if(route.query.uid && route.query.uid!==pod.metadata?.uid)throw new Error('Pod 已重新创建，请重新选择容器')
     containers.value = [
       ...(pod.spec?.initContainers || []).map(c => c.name),
       ...(pod.spec?.containers || []).map(c => c.name),
+      ...(pod.spec?.ephemeralContainers || []).map(c => c.name),
     ]
-    container.value = containers.value[0] || ''
+    if(route.query.container && !containers.value.includes(route.query.container))throw new Error('所选容器已不存在，请重新选择')
+    container.value = containers.value.includes(route.query.container) ? route.query.container : containers.value[0] || ''
   } catch (e) { ElMessage.error('无法获取 Pod 信息：' + e.message) }
 })
 onUnmounted(closeSource)

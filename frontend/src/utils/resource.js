@@ -32,7 +32,10 @@ export function filterRows(rows, f={}) {
    const podSpec=spec.template?.spec || spec.jobTemplate?.spec?.template?.spec || spec
    const images=[r.images, ...(podSpec.containers || []).map(c=>c.image), ...(podSpec.initContainers || []).map(c=>c.image)].filter(Boolean).join(' ')
    const ready=(r._raw?.status?.conditions || []).some(c=>c.type==='Ready' && c.status==='True')
+   const created=Date.parse(r._raw?.metadata?.creationTimestamp || '')
    return includes(`${r.name} ${r.namespace}`,f.keyword)
+     && (!f.createdFrom || created>=Date.parse(f.createdFrom))
+     && (!f.createdTo || created<=Date.parse(f.createdTo))
      && (!f.phase || r._raw?.status?.phase===f.phase)
      && (!f.state || (f.state==='abnormal' ? isAbnormal(r.status) : f.state==='active-abnormal' ? isAbnormal(r.status) && !['Failed','Succeeded'].includes(r._raw?.status?.phase) && !r._raw?.metadata?.deletionTimestamp : r.status===f.state))
      && includes(r.reason,f.reason) && (!f.node || r.node===f.node)

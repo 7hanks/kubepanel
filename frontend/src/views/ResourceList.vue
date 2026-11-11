@@ -1,12 +1,17 @@
 <template>
   <div>
-    <div class="kp-toolbar resource-toolbar">
-      <el-input v-model="keyword" placeholder="按名称搜索" clearable class="resource-search" :prefix-icon="Search" />
-      <el-popover v-model:visible="filterOpen" trigger="click" placement="bottom-start" popper-class="resource-filter-popover" :width="560" :popper-style="{maxWidth:'calc(100vw - 32px)'}" @show="beginFilters">
-        <template #reference><el-button :icon="Filter" :type="activeCount ? 'primary' : 'default'" :plain="!!activeCount" aria-label="筛选">筛选<span v-if="activeCount" class="filter-count">{{ activeCount }}</span></el-button></template>
-        <el-form ref="filterFormRef" aria-label="资源筛选" label-position="top" @submit.prevent="applyFilters">
-          <div class="filter-heading"><strong>资源筛选</strong><el-button text aria-label="关闭筛选" @click="filterOpen=false">关闭</el-button></div>
-          <div class="resource-filter-grid">
+    <section class="kp-card resource-query-card">
+      <el-form ref="filterFormRef" aria-label="资源查询" label-position="left" @submit.prevent="applyFilters">
+        <div class="resource-query-row">
+          <el-form-item label="名称" class="query-name"><el-input v-model="keyword" aria-label="资源名称" placeholder="请输入名称" clearable :prefix-icon="Search" /></el-form-item>
+          <el-form-item label="创建时间" class="query-date"><el-date-picker v-model="creationRange" aria-label="创建时间范围" type="daterange" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" unlink-panels /></el-form-item>
+          <div class="resource-query-actions">
+            <el-button type="primary" :icon="Search" native-type="submit">查询</el-button>
+            <el-button @click="resetFilters">重置</el-button>
+            <el-button link type="primary" :aria-expanded="filterOpen" aria-controls="resource-advanced-filters" @click="filterOpen=!filterOpen">{{ filterOpen ? '收起' : '展开' }}<span v-if="activeCount" class="filter-count">({{ activeCount }})</span><el-icon><ArrowUp v-if="filterOpen"/><ArrowDown v-else/></el-icon></el-button>
+          </div>
+        </div>
+          <div v-show="filterOpen" id="resource-advanced-filters" class="resource-filter-grid" role="group" aria-label="资源筛选">
             <el-form-item class="filter-wide" label="标签选择器">
               <el-input v-model="draft.labels" clearable aria-label="标签选择器" placeholder="app=nginx,env in (prod,qa),!debug" />
             </el-form-item>
@@ -29,23 +34,36 @@
             <el-form-item v-if="capabilities.image" label="镜像"><el-input v-model="draft.image" clearable placeholder="镜像名称或版本包含" aria-label="按镜像筛选" /></el-form-item>
             <el-form-item v-if="capabilities.pod" label="Pod 阶段"><el-select v-model="draft.phase" :append-to="filterFormRef?.$el || 'body'" :persistent="false" clearable aria-label="按阶段筛选" placeholder="全部阶段"><el-option v-for="phase in ['Pending','Running','Succeeded','Failed','Unknown']" :key="phase" :label="phase" :value="phase" /></el-select></el-form-item>
           </div>
-          <div class="filter-footer"><el-button @click="resetFilters">重置</el-button><el-button type="primary" native-type="submit">应用筛选</el-button></div>
         </el-form>
-      </el-popover>
-      <el-button @click="load" :loading="loading"><el-icon><Refresh /></el-icon><span style="margin-left:5px">刷新</span></el-button>
-      <span class="spacer" />
-      <el-tooltip :content="nextContinue ? `已加载 ${items.length} 项；当前筛选仅覆盖已加载资源，可继续加载。标签选择器由 Kubernetes 服务端执行。` : `已加载 ${items.length} 项；标签选择器由 Kubernetes 服务端执行，其他条件筛选已加载资源。`"><span class="resource-count">{{ filtered.length }} 项<span v-if="nextContinue"> · 已加载 {{ items.length }}</span></span></el-tooltip>
-      <el-button v-if="canCreateRes" type="primary" :icon="Plus" @click="openCreate">新建</el-button>
-      <el-button v-if="canDeleteRes" type="danger" plain :disabled="!selected.length" @click="batchDelete">删除 ({{ selected.length }})</el-button>
-    </div>
+    </section>
 
     <el-alert v-if="loadError" type="error" :closable="false" show-icon style="margin-bottom:12px"><template #title>{{ loadError }}</template><el-button @click="load">重试</el-button></el-alert>
-    <div class="kp-card" style="padding:0">
+    <div class="kp-card resource-table-card">
+      <div class="kp-toolbar resource-toolbar">
+        <el-button v-if="canCreateRes" type="primary" :icon="Plus" :disabled="actionBusy" @click="openCreate">新建</el-button>
+        <el-button v-if="canDeleteRes" type="danger" plain :disabled="!selected.length || actionBusy" @click="batchDelete">删除 ({{ selected.length }})</el-button>
+        <el-button v-if="restartable && canUpdateRes" plain :disabled="!selected.length || actionBusy" :loading="actionBusy && batchOperation === 'restart'" @click="batchRestart">批量重启 ({{ selected.length }})</el-button>
+        <span class="spacer" />
+        <el-tooltip :content="nextContinue ? `已加载 ${items.length} 项；当前筛选仅覆盖已加载资源，可继续加载。标签选择器由 Kubernetes 服务端执行。` : `已加载 ${items.length} 项；标签选择器由 Kubernetes 服务端执行，其他条件筛选已加载资源。`"><span class="resource-count">{{ filtered.length }} 项<span v-if="nextContinue"> · 已加载 {{ items.length }}</span></span></el-tooltip>
+        <el-button :icon="Refresh" :loading="loading" :disabled="actionBusy" @click="load">刷新</el-button>
+      </div>
+      <div v-if="batchResults.length" class="resource-batch-results" role="status" aria-label="批量操作结果">
+        <div class="batch-results-heading"><strong>{{ batchResultTitle }}</strong><el-button link @click="batchResults=[]">清除结果</el-button></div>
+        <div v-for="result in batchResults" :key="result.name"><el-tag :type="result.ok ? 'success' : 'danger'" size="small">{{ result.ok ? '成功' : '失败' }}</el-tag><span>{{ result.name }}</span><span>{{ result.message }}</span></div>
+      </div>
       <el-table
-        ref="tableRef" v-loading="loading" :data="paged" border stripe size="small" row-key="uid"
+        ref="tableRef" v-loading="loading" :data="paged" row-key="uid"
         style="width:100%" @sort-change="v => sort = v" @selection-change="v => selected = v" @row-dblclick="openDetail"
       >
-        <el-table-column type="selection" width="42" />
+        <el-table-column type="selection" width="42" :selectable="() => !actionBusy" />
+        <el-table-column type="expand" width="36"><template #default="{ row }">
+          <div class="resource-row-details">
+            <div><span>创建时间</span>{{ row.created }}</div><div><span>UID</span>{{ row.uid }}</div>
+            <div v-if="row.owner && row.owner !== '-'"><span>所属控制器</span>{{ row.owner }}</div>
+            <div v-if="row.reason && row.reason !== '-'"><span>原因</span>{{ row.reason }}</div>
+            <div class="detail-labels"><span>标签</span><template v-if="Object.keys(row._raw?.metadata?.labels || {}).length"><el-tag v-for="(value,key) in row._raw.metadata.labels" :key="key" size="small" effect="plain">{{ key }}={{ value }}</el-tag></template><template v-else>无</template></div>
+          </div>
+        </template></el-table-column>
         <el-table-column
           v-for="col in columns" :key="col.key" :prop="col.key" :label="col.label"
           :width="col.width" :min-width="col.minWidth" sortable="custom" show-overflow-tooltip
@@ -59,11 +77,13 @@
         <el-table-column label="操作" :width="actionWidth" fixed="right" align="center">
           <template #default="{ row }">
             <div class="kp-list-actions">
+              <ResourceActionButton v-if="canAccessContainers" :disabled="actionBusy" @click="openAccess(row)">日志/终端</ResourceActionButton>
+              <ResourceActionButton v-if="canUpdateRes" :disabled="actionBusy" @click="editYaml(row)">编辑</ResourceActionButton>
               <ResourceActionButton @click="viewYaml(row)">YAML</ResourceActionButton>
-              <ResourceActionButton v-if="meta.kind === 'Pod' && can('pod:logs')" @click="goLogs(row)">日志</ResourceActionButton>
-              <ResourceActionButton v-if="meta.kind === 'Pod' && can('pod:exec')" @click="goTerminal(row)">终端</ResourceActionButton>
+              <ResourceActionButton v-if="canDeleteRes" type="danger" :disabled="actionBusy" @click="deleteOne(row)">删除</ResourceActionButton>
               <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
               <el-dropdown
+                v-if="scalable || restartable || ['Node','Pod'].includes(meta.kind)"
                 trigger="click" placement="bottom-end" :teleported="true" popper-class="kp-row-actions"
                 :popper-options="{ modifiers: [{ name: 'flip', options: { fallbackPlacements: ['top-end'] } }] }"
                 @command="cmd => onCommand(cmd, row)"
@@ -72,7 +92,6 @@
                 <template #dropdown>
                   <el-dropdown-menu>
                     <!-- 普通操作：低频、非破坏性（行内四入口已覆盖的高频动作不在此重复） -->
-                    <el-dropdown-item command="editYaml" :disabled="!canUpdateRes">编辑 YAML</el-dropdown-item>
                     <el-dropdown-item v-if="scalable" command="scale" :disabled="!canUpdateRes">扩缩容</el-dropdown-item>
                     <el-dropdown-item v-if="restartable" command="restart" :disabled="!canUpdateRes">重启工作负载</el-dropdown-item>
                     <el-dropdown-item v-if="meta.kind === 'Node'" command="cordon" :disabled="!can('node:maintain') || !canUpdateRes">
@@ -81,8 +100,6 @@
                     <!-- 破坏性操作：分隔线分组 + 警示色，且均保留二次确认 -->
                     <el-dropdown-item v-if="meta.kind === 'Pod'" command="restartPod" divided class="kp-dd-danger"
                       :disabled="!canUpdateRes || !canDeleteRes">重启 Pod（受控驱逐）</el-dropdown-item>
-                    <el-dropdown-item command="delete" :divided="meta.kind !== 'Pod'" class="kp-dd-danger"
-                      :disabled="!canDeleteRes">删除</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -111,6 +128,7 @@
       :current="Number(scaleRow?._raw?.spec?.replicas ?? 0)" :saving="scaleSaving"
       @save="saveScale"
     />
+    <ContainerAccessDialog v-model="accessVisible" :resource="accessResource" />
   </div>
 </template>
 
@@ -118,7 +136,7 @@
 import { ref, shallowRef, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Filter, Plus, Refresh, MoreFilled } from '@element-plus/icons-vue'
+import { Search, Plus, Refresh, MoreFilled, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import * as yaml from 'js-yaml'
 import api from '../api'
 import {registerUnsavedGuard} from '../utils/navigation'
@@ -126,12 +144,13 @@ import { store } from '../store'
 import { metaFromRoute, statusTag } from '../config/resources'
 import { normalizeRow, columnsFor, yamlTemplate } from '../config/columns'
 import { cpath, nsPath } from '../utils/path'
-import { can, canResource, canCreate, canUpdate, canDelete } from '../utils/perm'
+import { can, canResource } from '../utils/perm'
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
 import { filterRows, sortRows, createRequestGate, targetDescription } from '../utils/resource'
 import { normalizeFilters, filterCapabilities, activeFilterCount, filterQuery, filterQueryKeys } from '../utils/resource-filters'
 import ResourceActionButton from '../components/ResourceActionButton.vue'
+import ContainerAccessDialog from '../components/ContainerAccessDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -139,15 +158,18 @@ const meta = computed(() => metaFromRoute(route.params, store.discovery))
 const columns = computed(() => columnsFor(meta.value.kind, meta.value.namespaced))
 const scalable = computed(() => ['Deployment', 'StatefulSet', 'ReplicaSet'].includes(meta.value.kind))
 const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].includes(meta.value.kind))
+const canAccessContainers = computed(() => ['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.value.kind) && ['pod:logs','pod:exec','pod:files:read','pod:files:write','pod:batch-exec'].some(permission=>can(permission)))
 const actionWidth = computed(() => {
-  if (meta.value.kind === 'Pod') return 280
-  if (scalable.value || restartable.value || meta.value.kind === 'Node') return 180
-  return 160
+  const count=1 + Number(canUpdateRes.value) + Number(canDeleteRes.value)
+  return 24 + count * 46 + (canAccessContainers.value ? 88 : 0) + ((scalable.value || restartable.value || ['Node','Pod'].includes(meta.value.kind)) ? 32 : 0)
 })
 
 const loading = ref(false)
 const saving = ref(false)
 const actionBusy=ref(false)
+const batchOperation=ref('')
+const batchResults=ref([])
+const batchResultTitle=ref('')
 const removeContextGuard=registerUnsavedGuard(()=>{if(saving.value || scaleSaving.value || actionBusy.value){ElMessage.warning('操作进行中，请稍后切换上下文');return false}return true})
 const canCreateRes = computed(() => canResource(meta.value,'create',store.namespace))
 const canUpdateRes = computed(() => canResource(meta.value,'update',store.namespace))
@@ -162,9 +184,16 @@ let controller
 const filters = reactive(normalizeFilters(meta.value.kind, route.query))
 const draft = reactive({...filters})
 const filterOpen = ref(false)
-// Keep nested dropdowns inside the popover but outside its scrolling grid.
-// Tooltip Teleports mount before the form ref exists, so initially use body.
 const filterFormRef = ref(null)
+const creationRange = computed({
+  get: () => draft.createdFrom && draft.createdTo ? [new Date(draft.createdFrom),new Date(draft.createdTo)] : null,
+  set: value => {
+    if (!value?.length) { draft.createdFrom=''; draft.createdTo=''; return }
+    const from=new Date(value[0]); from.setHours(0,0,0,0)
+    const to=new Date(value[1]); to.setHours(23,59,59,999)
+    draft.createdFrom=from.toISOString(); draft.createdTo=to.toISOString()
+  },
+})
 const capabilities = computed(() => filterCapabilities(meta.value.kind))
 const activeCount = computed(() => activeFilterCount(filters))
 const sort = ref({prop:'name',order:'ascending'})
@@ -180,6 +209,8 @@ const scaleRow = ref(null)
 const scaleSaving = ref(false)
 
 const yamlVisible = ref(false)
+const accessVisible = ref(false)
+const accessResource = shallowRef(null)
 const yamlText = ref('')
 const yamlTitle = ref('')
 const yamlMode = ref('create')
@@ -201,7 +232,6 @@ function nsParam() {
 }
 
 function clearSelection() { selected.value=[]; tableRef.value?.clearSelection() }
-function beginFilters() { Object.assign(draft, filters) }
 function syncQuery() {
   const query={...route.query}
   for(const key of filterQueryKeys) delete query[key]
@@ -211,20 +241,19 @@ function syncQuery() {
 function setFilters(next) {
   const labelsChanged=next.labels!==filters.labels
   Object.assign(filters,next)
+  Object.assign(draft,next)
   keyword.value=next.keyword
   page.value=1; clearSelection()
   if(labelsChanged) load()
 }
 function applyFilters() {
   setFilters(normalizeFilters(meta.value.kind,{...draft,keyword:keyword.value}))
-  filterOpen.value=false
   syncQuery()
 }
 function resetFilters() {
-  const empty=normalizeFilters(meta.value.kind,{keyword:keyword.value})
+  const empty=normalizeFilters(meta.value.kind,{})
   Object.assign(draft,empty)
   setFilters(empty)
-  filterOpen.value=false
   syncQuery()
 }
 async function fetchList(append=false) {
@@ -254,8 +283,10 @@ function detailPath(row) {
   return cpath(`/r/${m.group || '_core'}/${m.version}/${m.plural}/${encodeURIComponent(nsPath(row.namespace))}/${encodeURIComponent(row.name)}`)
 }
 function openDetail(row) { router.push(detailPath(row)) }
-function goLogs(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/logs`)) }
-function goTerminal(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/terminal`)) }
+function openAccess(row) {
+  accessResource.value={...row._raw,kind:row._raw?.kind || meta.value.kind,apiVersion:row._raw?.apiVersion || (meta.value.group ? `${meta.value.group}/${meta.value.version}` : meta.value.version)}
+  accessVisible.value=true
+}
 
 function openCreate() {
   yamlMode.value = 'create'
@@ -381,6 +412,43 @@ async function deleteOne(row) {
   }
 }
 
+async function batchRestart() {
+  if (!restartable.value || !selected.value.length || actionBusy.value) return
+  const targets=[...selected.value]
+  const m={...meta.value}
+  actionBusy.value=true; batchOperation.value='restart'; batchResults.value=[]
+  try {
+    batchResultTitle.value='批量重启 · 服务端预检'
+    for (const row of targets) {
+      const name=`${row.namespace}/${row.name}`
+      try {
+        if (!canResource(m,'update',row.namespace,store.currentClusterId)) throw new Error('没有此资源的更新权限')
+        await api.restart(m.group,m.version,m.plural,nsPath(row.namespace),row.name,{dryRun:true})
+        batchResults.value.push({name,ok:true,message:'服务端预检通过'})
+      } catch (e) { batchResults.value.push({name,ok:false,message:e?.message || '预检失败'}) }
+    }
+    if (batchResults.value.some(result=>!result.ok)) {
+      ElMessage.warning('批量重启预检未全部通过，请查看逐项结果后重试')
+      return
+    }
+    await ElMessageBox.confirm(`选中的 ${targets.length} 个 ${m.kind} 已通过服务端预检。确定触发滚动重启？`, '批量重启', {type:'warning',confirmButtonText:'确定重启'})
+    batchResultTitle.value='批量重启 · 执行结果'; batchResults.value=[]
+    for (const row of targets) {
+      const name=`${row.namespace}/${row.name}`
+      try {
+        if (!canResource(m,'update',row.namespace,store.currentClusterId)) throw new Error('没有此资源的更新权限')
+        await api.restart(m.group,m.version,m.plural,nsPath(row.namespace),row.name)
+        batchResults.value.push({name,ok:true,message:'已提交滚动重启，请查看工作负载状态'})
+      } catch (e) { batchResults.value.push({name,ok:false,message:e?.message || '重启失败'}) }
+    }
+    const failed=batchResults.value.filter(result=>!result.ok).length
+    ElMessage[failed ? 'warning' : 'success'](`批量重启：已提交 ${targets.length-failed}，失败 ${failed}`)
+    await load()
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.message || '批量重启失败')
+  } finally { actionBusy.value=false; batchOperation.value='' }
+}
+
 async function batchDelete() {
   try {
     await ElMessageBox.confirm(`确定删除选中的 ${selected.value.length} 个资源吗？此操作不可撤销。`, '危险操作', {
@@ -419,6 +487,7 @@ watch([() => route.path, () => store.currentClusterId, () => store.namespace], (
   listPath=route.path
   clearTimeout(queryTimer)
   filterOpen.value=false
+  accessVisible.value=false; accessResource.value=null; batchResults.value=[]
   Object.assign(filters,normalizeFilters(meta.value.kind,route.query))
   keyword.value=filters.keyword
   Object.assign(draft,filters)
@@ -432,16 +501,31 @@ onUnmounted(() => { clearTimeout(queryTimer); removeContextGuard(); gate.invalid
 </script>
 
 <style scoped>
-.resource-toolbar { flex-wrap:nowrap; }
-.resource-search { width:240px; min-width:130px; flex-shrink:1; }
-.resource-count { color:var(--el-text-color-secondary); font-size:12px; white-space:nowrap; cursor:help; }
-.filter-count { margin-left:6px; font-size:12px; min-width:16px; }
-.filter-heading,.filter-footer { display:flex; align-items:center; justify-content:space-between; }
-.filter-heading { margin-bottom:12px; }
-.filter-footer { justify-content:flex-end; gap:8px; border-top:1px solid var(--el-border-color-lighter); padding-top:14px; }
-.filter-footer .el-button + .el-button { margin-left:0; }
-.resource-filter-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:0 16px; max-height:min(480px,max(120px,calc(100dvh - 260px))); overflow-y:auto; overscroll-behavior:contain; padding-right:4px; }
+.resource-query-card { margin-bottom:16px; padding:20px 22px; }
+.resource-query-row { display:flex; flex-wrap:wrap; align-items:center; gap:14px 24px; }
+.resource-query-row :deep(.el-form-item) { margin:0; }
+.query-name { flex:1 1 240px; max-width:370px; }
+.query-date { flex:1 1 360px; max-width:470px; }
+.query-date :deep(.el-date-editor) { width:100%; min-width:0; }
+.resource-query-actions { display:flex; gap:10px; align-items:center; margin-left:auto; }
+.resource-query-actions .el-button + .el-button { margin-left:0; }
+.resource-table-card { padding:0; }
+.resource-toolbar { padding:16px 18px; margin:0; gap:10px; }
+.resource-toolbar .el-button + .el-button { margin-left:0; }
+.resource-count { color:var(--el-text-color-secondary); font-size:14px; white-space:nowrap; cursor:help; margin-right:4px; }
+.filter-count { margin-left:3px; }
+.resource-filter-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0 24px; padding-top:20px; margin-top:20px; border-top:1px solid var(--kp-border); }
 .resource-filter-grid .filter-wide { grid-column:1/-1; }
 .resource-filter-grid :deep(.el-select),.resource-filter-grid :deep(.el-input-number) { width:100%; }
-@media (max-width:700px) { .resource-toolbar { flex-wrap:wrap; } .resource-search { flex:1; } .resource-filter-grid { grid-template-columns:minmax(0,1fr); } }
+.resource-filter-grid :deep(.el-form-item) { align-items:flex-start; }
+.resource-filter-grid :deep(.el-form-item__label) { min-width:90px; }
+.resource-row-details { padding:18px 30px; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:14px 28px; font-size:14px; }
+.resource-row-details > div { display:flex; gap:12px; align-items:baseline; overflow-wrap:anywhere; }
+.resource-row-details > div > span:first-child { min-width:84px; color:var(--el-text-color-secondary); flex-shrink:0; }
+.resource-row-details .detail-labels { grid-column:1/-1; flex-wrap:wrap; gap:8px; }
+.resource-batch-results { margin:0 18px 16px; padding:14px; border:1px solid var(--kp-border); border-radius:var(--kp-r-sm); }
+.batch-results-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.resource-batch-results > div:not(.batch-results-heading) { display:flex; align-items:baseline; gap:12px; margin-top:8px; overflow-wrap:anywhere; }
+@media (max-width:1100px) { .resource-query-actions { margin-left:0; } .resource-filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:700px) { .resource-query-card { padding:16px; } .query-name,.query-date { max-width:none; flex-basis:100%; } .resource-query-actions { flex-wrap:wrap; } .resource-filter-grid,.resource-row-details { grid-template-columns:minmax(0,1fr); } .resource-toolbar { padding:14px; } }
 </style>
