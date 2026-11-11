@@ -134,6 +134,8 @@ export function normalizeRow(kind, item) {
     case 'Node':
       row.roles = Object.keys(md.labels || {}).filter(k => k.startsWith('node-role.kubernetes.io/')).map(k => k.split('/')[1]).join(',') || '<none>'
       row.version = st.nodeInfo?.kubeletVersion || '-'
+      row.osImage = st.nodeInfo?.osImage || '-'
+      row.containerRuntime = st.nodeInfo?.containerRuntimeVersion || '-'
       row.internalIP = (st.addresses || []).find(a => a.type === 'InternalIP')?.address || '-'
       row.cpu = st.capacity?.cpu || '-'
       row.memory = st.capacity?.memory || '-'
@@ -210,6 +212,8 @@ const KIND_COLS = {
     { key: 'roles', label: '角色', width: 120 },
     { key: 'internalIP', label: '内网 IP', width: 140 },
     { key: 'version', label: 'Kubelet', width: 115 },
+    { key: 'osImage', label: '操作系统', minWidth: 185 },
+    { key: 'containerRuntime', label: '容器运行时', minWidth: 160 },
     { key: 'cpu', label: 'CPU', width: 80 },
     { key: 'memory', label: '内存', width: 100 },
     { key: 'pods', label: 'Pod 配额', width: 100 },
