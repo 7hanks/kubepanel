@@ -82,3 +82,52 @@ test('Harbor discovery rejects namespace scope escapes before any upstream reque
   const account = { permissions: ['cluster:list'], scope: { clusters: ['dev'], namespaces: ['team-a'], resources: ['_core/services'] } }
   await assert.rejects(registry.discoverRegistries('dev', 'team-b', { account }), { status: 403 })
 })
+
+test('Grafana test connection rejects a bogus service-account token even when Grafana allows anonymous access', async () => {
+  const VALID = 'glsa_valid_token'
+  // 模拟线上 Grafana：/api/health 公开；/api/search 无论 Token 是否有效都回退到匿名视图返回仪表盘；
+  // /api/user 只对有效 Token 返回 200。旧逻辑正是被 health + search 的「假成功」蒙骗。
+  const server = http.createServer((req, res) => {
+    const auth = req.headers.authorization || ''
+    res.setHeader('Content-Type', 'application/json')
+    if (req.url.startsWith('/api/health')) return res.end(JSON.stringify({ version: '13.3.0', database: 'ok' }))
+    if (req.url.startsWith('/api/user')) {
+      if (auth === `Bearer ${VALID}`) return res.end(JSON.stringify({ id: 1, login: 'sa-kubepanel' }))
+      res.statusCode = 401
+      return res.end(JSON.stringify({ message: 'Unauthorized' }))
+    }
+    if (req.url.startsWith('/api/search')) {
+      return res.end(JSON.stringify([{ uid: 'a', title: 'A' }, { uid: 'b', title: 'B' }]))
+    }
+    res.statusCode = 404
+    res.end('{}')
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const url = `http://127.0.0.1:${server.address().port}`
+  try {
+    // 随便填的 Token 必须失败，且不能再带出「28 个仪表盘」这类假数据
+    const bogus = await monitor.testMonitor({ url, token: '12312asfdadasd' })
+    assert.equal(bogus.ok, false)
+    assert.match(bogus.message, /Token/)
+
+    // 有效 Token 仍能正常连接并读到仪表盘
+    const good = await monitor.testMonitor({ url, token: VALID })
+    assert.equal(good.ok, true)
+    assert.equal(good.dashboards, 2)
+    assert.equal(good.authMode, 'token')
+
+    // 不配置 Token（匿名访问）依旧可用，但明确标注为匿名
+    const anon = await monitor.testMonitor({ url })
+    assert.equal(anon.ok, true)
+    assert.equal(anon.dashboards, 2)
+    assert.equal(anon.authMode, 'anonymous')
+
+    // 编辑已保存实例：表单里填了假 Token 要失败，留空沿用已保存的有效 Token 要成功
+    const view = monitor.createMonitor({ name: 'edit-case', url, token: VALID })
+    const id = view.instances[0].id
+    assert.equal((await monitor.testMonitor({ id, url, token: 'garbage' })).ok, false)
+    assert.equal((await monitor.testMonitor({ id, url })).ok, true)
+  } finally {
+    await new Promise(resolve => server.close(resolve))
+  }
+})

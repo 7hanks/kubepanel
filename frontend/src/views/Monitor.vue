@@ -413,13 +413,15 @@ async function saveInstance() {
 
 async function testDraft() {
   const payload = editing.value
-    ? { id: editing.value.id, token: form.token, url:form.url.trim(),insecure:form.insecure,...(form.ca.trim() ? {ca:form.ca.trim()} : {}) }
+    ? { id: editing.value.id, token: form.token, clearToken: form.clearToken, url:form.url.trim(),insecure:form.insecure,...(form.ca.trim() ? {ca:form.ca.trim()} : {}) }
     : { url: form.url.trim(), token: form.token,insecure:form.insecure,...(form.ca.trim() ? {ca:form.ca.trim()} : {}) }
   if (!editing.value && !payload.url) { ElMessage.warning('请先填写地址'); return }
   testing.value = true
   try {
     const r = await api.testMonitor(payload)
-    ElMessage.success(`连接正常 · Grafana ${r.version || ''} · ${r.dashboards} 个仪表盘 · ${r.ms}ms`)
+    if (!r.ok) { ElMessage.error(`连接失败：${r.message || '未知原因'}`); return }
+    const authNote = r.authMode === 'anonymous' ? ' · 匿名访问' : ''
+    ElMessage.success(`连接正常 · Grafana ${r.version || ''} · ${r.dashboards} 个仪表盘${authNote} · ${r.ms}ms`)
   } catch (e) {
     ElMessage.error(e.message || '连接失败')
   } finally { testing.value = false }
@@ -429,7 +431,9 @@ async function testSaved(it) {
   testing.value = true
   try {
     const r = await api.testMonitor({ id: it.id })
-    ElMessage.success(`${it.name} · Grafana ${r.version || ''} · ${r.dashboards} 个仪表盘 · ${r.ms}ms`)
+    if (!r.ok) { ElMessage.error(`连接失败：${r.message || '未知原因'}`); return }
+    const authNote = r.authMode === 'anonymous' ? ' · 匿名访问' : ''
+    ElMessage.success(`${it.name} · Grafana ${r.version || ''} · ${r.dashboards} 个仪表盘${authNote} · ${r.ms}ms`)
   } catch (e) {
     ElMessage.error(e.message || '连接失败')
   } finally { testing.value = false }

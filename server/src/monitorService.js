@@ -239,20 +239,66 @@ export async function testMonitor(draft) {
   if (draft?.id) {
     const inst = getInstance(draft.id)
     if (!inst) throw new KubeError(404, 'Grafana 实例不存在')
-    cfg = { ...inst, token: draft.token || inst.token, insecure: draft.insecure ?? inst.insecure, ca: draft.ca ?? inst.ca }
+    cfg = {
+      ...inst,
+      url: draft.url ? normalizeUrl(draft.url) : inst.url,
+      // clearToken 优先；否则表单里填了就用新值，没填沿用已保存的 Token
+      token: draft.clearToken ? '' : (draft.token ? String(draft.token) : inst.token),
+      insecure: draft.insecure ?? inst.insecure,
+      ca: draft.ca ?? inst.ca,
+    }
   } else {
     cfg = { url: normalizeUrl(draft?.url), token: draft?.token || '', insecure: draft?.insecure === true, ca: draft?.ca || '' }
   }
   if (!cfg.url) throw new KubeError(400, '请先填写 Grafana 地址')
+
+  const hasToken = !!cfg.token
   const started = Date.now()
-  const health = await grafanaRequest(cfg, '/api/health')
-  const version = health?.version || ''
-  let dashboards = 0
   try {
-    const list = await grafanaRequest(cfg, '/api/search?type=dash-db&limit=1000')
-    dashboards = Array.isArray(list) ? list.length : 0
-  } catch (e) { /* 没有 token 时搜索会 401，不算连接失败 */ }
-  return { ok: true, version, dashboards, ms: Date.now() - started, url: cfg.url }
+    // 1) 可达性：/api/health 是公开端点，不带鉴权也能通过，只能证明地址与版本。
+    const health = await grafanaRequest(cfg, '/api/health')
+
+    // 2) 只要本次测试带上了 Token，就必须证明 Grafana 真的接受它。
+    //    开启匿名访问时，Grafana 会忽略无效的 Bearer Token：/api/health 本就公开，
+    //    /api/search 则回退到匿名视图照常返回仪表盘——这正是「随便填 Token 也显示成功且有数据」的根因。
+    //    /api/user 要求真实登录身份，Token 无效或匿名访问都会返回 401/403，可用它来正验证凭据。
+    if (hasToken) {
+      let who
+      try {
+        who = await grafanaRequest(cfg, '/api/user')
+      } catch (e) {
+        if (e.status === 401 || e.status === 403) {
+          return { ok: false, message: '服务账号 Token 无效或已被 Grafana 拒绝，请检查 Token 是否正确、是否过期或被撤销' }
+        }
+        throw e
+      }
+      // 少数版本下匿名访问也会让 /api/user 返回 200，显式标注匿名时同样视为未通过校验。
+      if (who && typeof who === 'object' && who.isAnonymous === true) {
+        return { ok: false, message: '服务账号 Token 未被 Grafana 接受（当前为匿名访问），请检查 Token' }
+      }
+    }
+
+    // 3) 读取仪表盘数量：此时 Token 已确认有效；未配置 Token 则走匿名访问。
+    let dashboards = 0
+    try {
+      const list = await grafanaRequest(cfg, '/api/search?type=dash-db&limit=1000')
+      dashboards = Array.isArray(list) ? list.length : 0
+    } catch (e) {
+      // 未配置 Token 且 Grafana 关闭匿名访问时 search 会 401：地址可达，只是读仪表盘需要 Token；
+      // 有 Token 时任何鉴权/连接错误都必须如实报失败，不能再当作「没配 Token」放过。
+      if (hasToken || (e.status !== 401 && e.status !== 403)) throw e
+    }
+    return {
+      ok: true,
+      version: health?.version || '',
+      dashboards,
+      ms: Date.now() - started,
+      url: cfg.url,
+      authMode: hasToken ? 'token' : 'anonymous',
+    }
+  } catch (e) {
+    return { ok: false, message: e.message, ms: Date.now() - started, url: cfg.url }
+  }
 }
 
 /** 列出指定实例的仪表盘；未指定时取第一个启用的实例 */
