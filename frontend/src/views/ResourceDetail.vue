@@ -91,7 +91,7 @@
           <el-button size="small" :disabled="!!yamlDisplay.error" @click="downloadYaml">下载</el-button>
           <span class="kp-muted" style="align-self:center;font-size:12px">只读预览；编辑需经过预检与差异核对</span>
         </div>
-        <p v-if="yamlViewMode === 'compact'" class="kp-muted" style="font-size:12px;line-height:1.7">隐藏状态、UID、版本、时间戳和字段管理记录，保留当前配置；复制和下载使用当前精简内容。</p>
+        <p v-if="yamlViewMode === 'compact'" class="kp-muted" style="font-size:12px;line-height:1.7">隐藏运行信息、系统注入项和常见默认值；复制和下载使用精简内容。{{ yamlDisplay.notice }}</p>
         <el-alert v-if="yamlDisplay.error" :title="yamlDisplay.error" type="warning" :closable="false" />
         <textarea :value="yamlDisplay.text" aria-label="资源详情 YAML" class="kp-yaml" style="min-height:520px" spellcheck="false" :readonly="true" />
       </el-tab-pane>

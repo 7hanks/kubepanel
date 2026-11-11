@@ -17,6 +17,10 @@ let failPods=false,permissionSet=['*'];const writes=[]
 const ns='app'
 const pod={apiVersion:'v1',kind:'Pod',metadata:{uid:'pod-1',name:'api-broken',namespace:ns,resourceVersion:'1',creationTimestamp:'2026-11-09T01:00:00Z',labels:{app:'api'}},spec:{containers:[{name:'app',image:'example/app:1'}],nodeName:'worker-1'},status:{phase:'Running',conditions:[{type:'Ready',status:'False',reason:'ContainersNotReady',message:'Container is unready'}],containerStatuses:[{ready:false,restartCount:4,state:{waiting:{reason:'CrashLoopBackOff'}}}]}}
 pod.metadata.managedFields=[{manager:'kubelet',operation:'Update',fieldsV1:{'f:status':{}}}]
+pod.metadata.annotations={'cni.projectcalico.org/containerID':'fixture-runtime-id','cni.projectcalico.org/podIP':'10.0.0.4/32'}
+pod.spec.volumes=[{name:'kube-api-access-test1',projected:{defaultMode:420,sources:[{serviceAccountToken:{expirationSeconds:3607,path:'token'}},{configMap:{name:'kube-root-ca.crt',items:[{key:'ca.crt',path:'ca.crt'}]}},{downwardAPI:{items:[{path:'namespace',fieldRef:{apiVersion:'v1',fieldPath:'metadata.namespace'}}]}}]}}]
+Object.assign(pod.spec,{dnsPolicy:'ClusterFirst',restartPolicy:'Always',schedulerName:'default-scheduler',terminationGracePeriodSeconds:30,serviceAccountName:'default',enableServiceLinks:true,securityContext:{}})
+Object.assign(pod.spec.containers[0],{resources:{},terminationMessagePath:'/dev/termination-log',terminationMessagePolicy:'File',volumeMounts:[{name:'kube-api-access-test1',mountPath:'/var/run/secrets/kubernetes.io/serviceaccount',readOnly:true}]})
 const discovery=[{group:'',version:'v1',plural:'pods',kind:'Pod',namespaced:true,verbs:['get','list','create','update']},{group:'',version:'v1',plural:'configmaps',kind:'ConfigMap',namespaced:true,verbs:['get','list','create','update']},{group:'example.io',version:'v1',plural:'widgets',kind:'Widget',namespaced:false,verbs:['list','get','create','update']}]
 await page.route('**/api/**',async route=>{
  const req=route.request(),url=new URL(req.url()),path=url.pathname.replace(/^\/api/,'')
@@ -74,6 +78,7 @@ try{
  await page.getByText('精简 YAML',{exact:true}).click()
  const compactYaml=await detailYaml.inputValue()
  assert.doesNotMatch(compactYaml,/managedFields:|resourceVersion:|creationTimestamp:|^status:/m)
+ assert.doesNotMatch(compactYaml,/kube-api-access|cni\.projectcalico\.org|dnsPolicy:|restartPolicy:|nodeName:|terminationMessagePath:/)
  assert.match(compactYaml,/example\/app:1/)
  await page.getByRole('button',{name:'复制',exact:true}).click()
  assert.equal(await page.evaluate(()=>window.__copiedYaml),compactYaml)

@@ -20,7 +20,7 @@
       <span v-else class="kp-muted" style="font-size:12px">编辑中 · 先预检与核对差异，再提交</span>
     </div>
     <slot name="toolbar" />
-    <p v-if="compact" class="kp-muted yaml-preview-hint">隐藏状态、UID、版本、时间戳和字段管理记录，保留配置字段；复制和下载使用当前精简内容。{{ editing ? '未保存的修改已保留，编辑请切回完整 YAML。' : '' }}</p>
+    <p v-if="compact" class="kp-muted yaml-preview-hint">隐藏运行信息、系统注入项和常见默认值；复制和下载使用精简内容。{{ preview.notice }}{{ editing ? '未保存的修改已保留，编辑请切回完整 YAML。' : '' }}</p>
     <el-alert v-if="preview.error" :title="preview.error" type="warning" :closable="false" style="margin-bottom:10px" />
     <textarea
       :value="preview.text" class="kp-yaml" spellcheck="false" aria-label="资源 YAML" :readonly="compact || !editing"
