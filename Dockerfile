@@ -21,6 +21,11 @@ COPY server/package.json server/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
 FROM node:22-alpine
+RUN apk add --no-cache ca-certificates tzdata curl \
+ && addgroup -g 10001 -S kubepanel \
+ && adduser -u 10001 -S kubepanel -G kubepanel \
+ && mkdir -p /app/kube/clusters /app/public /app/data \
+ && chown -R 10001:10001 /app
 ARG BUILD_REVISION=development
 ARG SOURCE_MANIFEST_SHA256=development
 LABEL org.opencontainers.image.title="KubePanel" \
@@ -28,11 +33,6 @@ LABEL org.opencontainers.image.title="KubePanel" \
       org.opencontainers.image.version="1.5.0" \
       org.opencontainers.image.revision=$BUILD_REVISION \
       io.kubepanel.source-manifest-sha256=$SOURCE_MANIFEST_SHA256
-RUN apk add --no-cache ca-certificates tzdata curl \
- && addgroup -g 10001 -S kubepanel \
- && adduser -u 10001 -S kubepanel -G kubepanel \
- && mkdir -p /app/kube/clusters /app/public /app/data \
- && chown -R 10001:10001 /app
 ENV NODE_ENV=production PORT=8080 TZ=Asia/Shanghai \
     PUBLIC_DIR=/app/public KUBE_CLUSTERS_DIR=/app/kube/clusters DATA_DIR=/app/data \
     DASHBOARD_TOKEN_TTL=12h BUILD_REVISION=$BUILD_REVISION SOURCE_MANIFEST_SHA256=$SOURCE_MANIFEST_SHA256

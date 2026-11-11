@@ -84,13 +84,16 @@
 
       <!-- YAML -->
       <el-tab-pane label="YAML" name="yaml">
-        <div style="margin-bottom:10px;display:flex;gap:10px">
+        <div class="resource-yaml-toolbar">
+          <YamlViewToggle v-model="yamlViewMode" />
           <el-button v-if="canUpdateRes" type="primary" size="small" @click="editYaml">编辑 YAML</el-button>
-          <el-button size="small" @click="copyYaml">复制</el-button>
-          <el-button size="small" @click="downloadYaml">下载</el-button>
+          <el-button size="small" :disabled="!!yamlDisplay.error" @click="copyYaml">复制</el-button>
+          <el-button size="small" :disabled="!!yamlDisplay.error" @click="downloadYaml">下载</el-button>
           <span class="kp-muted" style="align-self:center;font-size:12px">只读预览；编辑需经过预检与差异核对</span>
         </div>
-        <textarea v-model="yamlText" class="kp-yaml" style="min-height:520px" spellcheck="false" :readonly="true" />
+        <p v-if="yamlViewMode === 'compact'" class="kp-muted" style="font-size:12px;line-height:1.7">隐藏状态、UID、版本、时间戳和字段管理记录，保留当前配置；复制和下载使用当前精简内容。</p>
+        <el-alert v-if="yamlDisplay.error" :title="yamlDisplay.error" type="warning" :closable="false" />
+        <textarea :value="yamlDisplay.text" aria-label="资源详情 YAML" class="kp-yaml" style="min-height:520px" spellcheck="false" :readonly="true" />
       </el-tab-pane>
 
       <!-- 事件 -->
@@ -167,6 +170,9 @@ import { relatedPods, createRequestGate, targetDescription } from '../utils/reso
 import ResourceOperations from '../components/ResourceOperations.vue'
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
+import YamlViewToggle from '../components/YamlViewToggle.vue'
+import { yamlPreview } from '../utils/yaml-preview'
+import { copyText } from '../utils/clipboard'
 
 const route = useRoute()
 const router = useRouter()
@@ -195,6 +201,8 @@ const gate=createRequestGate()
 const yamlTarget=computed(()=>targetDescription(store.currentCluster?.name || store.currentClusterId,ns.value,meta.value.kind,name.value))
 const loadError = ref('')
 const yamlText = ref('')
+const yamlViewMode = ref('full')
+const yamlDisplay = computed(() => yamlPreview(yamlText.value, yamlViewMode.value === 'compact'))
 const tab = ref('overview')
 const events = ref([])
 const eventsLoading = ref(false)
@@ -319,11 +327,14 @@ async function saveYamlDialog(text) {
   } finally { yamlDialogSaving.value = false }
 }
 
-function copyYaml() { navigator.clipboard?.writeText(yamlText.value).then(() => ElMessage.success('已复制')) }
+async function copyYaml() {
+  try { await copyText(yamlDisplay.value.text); ElMessage.success('已复制') }
+  catch (error) { ElMessage.error(error.message) }
+}
 function downloadYaml() {
-  const blob = new Blob([yamlText.value], { type: 'text/yaml' })
+  const blob = new Blob([yamlDisplay.value.text], { type: 'text/yaml' })
   const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob); a.download = `${name.value}.yaml`; a.click()
+  a.href = URL.createObjectURL(blob); a.download = `${name.value}${yamlViewMode.value === 'compact' ? '.simplified' : ''}.yaml`; a.click()
   URL.revokeObjectURL(a.href)
 }
 
@@ -379,3 +390,8 @@ watch(() => route.fullPath, load)
 onMounted(load)
 onUnmounted(()=>gate.invalidate())
 </script>
+
+<style scoped>
+.resource-yaml-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+.resource-yaml-toolbar .el-button + .el-button { margin-left: 0; }
+</style>
