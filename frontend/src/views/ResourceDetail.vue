@@ -82,18 +82,6 @@
         </div>
       </el-tab-pane>
 
-      <!-- YAML -->
-      <el-tab-pane label="YAML" name="yaml">
-        <div class="resource-yaml-toolbar">
-          <YamlViewToggle v-model="yamlViewMode" />
-          <el-button v-if="canUpdateRes" type="primary" size="small" @click="editYaml">编辑 YAML</el-button>
-          <el-button size="small" :disabled="!!yamlDisplay.error" @click="copyYaml">复制</el-button>
-          <el-button size="small" :disabled="!!yamlDisplay.error" @click="downloadYaml">导出 YAML</el-button>
-        </div>
-        <el-alert v-if="yamlDisplay.error" :title="yamlDisplay.error" type="warning" :closable="false" />
-        <textarea :value="yamlDisplay.text" aria-label="资源详情 YAML" class="kp-yaml" style="min-height:520px" spellcheck="false" :readonly="true" />
-      </el-tab-pane>
-
       <!-- 事件 -->
       <el-tab-pane label="事件" name="events">
         <el-table :data="events" size="small" border stripe v-loading="eventsLoading">
@@ -167,9 +155,6 @@ import { relatedPods, createRequestGate, targetDescription } from '../utils/reso
 import ResourceOperations from '../components/ResourceOperations.vue'
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
-import YamlViewToggle from '../components/YamlViewToggle.vue'
-import { yamlPreview } from '../utils/yaml-preview'
-import { copyText } from '../utils/clipboard'
 
 const route = useRoute()
 const router = useRouter()
@@ -182,7 +167,6 @@ const isDataResource = computed(() => ['Secret', 'ConfigMap'].includes(meta.valu
 const hasSelector = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job', 'Service'].includes(meta.value.kind))
 
 const loading = ref(false)
-const saving = ref(false)
 const canUpdateRes = computed(() => canResource(meta.value,'update',ns.value))
 const canDeleteRes = computed(() => canResource(meta.value,'delete',ns.value))
 const writable = computed(() => canUpdateRes.value)
@@ -197,9 +181,6 @@ const secretRevealed=ref(false)
 const gate=createRequestGate()
 const yamlTarget=computed(()=>targetDescription(store.currentCluster?.name || store.currentClusterId,ns.value,meta.value.kind,name.value))
 const loadError = ref('')
-const yamlText = ref('')
-const yamlViewMode = ref('full')
-const yamlDisplay = computed(() => yamlPreview(yamlText.value, yamlViewMode.value === 'compact'))
 const tab = ref('overview')
 const events = ref([])
 const eventsLoading = ref(false)
@@ -248,7 +229,6 @@ async function load() {
     const data = await api.get(meta.value.group, meta.value.version, meta.value.plural, apiNs(), name.value)
     if (!gate.current(request)) return
     obj.value = data
-    yamlText.value = yaml.dump(data, { noRefs: true, lineWidth: 120 })
     loadEvents(request)
     if (hasSelector.value) loadPods(request)
   } catch (e) {
@@ -296,16 +276,6 @@ async function preflightYaml(text) {
   return api.update(meta.value.group,meta.value.version,meta.value.plural,apiNs(),name.value,parsed,{dryRun:true})
 }
 
-async function saveYaml() {
-  saving.value = true
-  try {
-    const parsed = yaml.load(yamlText.value)
-    await api.update(meta.value.group, meta.value.version, meta.value.plural, apiNs(), name.value, parsed)
-    ElMessage.success('保存成功')
-    await load()
-  } catch (e) { ElMessage.error(e.response?.data?.message || e.message || '保存失败') }
-  finally { saving.value = false }
-}
 /** 顶部「编辑 YAML」按钮：打开带导入/下载/全屏的编辑弹窗 */
 function editYaml() {
   yamlDialogText.value = yaml.dump(obj.value, { noRefs: true, lineWidth: 120 })
@@ -322,17 +292,6 @@ async function saveYamlDialog(text) {
   } catch (e) {
     ElMessage.error(e.status===409 ? '资源已被其他操作修改。请保留编辑内容，重新读取最新版本并核对差异后提交。' : (e.message || '保存失败'))
   } finally { yamlDialogSaving.value = false }
-}
-
-async function copyYaml() {
-  try { await copyText(yamlDisplay.value.text); ElMessage.success('已复制') }
-  catch (error) { ElMessage.error(error.message) }
-}
-function downloadYaml() {
-  const blob = new Blob([yamlDisplay.value.text], { type: 'text/yaml' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob); a.download = `${name.value}${yamlViewMode.value === 'compact' ? '.simplified' : ''}.yaml`; a.click()
-  URL.revokeObjectURL(a.href)
 }
 
 async function doScale() {
@@ -387,8 +346,3 @@ watch(() => route.fullPath, load)
 onMounted(load)
 onUnmounted(()=>gate.invalidate())
 </script>
-
-<style scoped>
-.resource-yaml-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
-.resource-yaml-toolbar .el-button + .el-button { margin-left: 0; }
-</style>

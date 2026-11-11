@@ -8,12 +8,12 @@
     <div class="yaml-bar">
       <YamlViewToggle v-model="viewMode" :disabled="saving || checking || importing || diffOpen" />
       <el-button v-if="canEdit" size="small" :icon="Upload" :disabled="saving || checking" :loading="importing" @click="pickFile">导入 YAML</el-button>
-      <el-button size="small" :icon="CopyDocument" :disabled="!!preview.error" @click="copyAll">复制</el-button>
       <el-button size="small" :icon="Download" :disabled="!!preview.error" @click="downloadFile">导出 YAML</el-button>
+      <el-button size="small" :icon="CopyDocument" :disabled="!!preview.error" @click="copyAll">复制</el-button>
       <el-button size="small" :icon="full ? Aim : FullScreen" @click="full = !full">{{ full ? '还原窗口' : '全屏' }}</el-button>
       <input ref="fileInput" type="file" accept=".yaml,.yml,.txt" style="display:none" @change="onFileChange" />
       <span style="flex:1" />
-      <el-tag disable-transitions v-if="compact || !editing" type="info" size="small" effect="plain">只读</el-tag>
+      <el-tag disable-transitions v-if="compact || !editing" type="info" size="small" effect="plain">{{ canEdit && !importing ? '只读 · 双击可编辑' : '只读' }}</el-tag>
       <el-tag disable-transitions v-else type="warning" size="small" effect="plain">编辑中</el-tag>
     </div>
     <slot name="toolbar" />
@@ -22,7 +22,7 @@
     <textarea v-else
       :value="preview.text" class="kp-yaml" spellcheck="false" aria-label="资源 YAML" :readonly="compact || !editing || importing"
       :class="{ 'is-readonly': compact || !editing }"
-      :title="!compact && !editing && canEdit ? '双击进入编辑' : ''"
+      :title="dblHint"
       @input="updateText"
       :style="full ? { minHeight: 'calc(100vh - 250px)', height: 'calc(100vh - 250px)', maxHeight: 'none' } : {}"
       @dblclick="onDblClick"
@@ -102,6 +102,11 @@ const dialogTitle = computed(() => {
   return props.title.replace(/^编辑\s*/, '查看 ')
 })
 const canGoBackToView = computed(() => props.mode === 'view')
+/** 只读态的双击提示；精简预览本身不可写，双击会切回完整 YAML 再编辑 */
+const dblHint = computed(() => {
+  if (!canEdit.value || importing.value || (editing.value && !compact.value)) return ''
+  return compact.value ? '双击返回完整 YAML 编辑' : '双击进入编辑'
+})
 
 watch(() => props.content, v => { importEpoch++; text.value = v; diffOpen.value=false; checkedText.value=null })
 watch(() => props.modelValue, open => {
@@ -127,8 +132,11 @@ async function check() {
 }
 function save() { if (!compact.value && !props.readonly && !importing.value && !checking.value && (!props.preflight || checkedText.value===text.value)) emit('save',text.value) }
 function startEdit() { if (!props.readonly) { viewMode.value='full'; editing.value=true } }
-/** 只读预览下双击内容区 = 点「编辑」，快速进入编辑态；永久只读时不生效 */
-function onDblClick() { if (!compact.value && !editing.value) startEdit() }
+/** 只读预览下双击内容区 = 点「编辑」；精简预览不可直接写回，双击切回完整 YAML 编辑；永久只读时不生效 */
+function onDblClick() {
+  if (!canEdit.value || importing.value || (editing.value && !compact.value)) return
+  startEdit()
+}
 async function confirmDiscard() {
   if (!editing.value || text.value===props.content) return true
   try { await ElMessageBox.confirm('编辑内容尚未保存，确定放弃修改？','未保存的修改',{type:'warning'}); return true } catch { return false }
