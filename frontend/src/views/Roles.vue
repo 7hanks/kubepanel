@@ -326,8 +326,8 @@ onMounted(load)
 <style scoped>
 .plat-main { max-width: 1280px; margin: 0 auto; padding: 24px 22px 48px; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
-.page-head h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.02em; }
-.page-head p { margin: 6px 0 0; font-size: 13px; max-width: 760px; line-height: 1.6; }
+.page-head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
+.page-head p { margin: 6px 0 0; font-size: 12px; max-width: 760px; line-height: 1.6; }
 .perm-box { width: 100%; }
 .perm-box :deep(.el-table .cell) { padding: 0 6px; }
 .hint { font-size: 11.5px; line-height: 1.4; margin-top: 1px; }

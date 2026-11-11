@@ -7,8 +7,8 @@
     <main class="cluster-main">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px">
         <div>
-          <h1 style="margin:0;font-size:22px;font-weight:650">集群列表</h1>
-          <p class="kp-muted" style="margin:6px 0 0;font-size:13px">选择一个集群进入控制台；也可以导入新的 kubeconfig 纳管更多集群</p>
+          <h1 style="margin:0;font-size: 21px;font-weight:650">集群列表</h1>
+          <p class="kp-muted" style="margin:6px 0 0;font-size: 12px">选择一个集群进入控制台；也可以导入新的 kubeconfig 纳管更多集群</p>
         </div>
         <el-button v-if="canAdd" type="primary" :icon="Plus" @click="openAdd">导入集群</el-button>
       </div>
@@ -21,9 +21,9 @@
 
       <div v-loading="loading">
         <div v-if="!clusters.length && !loading" class="kp-card" style="text-align:center;padding:56px 20px">
-          <el-icon style="font-size:44px;color:#9ca3af"><OfficeBuilding /></el-icon>
-          <p style="font-size:16px;font-weight:600;margin:14px 0 6px">还没有纳管任何集群</p>
-          <p class="kp-muted" style="margin:0 0 18px;font-size:13px">
+          <el-icon style="font-size: 43px;color:#9ca3af"><OfficeBuilding /></el-icon>
+          <p style="font-size: 15px;font-weight:600;margin:14px 0 6px">还没有纳管任何集群</p>
+          <p class="kp-muted" style="margin:0 0 18px;font-size: 12px">
             点「导入集群」粘贴 kubeconfig，或把 kubeconfig 文件放进服务器的集群目录后刷新
           </p>
           <el-button v-if="canAdd" type="primary" @click="openAdd">导入第一个集群</el-button>
@@ -35,7 +35,7 @@
                 <div style="min-width:0">
                   <div style="display:flex;align-items:center;gap:8px">
                     <span class="status-dot" :class="c.healthy ? 'ok' : 'bad'" />
-                    <h3 class="cluster-name" style="margin:0;font-size:16px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" @click="openDetail(c)">{{ c.name }}</h3>
+                    <h3 class="cluster-name" style="margin:0;font-size: 15px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" @click="openDetail(c)">{{ c.name }}</h3>
                   </div>
                   <div class="kp-mono kp-muted" style="margin-top:6px;font-size:12px;word-break:break-all">{{ c.server }}</div>
                 </div>
@@ -79,7 +79,7 @@
         <template v-if="detail && !detail.error">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
             <span class="status-dot ok" />
-            <strong style="font-size:16px">{{ detail.name }}</strong>
+            <strong style="font-size: 15px">{{ detail.name }}</strong>
             <el-tag disable-transitions type="success" size="small">连接正常</el-tag>
             <span class="kp-mono kp-muted" style="font-size:12px">{{ detail.server }}</span>
           </div>

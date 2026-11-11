@@ -177,7 +177,7 @@ onMounted(async () => {
   height: 56px; flex-shrink: 0; background: #fff; border-bottom: 1px solid var(--kp-border);
   display: flex; align-items: center; justify-content: space-between; padding: 0 22px;
 }
-.plat-crumb { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--kp-text); }
+.plat-crumb { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--kp-text); }
 .ps-sep { color: var(--kp-faint); }
 .plat-right { display: flex; align-items: center; gap: 10px; }
 .ps-divider { width: 1px; height: 18px; background: var(--kp-border); }

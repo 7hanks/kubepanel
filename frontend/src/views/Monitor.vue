@@ -107,7 +107,7 @@
                 </div>
                 <iframe v-if="current" :src="current.embedUrl" class="frame" frameborder="0" />
                 <div v-else class="frame-empty">
-                  <el-icon style="font-size:26px;color:var(--kp-faint)"><TrendCharts /></el-icon>
+                  <el-icon style="font-size: 25px;color:var(--kp-faint)"><TrendCharts /></el-icon>
                   <div>选择左侧实例与仪表盘后在此嵌入预览</div>
                   <div class="kp-muted" style="font-size:12px">
                     嵌入使用 <code>?kiosk&amp;theme=light</code>，需要 Grafana 允许被 iframe 嵌入
@@ -538,8 +538,8 @@ onMounted(reload)
 .plat-page { min-height: 100vh; background: var(--kp-bg); }
 .plat-main { max-width: 1280px; margin: 0 auto; padding: 24px 22px 48px; }
 .page-head { margin-bottom: 12px; }
-.page-head h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.02em; }
-.page-head p { margin: 6px 0 0; font-size: 13px; max-width: 820px; line-height: 1.6; }
+.page-head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
+.page-head p { margin: 6px 0 0; font-size: 12px; max-width: 820px; line-height: 1.6; }
 .mon-tabs :deep(.el-tabs__nav-wrap::after) { display: none; }
 .env-group { margin-top: 6px; }
 .env-group:first-child { margin-top: 0; }
@@ -548,7 +548,7 @@ onMounted(reload)
   font-size: 11.5px; font-weight: 600; color: var(--kp-muted); letter-spacing: .02em;
   border-bottom: 1px solid var(--kp-border); margin-bottom: 4px;
 }
-.env-head .el-icon { font-size: 13px; }
+.env-head .el-icon { font-size: 12px; }
 .env-count { margin-left: auto; font-weight: 400; }
 .inst-item {
   display: flex; align-items: center; gap: 9px; padding: 8px 10px;
@@ -558,16 +558,16 @@ onMounted(reload)
 .inst-item:hover { background: #f8fafc; }
 .inst-item.active { background: var(--kp-brand-soft); }
 .inst-item.is-off { opacity: .55; }
-.inst-ic { font-size: 16px; color: var(--kp-muted); flex: none; }
+.inst-ic { font-size: 15px; color: var(--kp-muted); flex: none; }
 .inst-item.active .inst-ic { color: var(--kp-brand); }
 .inst-text { min-width: 0; flex: 1; }
 .inst-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12.8px; }
 .inst-name .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--kp-text); }
 .inst-sub { font-size: 11px; color: var(--kp-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inst-check { font-size: 15px; color: var(--kp-brand); flex: none; }
+.inst-check { font-size: 14px; color: var(--kp-brand); flex: none; }
 .inst-more {
   display: inline-flex; align-items: center; padding: 2px; border-radius: 4px;
-  color: var(--kp-muted); font-size: 14px; flex: none;
+  color: var(--kp-muted); font-size: 13px; flex: none;
 }
 .inst-more:hover { background: rgba(0, 0, 0, .05); color: var(--kp-text); }
 .dash-item {
@@ -588,7 +588,7 @@ onMounted(reload)
 .frame { width: 100%; height: 560px; display: block; background: #fff; }
 .frame-empty {
   height: 560px; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 8px; color: var(--kp-muted); font-size: 13px; text-align: center; padding: 0 30px; line-height: 1.7;
+  gap: 8px; color: var(--kp-muted); font-size: 12px; text-align: center; padding: 0 30px; line-height: 1.7;
 }
 .bar-row { display: flex; align-items: center; gap: 8px; }
 .bar-row :deep(.el-progress) { flex: 1; }

@@ -2,7 +2,7 @@
   <div v-loading="loading">
     <div class="kp-toolbar">
       <el-button :icon="ArrowLeft" @click="$router.back()">返回</el-button>
-      <span style="font-size:16px;font-weight:600">{{ meta.kind }} / {{ name }}</span>
+      <span style="font-size: 15px;font-weight:600">{{ meta.kind }} / {{ name }}</span>
       <el-tag disable-transitions :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
       <span class="spacer" />
       <el-button v-if="meta.kind === 'Pod' && canUpdateRes && canDeleteRes" type="warning" plain :loading="restarting" @click="doRestartPod">重启 Pod</el-button>

@@ -126,7 +126,7 @@ async function submit() {
 .pwd-avatar {
   width: 34px; height: 34px; border-radius: 9px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  background: var(--kp-brand-soft); color: var(--kp-brand); font-size: 16px;
+  background: var(--kp-brand-soft); color: var(--kp-brand); font-size: 15px;
 }
 .pwd-head-text { min-width: 0; }
 .pwd-user { font-size: 13.5px; font-weight: 600; color: var(--kp-text); line-height: 1.3; }

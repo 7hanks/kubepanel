@@ -420,8 +420,8 @@ onMounted(load)
 .plat-page { min-height: 100vh; background: var(--kp-bg); }
 .plat-main { max-width: 1280px; margin: 0 auto; padding: 24px 22px 48px; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
-.page-head h1 { margin: 0; font-size: 22px; font-weight: 650; letter-spacing: -.02em; }
-.page-head p { margin: 6px 0 0; font-size: 13px; max-width: 720px; line-height: 1.6; }
+.page-head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
+.page-head p { margin: 6px 0 0; font-size: 12px; max-width: 720px; line-height: 1.6; }
 .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .dot.ok { background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,.12); }
 .dot.bad { background: #dc2626; box-shadow: 0 0 0 3px rgba(220,38,38,.12); }

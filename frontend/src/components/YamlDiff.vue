@@ -64,14 +64,14 @@ function displayText(text) { return text?.replace(/\r/g, '␍') ?? '' }
   overflow: hidden;
   color: var(--kp-text, #111827);
 }
-.diff-summary { display: flex; flex-wrap: wrap; gap: 16px; flex-shrink: 0; padding-bottom: 10px; font-size: 14px; }
+.diff-summary { display: flex; flex-wrap: wrap; gap: 16px; flex-shrink: 0; padding-bottom: 10px; font-size: 13px; }
 .diff-added-count { color: #166534; }
 .diff-deleted-count { color: #991b1b; }
 .diff-unchanged { color: var(--kp-text-2, #4b5563); }
-.diff-notice { flex-shrink: 0; margin: 0 0 10px; color: var(--kp-muted, #596579); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.diff-notice { flex-shrink: 0; margin: 0 0 10px; color: var(--kp-muted, #596579); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .diff-panes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); flex: 1; min-height: 0; min-width: 0; gap: 12px; }
 .diff-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; border: 1px solid var(--kp-border-strong, #dce2ea); border-radius: var(--kp-r-sm, 6px); }
-.diff-pane-title { flex-shrink: 0; margin: 0; padding: 9px 12px; background: var(--kp-surface-2, #fafbfc); border-bottom: 1px solid var(--kp-border, #e9edf2); font-size: 14px; font-weight: 600; }
+.diff-pane-title { flex-shrink: 0; margin: 0; padding: 9px 12px; background: var(--kp-surface-2, #fafbfc); border-bottom: 1px solid var(--kp-border, #e9edf2); font-size: 13px; font-weight: 600; }
 .diff-viewport { flex: 1; min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; background: var(--kp-surface, #fff); font: 14px/24px var(--kp-font-mono, ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace); tab-size: 2; }
 .diff-viewport:focus-visible { outline: 2px solid var(--kp-brand, #2563eb); outline-offset: -2px; }
 .diff-line { display: grid; grid-template-columns: 6ch 2ch minmax(0, 1fr); width: max-content; min-width: 100%; min-height: 24px; }

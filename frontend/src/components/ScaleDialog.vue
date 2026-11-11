@@ -73,15 +73,15 @@ watch(() => props.current, v => { target.value = v })
 }
 .scale-head-item { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 88px; }
 .scale-label { font-size: 12px; color: var(--kp-muted); }
-.scale-old { font-size: 24px; font-weight: 600; color: var(--kp-muted); letter-spacing: -.02em; }
-.scale-new { font-size: 24px; font-weight: 650; color: var(--kp-brand); letter-spacing: -.02em; }
-.scale-arrow { font-size: 16px; color: var(--kp-faint); }
+.scale-old { font-size: 23px; font-weight: 600; color: var(--kp-muted); letter-spacing: -.02em; }
+.scale-new { font-size: 23px; font-weight: 650; color: var(--kp-brand); letter-spacing: -.02em; }
+.scale-arrow { font-size: 15px; color: var(--kp-faint); }
 .scale-stepper {
   display: flex; align-items: center; justify-content: center; gap: 28px; padding: 24px 0 20px;
 }
-.scale-stepper .el-button { width: 44px; height: 44px; font-size: 17px; }
+.scale-stepper .el-button { width: 44px; height: 44px; font-size: 16px; }
 .scale-value {
-  min-width: 96px; text-align: center; font-size: 38px; font-weight: 650;
+  min-width: 96px; text-align: center; font-size: 37px; font-weight: 650;
   letter-spacing: -.04em; color: var(--kp-text); font-variant-numeric: tabular-nums;
 }
 .scale-presets { display: flex; align-items: center; justify-content: center; gap: 7px; flex-wrap: wrap; }

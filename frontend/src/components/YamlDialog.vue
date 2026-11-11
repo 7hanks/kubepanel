@@ -189,7 +189,7 @@ function downloadFile() {
 </script>
 
 <style scoped>
-.yaml-count { font-size:13px; }
+.yaml-count { font-size: 12px; }
 .yaml-compare { height:calc(100dvh - 340px); min-height:180px; max-height:64dvh; }
 .yaml-compare.is-full { height:calc(100dvh - 270px); max-height:none; }
 .yaml-bar {
