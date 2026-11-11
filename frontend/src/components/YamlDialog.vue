@@ -4,42 +4,38 @@
     :model-value="modelValue" :title="dialogTitle" :width="full ? '96%' : width" top="5vh"
     destroy-on-close :before-close="beforeClose" @update:model-value="v => emit('update:modelValue',v)" @closed="reset"
   >
-    <p v-if="target" class="kp-mono">{{ target }}</p>
+    <p v-if="target" class="kp-mono yaml-target">{{ target }}</p>
     <div class="yaml-bar">
-      <YamlViewToggle v-model="viewMode" :disabled="saving || checking || importing || diffOpen" />
+      <YamlViewToggle v-model="viewMode" :disabled="saving || checking || importing || diffOpen || editing" />
       <el-button v-if="canEdit" size="small" :disabled="saving || checking" :loading="importing" @click="pickFile">导入 YAML</el-button>
       <el-button size="small" :disabled="!!preview.error" @click="downloadFile">导出 YAML</el-button>
       <el-button size="small" :icon="CopyDocument" :disabled="!!preview.error" @click="copyAll">复制</el-button>
       <el-button size="small" :icon="full ? Aim : FullScreen" @click="full = !full">{{ full ? '还原窗口' : '全屏' }}</el-button>
       <input ref="fileInput" type="file" accept=".yaml,.yml,.txt" style="display:none" @change="onFileChange" />
       <span style="flex:1" />
-      <el-tag disable-transitions v-if="compact || !editing" type="info" size="small" effect="plain">{{ canEdit && !importing ? '只读 · 双击可编辑' : '只读' }}</el-tag>
-      <el-tag disable-transitions v-else type="warning" size="small" effect="plain">编辑中</el-tag>
+      <el-tag disable-transitions v-if="!editing" type="info" size="small" effect="plain">{{ canEdit && !importing ? '只读 · 双击可编辑' : '只读' }}</el-tag>
+      <el-tag disable-transitions v-else type="warning" size="small" effect="plain">{{ compact ? '编辑中 · 精简' : '编辑中' }}</el-tag>
     </div>
     <slot name="toolbar" />
     <el-alert v-if="preview.error" :title="preview.error" type="warning" :closable="false" style="margin-bottom:10px" />
-    <div v-if="diffOpen" class="yaml-compare" :class="{'is-full': full}"><YamlDiff :before="content" :after="text" /></div>
+    <div v-if="diffOpen" class="yaml-compare"><YamlDiff :before="content" :after="text" /></div>
     <textarea v-else
-      :value="preview.text" class="kp-yaml" spellcheck="false" aria-label="资源 YAML" :readonly="compact || !editing || importing"
-      :class="{ 'is-readonly': compact || !editing }"
+      :value="workingText" class="kp-yaml" spellcheck="false" aria-label="资源 YAML" :readonly="!editing || importing"
+      :class="{ 'is-readonly': !editing }"
       :title="dblHint"
       @input="updateText"
-      :style="full ? { minHeight: 'calc(100vh - 250px)', height: 'calc(100vh - 250px)', maxHeight: 'none' } : {}"
       @dblclick="onDblClick"
     />
     <el-alert v-if="error" :title="error" type="error" :closable="false" style="margin-top:10px" />
     <template #footer>
       <div class="yaml-footer" style="display:flex;align-items:center;gap:8px;width:100%">
-        <span class="kp-muted yaml-count">{{ preview.text.split('\n').length }} 行 · {{ preview.text.length }} 字符</span>
-        <el-button v-if="editing" :type="diffOpen ? 'primary' : 'default'" plain :disabled="importing || saving" :aria-pressed="diffOpen" @click="toggleDiff">{{ diffOpen ? '返回编辑' : '差异对比' }}</el-button>
+        <span class="kp-muted yaml-count">{{ workingText.split('\n').length }} 行 · {{ workingText.length }} 字符</span>
+        <el-button v-if="editing && !editingCompact" :type="diffOpen ? 'primary' : 'default'" plain :disabled="importing || saving" :aria-pressed="diffOpen" @click="toggleDiff">{{ diffOpen ? '返回编辑' : '差异对比' }}</el-button>
         <span class="yaml-footer-spacer" style="flex:1" />
         <template v-if="editing">
           <el-button @click="cancelEdit">{{ canGoBackToView ? '取消编辑' : '取消' }}</el-button>
-          <el-button v-if="compact" type="primary" @click="viewMode = 'full'">返回完整 YAML 编辑</el-button>
-          <template v-else>
-            <el-button :loading="checking" :disabled="importing || saving" @click="check">服务端预检</el-button>
-            <el-button type="primary" :loading="saving" :disabled="importing || checking || (preflight && checkedText !== text)" @click="save">{{ submitLabel }}</el-button>
-          </template>
+          <el-button :loading="checking" :disabled="importing || saving" @click="check">服务端预检</el-button>
+          <el-button type="primary" :loading="saving" :disabled="importing || checking || (preflight && checkedText !== submitText)" @click="save">{{ submitLabel }}</el-button>
         </template>
         <template v-else>
           <el-button @click="requestClose">关闭</el-button>
@@ -53,6 +49,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { loadAll, dump } from 'js-yaml'
 import { registerUnsavedGuard } from '../utils/navigation'
 import { FullScreen, Aim, EditPen, CopyDocument } from '@element-plus/icons-vue'
 import YamlViewToggle from './YamlViewToggle.vue'
@@ -87,6 +84,31 @@ const preview = computed(() => yamlPreview(text.value, compact.value))
 const full = ref(false)
 const editing = ref(!props.readonly && props.mode !== 'view')
 const canEdit = computed(() => !props.readonly)
+/* 精简 YAML 也能就地编辑：编辑时用独立草稿，避免每次按键都重新生成精简文本 */
+const compactDraft = ref('')
+const compactBaseline = ref('')
+const editingCompact = computed(() => editing.value && compact.value)
+const workingText = computed(() => editingCompact.value ? compactDraft.value : preview.value.text)
+const dirty = computed(() => editingCompact.value ? compactDraft.value !== compactBaseline.value : (editing.value && text.value !== props.content))
+/* 精简视图按设计隐藏了 resourceVersion，但服务端更新强制要求它；提交时从原始完整对象补回 */
+const submitText = computed(() => {
+  if (!editingCompact.value) return workingText.value
+  try {
+    const live = loadAll(props.content).find(doc => doc && typeof doc === 'object')
+    const rv = live?.metadata?.resourceVersion
+    if (!rv) return workingText.value
+    const docs = loadAll(workingText.value).filter(doc => doc && typeof doc === 'object')
+    if (!docs.length) return workingText.value
+    return docs.map(doc => dump({
+      ...doc,
+      metadata: {
+        ...(doc.metadata || {}),
+        ...(doc.metadata?.resourceVersion ? {} : { resourceVersion: rv }),
+        ...(doc.metadata?.uid || !live.metadata?.uid ? {} : { uid: live.metadata.uid }),
+      },
+    }, { noRefs: true, lineWidth: 120 })).join('---\n')
+  } catch { return workingText.value }
+})
 const checkedText = ref(null)
 const checking = ref(false)
 const importing = ref(false)
@@ -97,18 +119,20 @@ const fileInput = ref(null)
 const removeGuard=registerUnsavedGuard(async()=>{ if (!props.modelValue) return true; if (props.saving || checking.value || importing.value) return false; if(!await confirmDiscard())return false; emit('update:modelValue',false); return true })
 
 const dialogTitle = computed(() => {
+  if (editingCompact.value) return '编辑（精简）· ' + props.title.replace(/^(查看|编辑)\s*/, '')
   if (compact.value) return '精简预览 · ' + props.title.replace(/^(查看|编辑)\s*/, '')
   if (editing.value) return props.title.replace(/^查看\s*/, '编辑 ')
   return props.title.replace(/^编辑\s*/, '查看 ')
 })
 const canGoBackToView = computed(() => props.mode === 'view')
-/** 只读态的双击提示；精简预览本身不可写，双击会切回完整 YAML 再编辑 */
+/** 只读态的双击提示；完整/精简都可以就地双击进入编辑 */
 const dblHint = computed(() => {
-  if (!canEdit.value || importing.value || (editing.value && !compact.value)) return ''
-  return compact.value ? '双击返回完整 YAML 编辑' : '双击进入编辑'
+  if (!canEdit.value || importing.value || editing.value) return ''
+  return compact.value ? '双击编辑精简 YAML' : '双击进入编辑'
 })
 
-watch(() => props.content, v => { importEpoch++; text.value = v; diffOpen.value=false; checkedText.value=null })
+function seedCompactDraft() { compactBaseline.value = preview.value.text; compactDraft.value = preview.value.text; checkedText.value = null }
+watch(() => props.content, v => { importEpoch++; text.value = v; compactDraft.value=''; compactBaseline.value=''; diffOpen.value=false; checkedText.value=null })
 watch(() => props.modelValue, open => {
   importEpoch++
   if (open) {
@@ -117,28 +141,36 @@ watch(() => props.modelValue, open => {
     full.value = false
     diffOpen.value=false
     editing.value = !props.readonly && props.mode !== 'view'
-    checkedText.value=null; error.value=''
+    checkedText.value=null; error.value=''; compactDraft.value=''; compactBaseline.value=''
   }
 })
-function reset() { importEpoch++; text.value=props.content; viewMode.value='full'; diffOpen.value=false; full.value=false; editing.value=!props.readonly && props.mode !== 'view'; checkedText.value=null; error.value='' }
-function toggleDiff() { viewMode.value='full'; diffOpen.value=!diffOpen.value }
-function updateText(event) { if (editing.value && !compact.value) text.value = event.target.value }
+function reset() { importEpoch++; text.value=props.content; viewMode.value='full'; diffOpen.value=false; full.value=false; editing.value=!props.readonly && props.mode !== 'view'; checkedText.value=null; error.value=''; compactDraft.value=''; compactBaseline.value='' }
+function toggleDiff() { if (editingCompact.value) return; viewMode.value='full'; diffOpen.value=!diffOpen.value }
+function updateText(event) {
+  if (!editing.value || importing.value) return
+  if (compact.value) compactDraft.value = event.target.value
+  else text.value = event.target.value
+}
 async function check() {
   checking.value=true; error.value=''
-  const snapshot=text.value, target=props.target
-  try { if (props.preflight) await props.preflight(snapshot); if (snapshot!==text.value || target!==props.target) return; checkedText.value=snapshot; ElMessage.success('服务端预检通过，请核对差异后提交') }
+  const snapshot=submitText.value, target=props.target
+  try { if (props.preflight) await props.preflight(snapshot); if (snapshot!==submitText.value || target!==props.target) return; checkedText.value=snapshot; ElMessage.success('服务端预检通过，请核对差异后提交') }
   catch(e) { error.value=e.message || '预检失败' }
   finally { checking.value=false }
 }
-function save() { if (!compact.value && !props.readonly && !importing.value && !checking.value && (!props.preflight || checkedText.value===text.value)) emit('save',text.value) }
-function startEdit() { if (!props.readonly) { viewMode.value='full'; editing.value=true } }
-/** 只读预览下双击内容区 = 点「编辑」；精简预览不可直接写回，双击切回完整 YAML 编辑；永久只读时不生效 */
+function save() { if (!props.readonly && !importing.value && !checking.value && (!props.preflight || checkedText.value===submitText.value)) emit('save',submitText.value) }
+function startEdit() {
+  if (props.readonly || editing.value) return
+  if (compact.value) seedCompactDraft()
+  editing.value = true
+}
+/** 只读预览下双击内容区即进入编辑；精简 YAML 也在原地编辑（独立草稿），不再跳转到完整 YAML */
 function onDblClick() {
-  if (!canEdit.value || importing.value || (editing.value && !compact.value)) return
+  if (!canEdit.value || importing.value || editing.value) return
   startEdit()
 }
 async function confirmDiscard() {
-  if (!editing.value || text.value===props.content) return true
+  if (!dirty.value) return true
   try { await ElMessageBox.confirm('编辑内容尚未保存，确定放弃修改？','未保存的修改',{type:'warning'}); return true } catch { return false }
 }
 async function requestClose() { if (!props.saving && !importing.value && await confirmDiscard()) emit('update:modelValue',false) }
@@ -146,10 +178,11 @@ async function beforeClose(done) { if (!props.saving && !importing.value && awai
 async function cancelEdit() {
   if (props.saving || importing.value || checking.value) return
   if (!await confirmDiscard()) return
-  if (canGoBackToView.value) { text.value=props.content; viewMode.value='full'; diffOpen.value=false; editing.value=false; checkedText.value=null }
+  compactDraft.value=''; compactBaseline.value=''; checkedText.value=null
+  if (canGoBackToView.value) { text.value=props.content; viewMode.value='full'; diffOpen.value=false; editing.value=false }
   else emit('update:modelValue',false)
 }
-function beforeUnload(event) { if (props.modelValue && editing.value && text.value!==props.content) { event.preventDefault(); event.returnValue='' } }
+function beforeUnload(event) { if (props.modelValue && dirty.value) { event.preventDefault(); event.returnValue='' } }
 onMounted(()=>window.addEventListener('beforeunload',beforeUnload))
 onUnmounted(()=>{removeGuard();window.removeEventListener('beforeunload',beforeUnload)})
 
@@ -181,13 +214,13 @@ async function onFileChange(e) {
 }
 
 async function copyAll() {
-  try { await copyText(preview.value.text); ElMessage.success('已复制到剪贴板') }
+  try { await copyText(workingText.value); ElMessage.success('已复制到剪贴板') }
   catch (error) { ElMessage.error(error.message) }
 }
 
 function downloadFile() {
   const safe = String(props.title || 'resource').replace(/[^\w\u4e00-\u9fa5.-]+/g, '_').slice(0, 80)
-  const blob = new Blob([preview.value.text], { type: 'text/yaml;charset=utf-8' })
+  const blob = new Blob([workingText.value], { type: 'text/yaml;charset=utf-8' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = `${safe}${compact.value ? '.simplified' : ''}.yaml`
@@ -198,21 +231,20 @@ function downloadFile() {
 
 <style scoped>
 .yaml-count { font-size: 12px; }
-.yaml-compare { height:calc(100dvh - 340px); min-height:180px; max-height:64dvh; }
-.yaml-compare.is-full { height:calc(100dvh - 270px); max-height:none; }
 .yaml-bar {
   display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;
 }
 .yaml-bar .el-button + .el-button { margin-left: 0; }
+/* 弹窗主体改为弹性列：编辑器占满剩余高度，底部的错误提示与页脚始终完整可见（原先固定高度会把提示裁成一条） */
 :global(.yaml-resource-dialog) { display: flex; flex-direction: column; max-height: 90dvh; }
-:global(.yaml-resource-dialog .el-dialog__body) { min-height: 0; overflow: auto; }
+:global(.yaml-resource-dialog .el-dialog__body) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 :global(.yaml-resource-dialog .el-dialog__header), :global(.yaml-resource-dialog .el-dialog__footer) { flex-shrink: 0; }
+.yaml-target, .yaml-bar, .el-alert { flex: 0 0 auto; }
+.kp-yaml, .yaml-compare { flex: 1 1 auto; height: auto; min-height: 160px; max-height: none; }
 @media (max-width: 640px) {
   .yaml-footer { flex-wrap: wrap; justify-content: flex-end; }
   .yaml-count { flex-basis: 100%; text-align: left; }
   .yaml-footer-spacer { display: none; }
 }
 .kp-yaml.is-readonly { background: #fbfcfe; color: #334155; }
-/* 让弹窗始终落在视口内：编辑器高度随视口伸缩，避免页脚按钮被挤出屏幕 */
-.kp-yaml { height: calc(100vh - 330px); min-height: 180px; max-height: 64vh; }
 </style>
