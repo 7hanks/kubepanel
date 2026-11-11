@@ -1,7 +1,7 @@
 <template>
   <el-dialog
     class="yaml-resource-dialog"
-    :model-value="modelValue" :title="dialogTitle" :width="full ? '96%' : width" top="5vh"
+    :model-value="modelValue" :title="dialogTitle" :width="width" top="4vh"
     destroy-on-close :before-close="beforeClose" @update:model-value="v => emit('update:modelValue',v)" @closed="reset"
   >
     <p v-if="target" class="kp-mono yaml-target">{{ target }}</p>
@@ -9,8 +9,6 @@
       <YamlViewToggle v-model="viewMode" :disabled="saving || checking || importing || diffOpen || editing" />
       <el-button v-if="canEdit" size="small" :disabled="saving || checking" :loading="importing" @click="pickFile">导入 YAML</el-button>
       <el-button size="small" :disabled="!!preview.error" @click="downloadFile">导出 YAML</el-button>
-      <el-button size="small" :icon="CopyDocument" :disabled="!!preview.error" @click="copyAll">复制</el-button>
-      <el-button size="small" :icon="full ? Aim : FullScreen" @click="full = !full">{{ full ? '还原窗口' : '全屏' }}</el-button>
       <input ref="fileInput" type="file" accept=".yaml,.yml,.txt" style="display:none" @change="onFileChange" />
       <span style="flex:1" />
       <el-tag disable-transitions v-if="!editing" type="info" size="small" effect="plain">{{ canEdit && !importing ? '只读 · 双击可编辑' : '只读' }}</el-tag>
@@ -51,11 +49,10 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { loadAll, dump } from 'js-yaml'
 import { registerUnsavedGuard } from '../utils/navigation'
-import { FullScreen, Aim, EditPen, CopyDocument } from '@element-plus/icons-vue'
+import { EditPen } from '@element-plus/icons-vue'
 import YamlViewToggle from './YamlViewToggle.vue'
 import YamlDiff from './YamlDiff.vue'
 import { yamlPreview } from '../utils/yaml-preview'
-import { copyText } from '../utils/clipboard'
 import { importYamlDraft, MAX_YAML_IMPORT_BYTES } from '../utils/yaml-import'
 
 /**
@@ -73,7 +70,7 @@ const props = defineProps({
   readonly: Boolean,
   submitLabel: { type: String, default: '保存' },
   saving: Boolean,
-  width: { type: String, default: '800px' },
+  width: { type: String, default: '92%' },
 })
 const emit = defineEmits(['update:modelValue', 'save'])
 
@@ -81,7 +78,6 @@ const text = ref(props.content)
 const viewMode = ref('full')
 const compact = computed(() => viewMode.value === 'compact')
 const preview = computed(() => yamlPreview(text.value, compact.value))
-const full = ref(false)
 const editing = ref(!props.readonly && props.mode !== 'view')
 const canEdit = computed(() => !props.readonly)
 /* 精简 YAML 也能就地编辑：编辑时用独立草稿，避免每次按键都重新生成精简文本 */
@@ -138,13 +134,12 @@ watch(() => props.modelValue, open => {
   if (open) {
     text.value = props.content
     viewMode.value = 'full'
-    full.value = false
     diffOpen.value=false
     editing.value = !props.readonly && props.mode !== 'view'
     checkedText.value=null; error.value=''; compactDraft.value=''; compactBaseline.value=''
   }
 })
-function reset() { importEpoch++; text.value=props.content; viewMode.value='full'; diffOpen.value=false; full.value=false; editing.value=!props.readonly && props.mode !== 'view'; checkedText.value=null; error.value=''; compactDraft.value=''; compactBaseline.value='' }
+function reset() { importEpoch++; text.value=props.content; viewMode.value='full'; diffOpen.value=false; editing.value=!props.readonly && props.mode !== 'view'; checkedText.value=null; error.value=''; compactDraft.value=''; compactBaseline.value='' }
 function toggleDiff() { if (editingCompact.value) return; viewMode.value='full'; diffOpen.value=!diffOpen.value }
 function updateText(event) {
   if (!editing.value || importing.value) return
@@ -213,11 +208,6 @@ async function onFileChange(e) {
   }
 }
 
-async function copyAll() {
-  try { await copyText(workingText.value); ElMessage.success('已复制到剪贴板') }
-  catch (error) { ElMessage.error(error.message) }
-}
-
 function downloadFile() {
   const safe = String(props.title || 'resource').replace(/[^\w\u4e00-\u9fa5.-]+/g, '_').slice(0, 80)
   const blob = new Blob([workingText.value], { type: 'text/yaml;charset=utf-8' })
@@ -235,8 +225,8 @@ function downloadFile() {
   display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;
 }
 .yaml-bar .el-button + .el-button { margin-left: 0; }
-/* 弹窗主体改为弹性列：编辑器占满剩余高度，底部的错误提示与页脚始终完整可见（原先固定高度会把提示裁成一条） */
-:global(.yaml-resource-dialog) { display: flex; flex-direction: column; max-height: 90dvh; }
+/* 打开即是大窗口（参考 Kuboard）：默认占满大部分视口，编辑器自动撑满；错误提示与页脚始终可见 */
+:global(.yaml-resource-dialog) { display: flex; flex-direction: column; max-width: 1680px; height: 88dvh; }
 :global(.yaml-resource-dialog .el-dialog__body) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 :global(.yaml-resource-dialog .el-dialog__header), :global(.yaml-resource-dialog .el-dialog__footer) { flex-shrink: 0; }
 .yaml-target, .yaml-bar, .el-alert { flex: 0 0 auto; }
