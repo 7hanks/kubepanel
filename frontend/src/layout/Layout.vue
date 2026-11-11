@@ -9,44 +9,30 @@
       <div class="kp-side-search">
         <el-input v-model="menuFilter" placeholder="搜索菜单 / 资源类型" size="small" clearable :prefix-icon="Search" />
       </div>
-      <div class="kp-side-scroll">
-        <template v-for="g in groups" :key="g.title">
-          <button v-if="g.advanced && !menuFilter" type="button" class="kp-group-title advanced-toggle" :aria-expanded="showAdvanced" @click="showAdvanced=!showAdvanced">{{g.title}} {{showAdvanced ? '−':'+'}}</button><div v-else class="kp-group-title">{{ g.title }}</div>
-          <router-link v-for="it in (g.advanced && !showAdvanced && !menuFilter ? [] : g.items)" :key="it.path"
-            class="kp-nav-item" :class="{ active: isActive(it.path) }"
-            :title="it.kind ? it.label + ' (' + it.kind + ')' : it.label" 
-           :to="cpath(it.path)">
-            <el-icon><component :is="it.icon || 'Document'" /></el-icon>
-            <span>{{ it.label }}</span>
-          </router-link>
-        </template>
-
-        <div class="kp-group-title">平台</div>
-        <router-link v-if="can('audit:list')" class="kp-nav-item" to="/audit">操作审计</router-link>
-        <router-link v-if="canReadCluster" class="kp-nav-item" :title="collapsed ? '集群列表' : ''"  :to="'/clusters'">
-          <el-icon><OfficeBuilding /></el-icon><span>集群列表</span>
-        </router-link>
-        <button type="button" v-if="canReadUsers" class="kp-nav-item" :class="{ open: showUserNav }" :title="collapsed ? '用户管理' : ''"  @click="showUserNav = !showUserNav">
-          <el-icon><User /></el-icon><span>用户管理</span>
-          <el-icon class="kp-nav-caret"><ArrowDown /></el-icon>
-        </button>
-        <template v-if="canReadUsers && showUserNav">
-          <router-link class="kp-nav-item kp-subnav-item" :title="collapsed ? '用户' : ''"  :to="'/users'">
-            <span>用户</span>
-          </router-link>
-          <router-link class="kp-nav-item kp-subnav-item" :title="collapsed ? '角色' : ''"  :to="'/roles'">
-            <span>角色</span>
-          </router-link>
-        </template>
-        <router-link v-if="canReadRegistry" class="kp-nav-item" :title="collapsed ? '镜像仓库' : ''"  :to="'/registries'">
-          <el-icon><Box /></el-icon><span>镜像仓库</span>
-        </router-link>
-        <router-link v-if="canReadMonitor" class="kp-nav-item" :title="collapsed ? '监控' : ''"  :to="'/monitor'">
-          <el-icon><TrendCharts /></el-icon><span>监控</span>
-        </router-link>
-      </div>
+      <nav class="kp-side-scroll" aria-label="控制台导航">
+        <section v-for="g in groups" :key="g.id" class="kp-nav-group">
+          <button v-if="g.id !== 'overview'" type="button" class="kp-group-title kp-group-toggle" :class="{ 'is-open': g.open }"
+            :aria-label="g.title" :aria-expanded="g.open" :aria-controls="'nav-' + g.id"
+            :title="g.title" :disabled="!!menuFilter.trim()" @click="toggleGroup(g)">
+            <el-icon class="kp-group-icon"><component :is="g.icon || 'FolderOpened'" /></el-icon>
+            <span class="kp-group-label">{{ g.title }}</span>
+            <el-icon class="kp-group-chevron"><ArrowDown /></el-icon>
+          </button>
+          <div v-show="g.id === 'overview' || g.open" :id="'nav-' + g.id">
+            <router-link v-for="it in g.items" :key="it.path"
+              class="kp-nav-item" :class="{ active: isActive(it.path, it.platform) }"
+              :aria-label="it.label" :aria-current="isActive(it.path, it.platform) ? 'page' : undefined"
+              :title="[it.label, it.kind, it.aliases].filter(Boolean).join(' · ')"
+              :to="it.platform ? it.path : cpath(it.path)">
+              <el-icon><component :is="it.icon || 'Document'" /></el-icon>
+              <span>{{ it.label }}</span>
+            </router-link>
+          </div>
+        </section>
+        <p v-if="!groups.length" class="kp-menu-empty" role="status">未找到匹配菜单</p>
+      </nav>
       <div class="kp-side-footer">
-        <button type="button" class="kp-nav-item" :title="collapsed ? '展开菜单' : ''"  @click="toggleCollapse">
+        <button type="button" class="kp-nav-item" :title="collapsed ? '展开菜单' : '收起菜单'" :aria-label="collapsed ? '展开菜单' : '收起菜单'" @click="toggleCollapse">
           <el-icon><component :is="collapsed ? 'Expand' : 'Fold'" /></el-icon>
           <span>收起菜单</span>
         </button>
@@ -127,7 +113,7 @@
           </template>
         </el-alert>
         <router-view v-if="store.ready" v-slot="{ Component }">
-          <component :is="Component" :key="route.fullPath" />
+          <component :is="Component" :key="route.path" />
         </router-view>
       </main>
     </div>
@@ -141,10 +127,11 @@ import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, OfficeBuilding, Refresh, Timer, QuestionFilled, UserFilled, ArrowDown, User, Box, TrendCharts,
+  Search, OfficeBuilding, Refresh, Timer, QuestionFilled, UserFilled, ArrowDown,
 } from '@element-plus/icons-vue'
 import { store } from '../store'
-import { navGroups } from '../config/resources'
+import { navGroups, metaFromRoute } from '../config/resources'
+import { parseNavigationExpansion, visibleNavigationGroups, revealActiveNavigationGroup } from '../utils/navigation-groups'
 import { confirmContextChange } from '../utils/navigation'
 import { cpath, CLUSTERS_PATH } from '../utils/path'
 import api from '../api'
@@ -159,10 +146,10 @@ const route = useRoute()
 const router = useRouter()
 const reloading = ref(false)
 const menuFilter = ref('')
-const showAdvanced=ref(false)
+const groupExpansionKey = 'kp_nav_groups_v1'
+const groupExpansion = ref(parseNavigationExpansion(localStorage.getItem(groupExpansionKey)))
 const username = ref(localStorage.getItem('kp_user') || 'admin')
 const roleLabel = ref(roleName())
-const showUserNav = ref(true)
 const tick = ref(0)
 const collapsed = ref(localStorage.getItem('kp_side_collapsed') === '1')
 const autoRefresh = ref(Number(localStorage.getItem('kp_auto_refresh') || 0))
@@ -178,28 +165,42 @@ const allow = computed(() => {
     monitor: permitMonitor(),
   }
 })
-const canReadCluster = computed(() => allow.value.cluster)
-const canReadUsers = computed(() => allow.value.users)
-const canReadRegistry = computed(() => allow.value.registry)
-const canReadMonitor = computed(() => allow.value.monitor)
 
 const autoLabel = computed(() => autoRefresh.value ? `${autoRefresh.value}s 刷新` : '自动刷新')
 
-const groups = computed(() => {
-  const base = navGroups.map(g => ({ ...g,items:g.items.filter(it=>!it.plural || canResource(it,'list',store.namespace)) })).filter(g=>g.items.length)
-  const f = menuFilter.value.trim().toLowerCase()
-  if (!f) return base
-  return base
-    .map(g => ({ ...g, items: g.items.filter(i =>
-      i.label.toLowerCase().includes(f) || (i.kind || '').toLowerCase().includes(f) || (i.plural || '').toLowerCase().includes(f)) }))
-    .filter(g => g.items.length)
+const baseGroups = computed(() => {
+  const platform = [
+    { label: '操作审计', icon: 'Document', path: '/audit', allowed: can('audit:list') },
+    { label: '集群列表', icon: 'OfficeBuilding', path: '/clusters', allowed: allow.value.cluster },
+    { label: '用户管理', icon: 'User', path: '/users', allowed: allow.value.users },
+    { label: '平台角色', icon: 'UserFilled', path: '/roles', allowed: allow.value.users },
+    { label: '镜像仓库', icon: 'Box', path: '/registries', allowed: allow.value.registry },
+    { label: '监控', icon: 'TrendCharts', path: '/monitor', allowed: allow.value.monitor },
+  ].filter(item => item.allowed).map(item => ({ ...item, platform: true }))
+  return [...navGroups, { id: 'platform', title: '平台', icon: 'OfficeBuilding', items: platform }]
 })
+const permittedGroups = computed(() => visibleNavigationGroups(baseGroups.value, '', groupExpansion.value,
+  item => !item.plural || canResource(item, 'list', store.namespace)))
+const groups = computed(() => visibleNavigationGroups(permittedGroups.value, menuFilter.value, groupExpansion.value, () => true))
+
+function saveGroupExpansion(value) {
+  groupExpansion.value = value
+  localStorage.setItem(groupExpansionKey, JSON.stringify(value))
+}
+function toggleGroup(group) {
+  if (menuFilter.value.trim()) return
+  saveGroupExpansion({ ...groupExpansion.value, [group.id]: !group.open })
+}
+watch([() => route.path, baseGroups], () => {
+  const next = revealActiveNavigationGroup(permittedGroups.value, groupExpansion.value,
+    item => isActive(item.path, item.platform))
+  if (next !== groupExpansion.value) saveGroupExpansion(next)
+}, { immediate: true })
 
 const title = computed(() => {
   if (route.meta.title) return route.meta.title
   if (route.name === 'resource-list' || route.name === 'resource-detail') {
-    const p = route.params.plural
-    return String(p).charAt(0).toUpperCase() + String(p).slice(1)
+    return metaFromRoute(route.params, store.discovery).label
   }
   if (route.name === 'pod-logs') return 'Pod 日志'
   if (route.name === 'pod-terminal') return 'Web 终端'
@@ -223,8 +224,8 @@ function applyAutoRefresh() {
   }
 }
 
-function isActive(path) {
-  const full = cpath(path)
+function isActive(path, platform = false) {
+  const full = platform ? path : cpath(path, route.params.clusterId)
   if (path === '/overview') return route.path === full
   return route.path === full || route.path.startsWith(full + '/')
 }
@@ -295,8 +296,35 @@ watch(() => route.params.clusterId, id => {
   padding: 5px 8px; border-radius: var(--kp-r-sm); transition: background .14s;
 }
 .kp-header-action:hover { background: var(--kp-side-hover); color: var(--kp-text); }
-.kp-nav-caret { margin-left: auto; font-size: 12px !important; transition: transform .16s; }
-.kp-nav-item.open .kp-nav-caret { transform: rotate(180deg); }
-.kp-subnav-item { padding-left: 36px; font-size: 12.5px; }
-.kp-side.is-collapsed .kp-nav-caret { display: none; }
+.kp-group-toggle {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px;
+  margin: 4px 0 2px; padding: 8px 10px; border: 0; border-radius: var(--kp-r-sm);
+  background: transparent; text-align: left; color: var(--kp-text-2);
+  font-size: 12px; line-height: 18px; letter-spacing: 0; text-transform: none; cursor: pointer;
+}
+.kp-group-toggle:hover { background: var(--kp-side-hover); color: var(--kp-text); }
+.kp-group-toggle:disabled { cursor: default; }
+.kp-group-label { flex: 1; }
+.kp-group-toggle .kp-group-icon { display: none; }
+.kp-group-chevron { margin-left: auto; font-size: 11px; transform: rotate(-90deg); transition: transform .16s; }
+.kp-group-toggle.is-open .kp-group-chevron { transform: rotate(0deg); }
+.kp-menu-empty { margin: 12px 8px; font-size: 12px; color: var(--kp-text-2); }
+.kp-side.is-collapsed .kp-group-toggle {
+  display: flex; justify-content: center; height: 34px; min-height: 34px; margin: 5px 0 2px;
+  padding: 8px 0; background: transparent; font-size: 14px;
+}
+.kp-side.is-collapsed .kp-group-toggle .kp-group-icon { display: inline-flex; font-size: 17px; }
+.kp-side.is-collapsed .kp-group-toggle .kp-group-label,
+.kp-side.is-collapsed .kp-group-toggle .kp-group-chevron { display: none; }
+.kp-side.is-collapsed .kp-group-toggle.is-open { color: var(--kp-brand); background: var(--kp-side-active); }
+@media (max-width: 900px) {
+  .kp-layout > .kp-side .kp-group-toggle {
+    display: flex; justify-content: center; height: 34px; min-height: 34px;
+    margin: 5px 0 2px; padding: 8px 0; background: transparent; font-size: 14px;
+  }
+  .kp-layout > .kp-side .kp-group-toggle .kp-group-icon { display: inline-flex; font-size: 17px; }
+  .kp-layout > .kp-side .kp-group-toggle .kp-group-label,
+  .kp-layout > .kp-side .kp-group-toggle .kp-group-chevron { display: none; }
+  .kp-layout > .kp-side .kp-group-toggle.is-open { color: var(--kp-brand); background: var(--kp-side-active); }
+}
 </style>

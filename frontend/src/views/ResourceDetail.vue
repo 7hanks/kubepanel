@@ -86,12 +86,13 @@
       <el-tab-pane label="YAML" name="yaml">
         <div class="resource-yaml-toolbar">
           <YamlViewToggle v-model="yamlViewMode" />
+          <el-tooltip :content="yamlViewMode === 'compact' ? yamlDisplay.notice : '完整 YAML 保留全部字段；编辑后先预检再提交。'" placement="bottom" :show-after="250">
+            <el-button size="small" text circle :icon="QuestionFilled" aria-label="YAML 说明" />
+          </el-tooltip>
           <el-button v-if="canUpdateRes" type="primary" size="small" @click="editYaml">编辑 YAML</el-button>
           <el-button size="small" :disabled="!!yamlDisplay.error" @click="copyYaml">复制</el-button>
           <el-button size="small" :disabled="!!yamlDisplay.error" @click="downloadYaml">下载</el-button>
-          <span class="kp-muted" style="align-self:center;font-size:12px">只读预览；编辑需经过预检与差异核对</span>
         </div>
-        <p v-if="yamlViewMode === 'compact'" class="kp-muted" style="font-size:12px;line-height:1.7">隐藏运行信息、系统注入项和常见默认值；复制和下载使用精简内容。{{ yamlDisplay.notice }}</p>
         <el-alert v-if="yamlDisplay.error" :title="yamlDisplay.error" type="warning" :closable="false" />
         <textarea :value="yamlDisplay.text" aria-label="资源详情 YAML" class="kp-yaml" style="min-height:520px" spellcheck="false" :readonly="true" />
       </el-tab-pane>
@@ -158,7 +159,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft } from '@element-plus/icons-vue'
+import { ArrowLeft, QuestionFilled } from '@element-plus/icons-vue'
 import * as yaml from 'js-yaml'
 import api from '../api'
 import { metaFromRoute, statusTag, CORE } from '../config/resources'

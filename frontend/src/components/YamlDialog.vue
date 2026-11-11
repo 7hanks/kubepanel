@@ -5,9 +5,11 @@
     destroy-on-close :before-close="beforeClose" @update:model-value="v => emit('update:modelValue',v)" @closed="reset"
   >
     <p v-if="target" class="kp-mono">{{ target }}</p>
-    <el-alert v-if="shownTip" :title="shownTip" type="info" :closable="false" style="margin-bottom:12px" />
     <div class="yaml-bar">
       <YamlViewToggle v-model="viewMode" :disabled="saving || checking" />
+      <el-tooltip :content="helpText" placement="bottom" :show-after="250">
+        <el-button size="small" text circle :icon="QuestionFilled" aria-label="YAML 说明" />
+      </el-tooltip>
       <!-- 查看态：不提供导入/保存，必须先点「编辑」 -->
       <el-button v-if="editing && !compact" size="small" :icon="Upload" @click="pickFile">导入 .yaml 文件</el-button>
       <el-button size="small" :icon="CopyDocument" :disabled="!!preview.error" @click="copyAll">复制</el-button>
@@ -15,12 +17,10 @@
       <el-button size="small" :icon="full ? Aim : FullScreen" @click="full = !full">{{ full ? '还原窗口' : '全屏' }}</el-button>
       <input ref="fileInput" type="file" accept=".yaml,.yml,.txt" style="display:none" @change="onFileChange" />
       <span style="flex:1" />
-      <el-tag disable-transitions v-if="compact" type="info" size="small" effect="plain">精简只读预览</el-tag>
-      <el-tag disable-transitions v-else-if="!editing" type="info" size="small" effect="plain">{{ canEdit ? '只读预览 · 双击内容可编辑' : '只读预览' }}</el-tag>
-      <span v-else class="kp-muted" style="font-size:12px">编辑中 · 先预检与核对差异，再提交</span>
+      <el-tag disable-transitions v-if="compact || !editing" type="info" size="small" effect="plain">只读</el-tag>
+      <el-tag disable-transitions v-else type="warning" size="small" effect="plain">编辑中</el-tag>
     </div>
     <slot name="toolbar" />
-    <p v-if="compact" class="kp-muted yaml-preview-hint">隐藏运行信息、系统注入项和常见默认值；复制和下载使用精简内容。{{ preview.notice }}{{ editing ? '未保存的修改已保留，编辑请切回完整 YAML。' : '' }}</p>
     <el-alert v-if="preview.error" :title="preview.error" type="warning" :closable="false" style="margin-bottom:10px" />
     <textarea
       :value="preview.text" class="kp-yaml" spellcheck="false" aria-label="资源 YAML" :readonly="compact || !editing"
@@ -57,7 +57,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { registerUnsavedGuard } from '../utils/navigation'
-import { Upload, Download, FullScreen, Aim, EditPen, CopyDocument } from '@element-plus/icons-vue'
+import { Upload, Download, FullScreen, Aim, EditPen, CopyDocument, QuestionFilled } from '@element-plus/icons-vue'
 import YamlViewToggle from './YamlViewToggle.vue'
 import { yamlPreview } from '../utils/yaml-preview'
 import { copyText } from '../utils/clipboard'
@@ -100,12 +100,12 @@ const dialogTitle = computed(() => {
   return props.title.replace(/^编辑\s*/, '查看 ')
 })
 /** 从只读切到编辑后，顶部提示要跟着换，否则还写着「点右下角编辑」 */
-const shownTip = computed(() => {
-  if (compact.value) return ''
+const helpText = computed(() => {
+  if (compact.value) return `精简版仅供查看和导出，编辑请切回完整 YAML。${preview.value.notice}`
   if (editing.value && props.mode === 'view') {
     return '编辑中：保存等价于 kubectl replace，会整体更新该资源；字段非法时 API Server 会拒绝并提示原因。'
   }
-  return props.tip
+  return props.tip || '完整 YAML 保留全部字段，编辑后先预检再提交。'
 })
 const canGoBackToView = computed(() => props.mode === 'view')
 
@@ -184,7 +184,6 @@ function downloadFile() {
   display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;
 }
 .yaml-bar .el-button + .el-button { margin-left: 0; }
-.yaml-preview-hint { margin: 0 0 10px; font-size: 12px; line-height: 1.7; }
 :global(.yaml-resource-dialog) { display: flex; flex-direction: column; max-height: 90dvh; }
 :global(.yaml-resource-dialog .el-dialog__body) { min-height: 0; overflow: auto; }
 :global(.yaml-resource-dialog .el-dialog__header), :global(.yaml-resource-dialog .el-dialog__footer) { flex-shrink: 0; }

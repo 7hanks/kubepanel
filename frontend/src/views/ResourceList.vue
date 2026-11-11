@@ -1,26 +1,44 @@
 <template>
   <div>
-    <div class="kp-toolbar">
-      <el-input v-model="keyword" placeholder="按名称搜索" clearable style="width:220px" :prefix-icon="Search" />
-      <el-input v-model="labelSelector" placeholder="标签筛选，如 app=nginx" clearable @clear="load" style="width:230px" @keyup.enter="load">
-        <template #prefix><el-icon><Filter /></el-icon></template>
-      </el-input>
+    <div class="kp-toolbar resource-toolbar">
+      <el-input v-model="keyword" placeholder="按名称搜索" clearable class="resource-search" :prefix-icon="Search" />
+      <el-popover v-model:visible="filterOpen" trigger="click" placement="bottom-start" popper-class="resource-filter-popover" :width="560" :popper-style="{maxWidth:'calc(100vw - 32px)'}" @show="beginFilters">
+        <template #reference><el-button :icon="Filter" :type="activeCount ? 'primary' : 'default'" :plain="!!activeCount" aria-label="筛选">筛选<span v-if="activeCount" class="filter-count">{{ activeCount }}</span></el-button></template>
+        <el-form ref="filterFormRef" aria-label="资源筛选" label-position="top" @submit.prevent="applyFilters">
+          <div class="filter-heading"><strong>资源筛选</strong><el-button text aria-label="关闭筛选" @click="filterOpen=false">关闭</el-button></div>
+          <div class="resource-filter-grid">
+            <el-form-item class="filter-wide" label="标签选择器">
+              <el-input v-model="draft.labels" clearable aria-label="标签选择器" placeholder="app=nginx,env in (prod,qa),!debug" />
+            </el-form-item>
+            <el-form-item v-if="capabilities.state" :label="capabilities.pod ? '运行状态' : '状态'">
+              <el-select v-model="draft.state" :append-to="filterFormRef?.$el || 'body'" :persistent="false" clearable aria-label="按状态筛选" placeholder="全部状态">
+                <el-option v-if="capabilities.pod" label="活跃异常" value="active-abnormal" />
+                <el-option label="全部异常（含历史）" value="abnormal" />
+                <el-option v-for="state in states" :key="state" :label="state" :value="state" />
+              </el-select>
+            </el-form-item>
+            <el-form-item v-if="capabilities.pod" label="就绪状态">
+              <el-select v-model="draft.ready" :append-to="filterFormRef?.$el || 'body'" :persistent="false" clearable aria-label="按就绪状态筛选" placeholder="全部就绪状态"><el-option label="Ready" value="ready"/><el-option label="未就绪" value="not-ready"/></el-select>
+            </el-form-item>
+            <el-form-item v-if="capabilities.reason" label="原因"><el-input v-model="draft.reason" clearable placeholder="原因包含" aria-label="按原因筛选" /></el-form-item>
+            <el-form-item v-if="capabilities.node" label="节点">
+              <el-select v-model="draft.node" :append-to="filterFormRef?.$el || 'body'" :persistent="false" filterable allow-create default-first-option clearable aria-label="按节点筛选" placeholder="选择或输入完整节点名"><el-option v-for="node in nodes" :key="node" :label="node" :value="node" /></el-select>
+            </el-form-item>
+            <el-form-item v-if="capabilities.owner" label="所属控制器"><el-input v-model="draft.owner" clearable placeholder="如 ReplicaSet/nginx" aria-label="按所属控制器筛选" /></el-form-item>
+            <el-form-item v-if="capabilities.pod" label="最少重启次数"><el-input-number v-model="draft.minRestarts" :min="0" :precision="0" aria-label="最少重启次数" /></el-form-item>
+            <el-form-item v-if="capabilities.image" label="镜像"><el-input v-model="draft.image" clearable placeholder="镜像名称或版本包含" aria-label="按镜像筛选" /></el-form-item>
+            <el-form-item v-if="capabilities.pod" label="Pod 阶段"><el-select v-model="draft.phase" :append-to="filterFormRef?.$el || 'body'" :persistent="false" clearable aria-label="按阶段筛选" placeholder="全部阶段"><el-option v-for="phase in ['Pending','Running','Succeeded','Failed','Unknown']" :key="phase" :label="phase" :value="phase" /></el-select></el-form-item>
+          </div>
+          <div class="filter-footer"><el-button @click="resetFilters">重置</el-button><el-button type="primary" native-type="submit">应用筛选</el-button></div>
+        </el-form>
+      </el-popover>
       <el-button @click="load" :loading="loading"><el-icon><Refresh /></el-icon><span style="margin-left:5px">刷新</span></el-button>
       <span class="spacer" />
-      <el-tag disable-transitions type="info" size="small" effect="plain">共 {{ filtered.length }} 项</el-tag>
+      <el-tooltip :content="nextContinue ? `已加载 ${items.length} 项；当前筛选仅覆盖已加载资源，可继续加载。标签选择器由 Kubernetes 服务端执行。` : `已加载 ${items.length} 项；标签选择器由 Kubernetes 服务端执行，其他条件筛选已加载资源。`"><span class="resource-count">{{ filtered.length }} 项<span v-if="nextContinue"> · 已加载 {{ items.length }}</span></span></el-tooltip>
       <el-button v-if="canCreateRes" type="primary" :icon="Plus" @click="openCreate">新建</el-button>
       <el-button v-if="canDeleteRes" type="danger" plain :disabled="!selected.length" @click="batchDelete">删除 ({{ selected.length }})</el-button>
     </div>
 
-    <div class="kp-toolbar" aria-label="资源筛选">
-      <el-select v-model="filters.state" clearable aria-label="按状态筛选" placeholder="状态" style="width:160px"><el-option label="活跃异常" value="active-abnormal"/><el-option label="全部异常（含历史）" value="abnormal" /><el-option v-for="state in states" :key="state" :label="state" :value="state" /></el-select>
-      <el-input v-model="filters.reason" clearable placeholder="原因" style="width:160px" aria-label="按原因筛选" />
-      <el-input v-model="filters.node" clearable placeholder="节点" style="width:160px" aria-label="按节点筛选" />
-      <el-input v-model="filters.owner" clearable placeholder="Owner" style="width:160px" aria-label="按所属控制器筛选" />
-      <el-input-number v-if="meta.kind === 'Pod'" v-model="filters.minRestarts" :min="0" aria-label="最少重启次数" />
-      <el-tag v-if="filters.phase" closable @close="filters.phase=''">阶段 {{filters.phase}}</el-tag>
-      <span v-if="nextContinue" class="kp-muted">筛选仅覆盖已加载资源</span>
-    </div>
     <el-alert v-if="loadError" type="error" :closable="false" show-icon style="margin-bottom:12px"><template #title>{{ loadError }}</template><el-button @click="load">重试</el-button></el-alert>
     <div class="kp-card" style="padding:0">
       <el-table
@@ -97,7 +115,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, shallowRef, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Filter, Plus, Refresh, MoreFilled } from '@element-plus/icons-vue'
@@ -112,6 +130,7 @@ import { can, canResource, canCreate, canUpdate, canDelete } from '../utils/perm
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
 import { filterRows, sortRows, createRequestGate, targetDescription } from '../utils/resource'
+import { normalizeFilters, filterCapabilities, activeFilterCount, filterQuery, filterQueryKeys } from '../utils/resource-filters'
 import ResourceActionButton from '../components/ResourceActionButton.vue'
 
 const route = useRoute()
@@ -140,12 +159,19 @@ const loadError = ref('')
 const nextContinue = ref('')
 const gate = createRequestGate()
 let controller
-const filters = reactive({state:route.query.state || '',phase:route.query.phase || '',reason:'',node:'',owner:'',minRestarts:0})
+const filters = reactive(normalizeFilters(meta.value.kind, route.query))
+const draft = reactive({...filters})
+const filterOpen = ref(false)
+// Keep nested dropdowns inside the popover but outside its scrolling grid.
+// Tooltip Teleports mount before the form ref exists, so initially use body.
+const filterFormRef = ref(null)
+const capabilities = computed(() => filterCapabilities(meta.value.kind))
+const activeCount = computed(() => activeFilterCount(filters))
 const sort = ref({prop:'name',order:'ascending'})
-const states = computed(()=>[...new Set(rows.value.map(r=>r.status))])
-const yamlTarget = computed(()=>targetDescription(store.currentCluster?.name || store.currentClusterId, editingRow?.namespace || nsParam(), meta.value.kind, editingRow?.name))
-const keyword = ref('')
-const labelSelector = ref('')
+const states = computed(()=>[...new Set([...(capabilities.value.pod ? ['Pending','Running','NotReady','CrashLoopBackOff','ImagePullBackOff','ErrImagePull','Succeeded','Failed','Evicted','Terminating','Unknown'] : []), ...rows.value.map(r=>r.status), filters.state, draft.state].filter(state => state && !['abnormal','active-abnormal'].includes(state)))])
+const nodes = computed(()=>[...new Set(rows.value.map(r=>r.node).filter(node=>node && node!=='-'))].sort())
+const yamlTarget = computed(()=>targetDescription(store.currentCluster?.name || store.currentClusterId, editingRow.value ? editingRow.value._raw?.metadata?.namespace : nsParam(), meta.value.kind, editingRow.value?.name))
+const keyword = ref(filters.keyword)
 const selected = ref([])
 const page = ref(1)
 const pageSize = ref(20)
@@ -159,7 +185,7 @@ const yamlTitle = ref('')
 const yamlTip = ref('')
 const yamlMode = ref('create')
 const yamlDialogMode = ref('edit')
-let editingRow = null
+const editingRow = shallowRef(null)
 
 const rows = computed(() => items.value.map(i => normalizeRow(meta.value.kind, i)))
 const filtered = computed(() => sortRows(filterRows(rows.value, {...filters,keyword:keyword.value}),sort.value.prop,sort.value.order))
@@ -176,13 +202,39 @@ function nsParam() {
 }
 
 function clearSelection() { selected.value=[]; tableRef.value?.clearSelection() }
+function beginFilters() { Object.assign(draft, filters) }
+function syncQuery() {
+  const query={...route.query}
+  for(const key of filterQueryKeys) delete query[key]
+  Object.assign(query, filterQuery({...filters,keyword:keyword.value}))
+  if(JSON.stringify(query)!==JSON.stringify(route.query)) router.replace({query})
+}
+function setFilters(next) {
+  const labelsChanged=next.labels!==filters.labels
+  Object.assign(filters,next)
+  keyword.value=next.keyword
+  page.value=1; clearSelection()
+  if(labelsChanged) load()
+}
+function applyFilters() {
+  setFilters(normalizeFilters(meta.value.kind,{...draft,keyword:keyword.value}))
+  filterOpen.value=false
+  syncQuery()
+}
+function resetFilters() {
+  const empty=normalizeFilters(meta.value.kind,{keyword:keyword.value})
+  Object.assign(draft,empty)
+  setFilters(empty)
+  filterOpen.value=false
+  syncQuery()
+}
 async function fetchList(append=false) {
   controller?.abort(); controller=new AbortController()
   const request=gate.next()
   const m={...meta.value}
   const params={limit:200,clusterId:store.currentClusterId}
   const ns=nsParam(); if (ns) params.namespace=ns
-  if (labelSelector.value.trim()) params.labelSelector=labelSelector.value.trim()
+  if (filters.labels) params.labelSelector=filters.labels
   if (append) params.continue=nextContinue.value
   loading.value=true; loadError.value=''; clearSelection(); if(!append)page.value=1
   if (!append) { items.value=[]; nextContinue.value='' }
@@ -209,7 +261,7 @@ function goTerminal(row) { router.push(cpath(`/pods/${encodeURIComponent(row.nam
 function openCreate() {
   yamlMode.value = 'create'
   yamlDialogMode.value = 'edit'
-  editingRow = null
+  editingRow.value = null
   yamlTitle.value = `新建 ${meta.value.kind}`
   yamlTip.value = '填写完整 YAML 后提交，使用 POST 创建；同名资源已存在时会报冲突。metadata.name 必填。'
   yamlText.value = yamlTemplate(meta.value, store.namespace)
@@ -230,7 +282,7 @@ async function openYaml(row, mode) {
     const m = meta.value
     latest = await api.get(m.group, m.version, m.plural, nsPath(row.namespace), row.name)
   } catch (e) { ElMessage.error('无法读取最新版本，请重试：' + e.message); return }
-  editingRow = { ...row, _raw: latest }
+  editingRow.value = { ...row, _raw: latest }
   yamlText.value = yaml.dump(latest, { noRefs: true, lineWidth: 120 })
   yamlVisible.value = true
 }
@@ -242,8 +294,8 @@ async function preflightYaml(text) {
   if (!obj || !obj.metadata?.name) throw new Error('metadata.name 必填')
   if (obj.kind!==m.kind || obj.apiVersion!==(m.group ? `${m.group}/${m.version}` : m.version)) throw new Error('YAML 的 kind/apiVersion 与当前目标不一致')
   if (yamlMode.value==='create') return api.create(m.group,m.version,m.plural,obj.metadata.namespace || nsParam(),obj,{dryRun:true})
-  if (obj.metadata.name!==editingRow.name || (obj.metadata.namespace || '_all')!==nsPath(editingRow.namespace)) throw new Error('不能在编辑中更改资源名称或命名空间')
-  return api.update(m.group,m.version,m.plural,nsPath(editingRow.namespace),editingRow.name,obj,{dryRun:true})
+  if (obj.metadata.name!==editingRow.value.name || (obj.metadata.namespace || '_all')!==nsPath(editingRow.value.namespace)) throw new Error('不能在编辑中更改资源名称或命名空间')
+  return api.update(m.group,m.version,m.plural,nsPath(editingRow.value.namespace),editingRow.value.name,obj,{dryRun:true})
 }
 async function saveYaml(text) {
   saving.value = true
@@ -256,7 +308,7 @@ async function saveYaml(text) {
       ElMessage.success('已提交创建')
     } else {
       const m = meta.value
-      await api.update(m.group, m.version, m.plural, editingRow.namespace === '-' ? '_all' : editingRow.namespace, editingRow.name, obj)
+      await api.update(m.group, m.version, m.plural, editingRow.value.namespace === '-' ? '_all' : editingRow.value.namespace, editingRow.value.name, obj)
       ElMessage.success('保存成功')
     }
     yamlVisible.value = false
@@ -355,13 +407,46 @@ async function batchDelete() {
   } finally { actionBusy.value=false }
 }
 
-watch(labelSelector,()=>{nextContinue.value='';page.value=1;clearSelection()})
-watch([keyword, filters, pageSize, sort], () => { page.value=1; clearSelection() }, {deep:true})
-watch(() => store.namespace, () => { page.value = 1; clearSelection(); load() })
-watch(() => route.fullPath, () => { keyword.value = ''; labelSelector.value = ''; page.value = 1; clearSelection(); load() })
+let queryTimer
+let listPath=route.path
+watch(keyword, () => {
+  page.value=1; clearSelection()
+  clearTimeout(queryTimer)
+  queryTimer=setTimeout(syncQuery,250)
+})
+watch([filters, pageSize, sort], () => { page.value=1; clearSelection() }, {deep:true})
+watch(() => route.query, () => {
+  if(route.path!==listPath) return
+  const next=normalizeFilters(meta.value.kind,route.query)
+  if(JSON.stringify(next)!==JSON.stringify({...filters,keyword:keyword.value})) setFilters(next)
+})
+watch([() => route.path, () => store.currentClusterId, () => store.namespace], () => {
+  listPath=route.path
+  clearTimeout(queryTimer)
+  filterOpen.value=false
+  Object.assign(filters,normalizeFilters(meta.value.kind,route.query))
+  keyword.value=filters.keyword
+  Object.assign(draft,filters)
+  page.value=1; clearSelection(); load()
+})
 onMounted(() => {
   load()
   window.addEventListener('kp:refresh', load)
 })
-onUnmounted(() => { removeContextGuard(); gate.invalidate(); controller?.abort(); window.removeEventListener('kp:refresh', load) })
+onUnmounted(() => { clearTimeout(queryTimer); removeContextGuard(); gate.invalidate(); controller?.abort(); window.removeEventListener('kp:refresh', load) })
 </script>
+
+<style scoped>
+.resource-toolbar { flex-wrap:nowrap; }
+.resource-search { width:240px; min-width:130px; flex-shrink:1; }
+.resource-count { color:var(--el-text-color-secondary); font-size:12px; white-space:nowrap; cursor:help; }
+.filter-count { margin-left:6px; font-size:12px; min-width:16px; }
+.filter-heading,.filter-footer { display:flex; align-items:center; justify-content:space-between; }
+.filter-heading { margin-bottom:12px; }
+.filter-footer { justify-content:flex-end; gap:8px; border-top:1px solid var(--el-border-color-lighter); padding-top:14px; }
+.filter-footer .el-button + .el-button { margin-left:0; }
+.resource-filter-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:0 16px; max-height:min(480px,max(120px,calc(100dvh - 260px))); overflow-y:auto; overscroll-behavior:contain; padding-right:4px; }
+.resource-filter-grid .filter-wide { grid-column:1/-1; }
+.resource-filter-grid :deep(.el-select),.resource-filter-grid :deep(.el-input-number) { width:100%; }
+@media (max-width:700px) { .resource-toolbar { flex-wrap:wrap; } .resource-search { flex:1; } .resource-filter-grid { grid-template-columns:minmax(0,1fr); } }
+</style>

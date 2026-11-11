@@ -23,11 +23,22 @@ export function relatedPods(resource, pods, intermediates = []) {
   return candidates.filter(p => (p.metadata?.ownerReferences || []).some(o=>owners.has(o.uid) && o.controller !== false))
 }
 export function isAbnormal(status='') {
-  return !['Running','Ready','Active','Bound','Succeeded','Completed','ScaledToZero','Suspended','Available','ClusterIP','NodePort','LoadBalancer','ExternalName'].includes(status)
+  return !['Running','Ready','Active','Bound','Succeeded','Completed','ScaledToZero','Suspended','Available','Normal','ClusterIP','NodePort','LoadBalancer','ExternalName'].includes(status)
 }
 export function filterRows(rows, f={}) {
  const includes=(v,q)=>!q || String(v || '').toLowerCase().includes(String(q).toLowerCase())
- return rows.filter(r => includes(`${r.name} ${r.namespace}`,f.keyword) && (!f.phase || r._raw?.status?.phase===f.phase) && (!f.state || (f.state==='abnormal' ? isAbnormal(r.status) : f.state==='active-abnormal' ? isAbnormal(r.status) && !['Failed','Succeeded'].includes(r._raw?.status?.phase) && !r._raw?.metadata?.deletionTimestamp : r.status===f.state)) && includes(r.reason,f.reason) && includes(r.node,f.node) && includes(r.owner,f.owner) && Number(r.restarts || 0)>=Number(f.minRestarts || 0))
+ return rows.filter(r => {
+   const spec=r._raw?.spec || {}
+   const podSpec=spec.template?.spec || spec.jobTemplate?.spec?.template?.spec || spec
+   const images=[r.images, ...(podSpec.containers || []).map(c=>c.image), ...(podSpec.initContainers || []).map(c=>c.image)].filter(Boolean).join(' ')
+   const ready=(r._raw?.status?.conditions || []).some(c=>c.type==='Ready' && c.status==='True')
+   return includes(`${r.name} ${r.namespace}`,f.keyword)
+     && (!f.phase || r._raw?.status?.phase===f.phase)
+     && (!f.state || (f.state==='abnormal' ? isAbnormal(r.status) : f.state==='active-abnormal' ? isAbnormal(r.status) && !['Failed','Succeeded'].includes(r._raw?.status?.phase) && !r._raw?.metadata?.deletionTimestamp : r.status===f.state))
+     && includes(r.reason,f.reason) && (!f.node || r.node===f.node)
+     && includes(r.owner,f.owner) && Number(r.restarts || 0)>=Number(f.minRestarts || 0)
+     && includes(images,f.image) && (!f.ready || (f.ready==='ready' ? ready : !ready))
+ })
 }
 export function sortRows(rows,key,order) {
  if (!key || !order) return rows
