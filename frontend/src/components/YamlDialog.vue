@@ -7,8 +7,8 @@
     <p v-if="target" class="kp-mono">{{ target }}</p>
     <div class="yaml-bar">
       <YamlViewToggle v-model="viewMode" :disabled="saving || checking || importing || diffOpen" />
-      <el-button v-if="canEdit" size="small" :icon="Upload" :disabled="saving || checking" :loading="importing" @click="pickFile">导入 YAML</el-button>
-      <el-button size="small" :icon="Download" :disabled="!!preview.error" @click="downloadFile">导出 YAML</el-button>
+      <el-button v-if="canEdit" size="small" :disabled="saving || checking" :loading="importing" @click="pickFile">导入 YAML</el-button>
+      <el-button size="small" :disabled="!!preview.error" @click="downloadFile">导出 YAML</el-button>
       <el-button size="small" :icon="CopyDocument" :disabled="!!preview.error" @click="copyAll">复制</el-button>
       <el-button size="small" :icon="full ? Aim : FullScreen" @click="full = !full">{{ full ? '还原窗口' : '全屏' }}</el-button>
       <input ref="fileInput" type="file" accept=".yaml,.yml,.txt" style="display:none" @change="onFileChange" />
@@ -54,7 +54,7 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { registerUnsavedGuard } from '../utils/navigation'
-import { Upload, Download, FullScreen, Aim, EditPen, CopyDocument } from '@element-plus/icons-vue'
+import { FullScreen, Aim, EditPen, CopyDocument } from '@element-plus/icons-vue'
 import YamlViewToggle from './YamlViewToggle.vue'
 import YamlDiff from './YamlDiff.vue'
 import { yamlPreview } from '../utils/yaml-preview'

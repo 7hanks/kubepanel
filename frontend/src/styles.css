@@ -261,7 +261,8 @@ a { text-decoration: none; }
 /* ------------------------------------------------------- Element Plus 细化 */
 .el-button { font-weight: 500; border-radius: var(--kp-r-sm); }
 .el-button--small { font-size: 13px; height: 30px; padding: 7px 10px; }
-.el-radio-button--small .el-radio-button__inner { font-size: 13px; min-height: 30px; }
+/* 与 small 按钮同高（30px）时文字要垂直居中：inner 默认 inline-block + 13px 行高会顶到上沿 */
+.el-radio-button--small .el-radio-button__inner { display: inline-flex; align-items: center; justify-content: center; line-height: 1; font-size: 13px; min-height: 30px; }
 .el-input--small .el-input__wrapper, .el-select--small .el-select__wrapper { min-height: 30px; }
 .el-button--primary {
   --el-button-bg-color: var(--kp-brand);
