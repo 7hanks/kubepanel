@@ -15,6 +15,18 @@ export function fmtTime(ts) {
   return new Date(ts).toLocaleString('zh-CN', { hour12: false })
 }
 
+// ---------- 容量格式化 ----------
+const MEM_KI = { Ki: 1, Mi: 1024, Gi: 1024 ** 2, Ti: 1024 ** 3, Pi: 1024 ** 4 }
+/** K8s 内存容量转成易读单位：16385520Ki → 16G；不足 1Gi 时用 M */
+export function formatMemory(value) {
+  const s = String(value ?? '').trim()
+  if (!s) return '-'
+  const m = /^([\d.]+)([KMGTP]i)$/.exec(s)
+  if (!m) return s
+  const gi = (Number(m[1]) * MEM_KI[m[2]]) / 1024 ** 2
+  return gi >= 1 ? `${Math.round(gi)}G` : `${Math.round((gi * 1024))}M`
+}
+
 // ---------- 状态推断 ----------
 export function phaseOf(kind, item) {
   const st = item.status || {}
@@ -135,11 +147,9 @@ export function normalizeRow(kind, item) {
       row.roles = Object.keys(md.labels || {}).filter(k => k.startsWith('node-role.kubernetes.io/')).map(k => k.split('/')[1]).join(',') || '<none>'
       row.version = st.nodeInfo?.kubeletVersion || '-'
       row.osImage = st.nodeInfo?.osImage || '-'
-      row.containerRuntime = st.nodeInfo?.containerRuntimeVersion || '-'
       row.internalIP = (st.addresses || []).find(a => a.type === 'InternalIP')?.address || '-'
       row.cpu = st.capacity?.cpu || '-'
-      row.memory = st.capacity?.memory || '-'
-      row.pods = st.capacity?.pods || '-'
+      row.memory = formatMemory(st.capacity?.memory)
       row.unschedulable = !!sp.unschedulable
       break
     case 'Namespace': row.phase = st.phase || 'Active'; break
@@ -213,10 +223,8 @@ const KIND_COLS = {
     { key: 'internalIP', label: '内网 IP', width: 140 },
     { key: 'version', label: 'Kubelet', width: 115 },
     { key: 'osImage', label: '操作系统', minWidth: 185 },
-    { key: 'containerRuntime', label: '容器运行时', minWidth: 160 },
     { key: 'cpu', label: 'CPU', width: 80 },
     { key: 'memory', label: '内存', width: 100 },
-    { key: 'pods', label: 'Pod 配额', width: 100 },
   ],
   Namespace: [{ key: 'phase', label: '阶段', width: 130, tag: true }],
   PersistentVolumeClaim: [

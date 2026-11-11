@@ -7,86 +7,70 @@
         <p>统一查看集群状态、排查工作负载、编辑资源与常用运维操作。</p>
       </div>
       <div class="login-art" aria-hidden="true">
-        <svg viewBox="0 0 560 440" xmlns="http://www.w3.org/2000/svg">
+        <svg viewBox="0 0 560 460" xmlns="http://www.w3.org/2000/svg">
           <defs>
-            <linearGradient id="lpTopGreen" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#eafff5" /><stop offset="100%" stop-color="#86efac" />
+            <linearGradient id="lwRing" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#93c5fd" /><stop offset="52%" stop-color="#60a5fa" /><stop offset="100%" stop-color="#6366f1" />
             </linearGradient>
-            <linearGradient id="lpTopBlue" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#ffffff" /><stop offset="100%" stop-color="#e3edff" />
+            <linearGradient id="lwBadge" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#3b82f6" /><stop offset="100%" stop-color="#4f46e5" />
             </linearGradient>
-            <linearGradient id="lpLeft" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#dbe8ff" /><stop offset="100%" stop-color="#a9c6ff" />
-            </linearGradient>
-            <linearGradient id="lpRight" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#bcd5ff" /><stop offset="100%" stop-color="#7fabff" />
-            </linearGradient>
-            <linearGradient id="lpLeftDeep" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#c3d9ff" /><stop offset="100%" stop-color="#8fb5ff" />
-            </linearGradient>
-            <linearGradient id="lpRightDeep" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#a9c6ff" /><stop offset="100%" stop-color="#6d9bf5" />
-            </linearGradient>
-            <radialGradient id="lpGlow" cx="50%" cy="46%" r="52%">
-              <stop offset="0%" stop-color="#dbeafe" stop-opacity=".85" />
+            <radialGradient id="lwGlow" cx="50%" cy="48%" r="52%">
+              <stop offset="0%" stop-color="#dbeafe" stop-opacity=".9" />
               <stop offset="100%" stop-color="#dbeafe" stop-opacity="0" />
             </radialGradient>
-            <radialGradient id="lpShadow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stop-color="#1d4ed8" stop-opacity=".16" />
-              <stop offset="100%" stop-color="#1d4ed8" stop-opacity="0" />
+            <radialGradient id="lwNodeGlow" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#bfdbfe" stop-opacity=".9" />
+              <stop offset="100%" stop-color="#bfdbfe" stop-opacity="0" />
             </radialGradient>
           </defs>
 
-          <ellipse cx="280" cy="220" rx="230" ry="200" fill="url(#lpGlow)" />
+          <ellipse cx="280" cy="222" rx="238" ry="204" fill="url(#lwGlow)" />
 
-          <!-- 连接线 -->
-          <g stroke="#9dbdf5" stroke-width="1.4" stroke-dasharray="4 7" opacity=".75" fill="none">
-            <path d="M128 187 L192 240" />
-            <path d="M452 160 L352 240" />
-            <path d="M166 300 L192 288" />
-            <path d="M352 288 L390 286" />
+          <!-- 外圈刻度环 -->
+          <circle cx="280" cy="222" r="186" fill="none" stroke="#dbe7fb" stroke-width="1.2" stroke-dasharray="2 10" />
+
+          <!-- 六边形主体（集群拓扑） -->
+          <path d="M280 76 L406 148 L406 296 L280 368 L154 296 L154 148 Z"
+                fill="rgba(255,255,255,.46)" stroke="url(#lwRing)" stroke-width="2.2" stroke-linejoin="round" />
+
+          <!-- 中心到各节点的辐条 -->
+          <g stroke="#c3d8fa" stroke-width="1.5" opacity=".95">
+            <path d="M280 222 L280 76" /><path d="M280 222 L406 148" /><path d="M280 222 L406 296" />
+            <path d="M280 222 L280 368" /><path d="M280 222 L154 296" /><path d="M280 222 L154 148" />
           </g>
-          <g fill="#7fa8ee">
-            <circle cx="128" cy="187" r="3" /><circle cx="452" cy="160" r="3" />
-            <circle cx="166" cy="300" r="2.6" /><circle cx="390" cy="286" r="2.6" />
+
+          <!-- 节点外光晕 -->
+          <g fill="url(#lwNodeGlow)">
+            <circle cx="280" cy="76" r="30" /><circle cx="406" cy="148" r="30" /><circle cx="406" cy="296" r="30" />
+            <circle cx="280" cy="368" r="30" /><circle cx="154" cy="296" r="30" /><circle cx="154" cy="148" r="30" />
           </g>
 
-          <!-- 阴影 -->
-          <ellipse cx="272" cy="360" rx="96" ry="15" fill="url(#lpShadow)" />
-          <ellipse cx="132" cy="356" rx="44" ry="9" fill="url(#lpShadow)" />
-          <ellipse cx="430" cy="350" rx="46" ry="9" fill="url(#lpShadow)" />
-
-          <!-- 主立方体 -->
+          <!-- 节点 -->
+          <g fill="#fff" stroke="url(#lwRing)" stroke-width="2.4">
+            <circle cx="280" cy="76" r="14" /><circle cx="406" cy="148" r="14" /><circle cx="406" cy="296" r="14" />
+            <circle cx="280" cy="368" r="14" /><circle cx="154" cy="296" r="14" /><circle cx="154" cy="148" r="14" />
+          </g>
           <g>
-            <path d="M192 240 L272 280 L272 352 L192 312 Z" fill="url(#lpLeftDeep)" />
-            <path d="M352 240 L272 280 L272 352 L352 312 Z" fill="url(#lpRightDeep)" />
-            <path d="M272 200 L352 240 L272 280 L192 240 Z" fill="url(#lpTopGreen)" stroke="#a7f3d0" stroke-width="1" />
+            <circle cx="280" cy="76" r="5.5" fill="#34d399" />
+            <circle cx="406" cy="296" r="5.5" fill="#60a5fa" />
+            <circle cx="154" cy="148" r="5.5" fill="#818cf8" />
+            <circle cx="280" cy="368" r="5.5" fill="#38bdf8" opacity=".9" />
           </g>
 
-          <!-- 左小立方体 -->
+          <!-- 中心徽章 -->
           <g>
-            <path d="M98 300 L132 317 L132 351 L98 334 Z" fill="url(#lpLeft)" />
-            <path d="M166 300 L132 317 L132 351 L166 334 Z" fill="url(#lpRight)" />
-            <path d="M132 283 L166 300 L132 317 L98 300 Z" fill="url(#lpTopBlue)" stroke="#dbeafe" stroke-width="1" />
+            <rect x="246" y="188" width="68" height="68" rx="20" fill="url(#lwBadge)" />
+            <rect x="246" y="188" width="68" height="68" rx="20" fill="none" stroke="#ffffff" stroke-opacity=".5" stroke-width="1.4" />
+            <path d="M280 207 L293 214.5 L293 229.5 L280 237 L267 229.5 L267 214.5 Z"
+                  fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round" />
           </g>
 
-          <!-- 右小立方体 -->
-          <g>
-            <path d="M390 286 L430 306 L430 346 L390 326 Z" fill="url(#lpLeft)" />
-            <path d="M470 286 L430 306 L430 346 L470 326 Z" fill="url(#lpRight)" />
-            <path d="M430 266 L470 286 L430 306 L390 286 Z" fill="url(#lpTopBlue)" stroke="#dbeafe" stroke-width="1" />
-          </g>
-
-          <!-- 悬浮小立方体 -->
-          <g opacity=".92">
-            <path d="M96 178 L110 185 L110 203 L96 196 Z" fill="url(#lpLeft)" />
-            <path d="M124 178 L110 185 L110 203 L124 196 Z" fill="url(#lpRight)" />
-            <path d="M110 171 L124 178 L110 185 L96 178 Z" fill="url(#lpTopBlue)" />
-          </g>
-          <g opacity=".92">
-            <path d="M441 151 L452 156.5 L452 170 L441 164.5 Z" fill="url(#lpLeft)" />
-            <path d="M463 151 L452 156.5 L452 170 L463 164.5 Z" fill="url(#lpRight)" />
-            <path d="M452 145.5 L463 151 L452 156.5 L441 151 Z" fill="url(#lpTopBlue)" />
+          <!-- 点缀 -->
+          <g fill="#93c5fd">
+            <circle cx="212" cy="112" r="2.6" opacity=".8" />
+            <circle cx="462" cy="206" r="2.6" opacity=".7" />
+            <circle cx="352" cy="392" r="2.6" opacity=".7" />
           </g>
         </svg>
       </div>
