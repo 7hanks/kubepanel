@@ -6,7 +6,7 @@
 
 ![KubePanel 集群概览](deploy/screenshots/console-overview.png)
 
-上图使用测试数据，展示异常概览、Pod 资源用量和节点诊断。
+上图为集群概览页，展示资源数量、健康状态、Pod 资源用量 Top 10 与诊断明细。
 
 ## 主要功能
 
