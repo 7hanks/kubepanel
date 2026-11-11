@@ -86,12 +86,9 @@
       <el-tab-pane label="YAML" name="yaml">
         <div class="resource-yaml-toolbar">
           <YamlViewToggle v-model="yamlViewMode" />
-          <el-tooltip :content="yamlViewMode === 'compact' ? yamlDisplay.notice : '完整 YAML 保留全部字段；编辑后先预检再提交。'" placement="bottom" :show-after="250">
-            <el-button size="small" text circle :icon="QuestionFilled" aria-label="YAML 说明" />
-          </el-tooltip>
           <el-button v-if="canUpdateRes" type="primary" size="small" @click="editYaml">编辑 YAML</el-button>
           <el-button size="small" :disabled="!!yamlDisplay.error" @click="copyYaml">复制</el-button>
-          <el-button size="small" :disabled="!!yamlDisplay.error" @click="downloadYaml">下载</el-button>
+          <el-button size="small" :disabled="!!yamlDisplay.error" @click="downloadYaml">导出 YAML</el-button>
         </div>
         <el-alert v-if="yamlDisplay.error" :title="yamlDisplay.error" type="warning" :closable="false" />
         <textarea :value="yamlDisplay.text" aria-label="资源详情 YAML" class="kp-yaml" style="min-height:520px" spellcheck="false" :readonly="true" />
@@ -143,7 +140,6 @@
     <YamlDialog
       v-model="yamlDialogVisible" :title="`编辑 ${name}`" :content="yamlDialogText"
       :saving="yamlDialogSaving" :readonly="!canUpdateRes" :preflight="preflightYaml" :target="yamlTarget" submit-label="保存"
-      tip="可直接在下方编辑，也可导入本地 .yaml 文件；保存等价于 kubectl replace，会整体更新该资源。"
       @save="saveYamlDialog"
     />
 
@@ -159,7 +155,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, QuestionFilled } from '@element-plus/icons-vue'
+import { ArrowLeft } from '@element-plus/icons-vue'
 import * as yaml from 'js-yaml'
 import api from '../api'
 import { metaFromRoute, statusTag, CORE } from '../config/resources'

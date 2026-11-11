@@ -292,7 +292,7 @@ watch(() => route.params.clusterId, id => {
 .kp-side.is-collapsed .kp-side-footer .kp-nav-item span { display: none; }
 .kp-header-action {
   display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-  font-size: 12.5px; color: var(--kp-text-2); white-space: nowrap;
+  font-size: 14px; color: var(--kp-text-2); white-space: nowrap;
   padding: 5px 8px; border-radius: var(--kp-r-sm); transition: background .14s;
 }
 .kp-header-action:hover { background: var(--kp-side-hover); color: var(--kp-text); }
@@ -300,7 +300,7 @@ watch(() => route.params.clusterId, id => {
   display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px;
   margin: 4px 0 2px; padding: 8px 10px; border: 0; border-radius: var(--kp-r-sm);
   background: transparent; text-align: left; color: var(--kp-text-2);
-  font-size: 12px; line-height: 18px; letter-spacing: 0; text-transform: none; cursor: pointer;
+  font-size: 14px; line-height: 18px; letter-spacing: 0; text-transform: none; cursor: pointer;
 }
 .kp-group-toggle:hover { background: var(--kp-side-hover); color: var(--kp-text); }
 .kp-group-toggle:disabled { cursor: default; }
@@ -308,7 +308,7 @@ watch(() => route.params.clusterId, id => {
 .kp-group-toggle .kp-group-icon { display: none; }
 .kp-group-chevron { margin-left: auto; font-size: 11px; transform: rotate(-90deg); transition: transform .16s; }
 .kp-group-toggle.is-open .kp-group-chevron { transform: rotate(0deg); }
-.kp-menu-empty { margin: 12px 8px; font-size: 12px; color: var(--kp-text-2); }
+.kp-menu-empty { margin: 12px 8px; font-size: 14px; color: var(--kp-text-2); }
 .kp-side.is-collapsed .kp-group-toggle {
   display: flex; justify-content: center; height: 34px; min-height: 34px; margin: 5px 0 2px;
   padding: 8px 0; background: transparent; font-size: 14px;

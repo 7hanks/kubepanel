@@ -103,7 +103,7 @@
 
     <YamlDialog
       v-model="yamlVisible" :title="yamlTitle" :content="yamlText" :saving="saving"
-      :readonly="!canUpdateRes && yamlMode !== 'create'" :preflight="preflightYaml" :target="yamlTarget" :mode="yamlDialogMode" :tip="yamlTip" :submit-label="yamlMode === 'create' ? '创建' : '保存'" @save="saveYaml"
+      :readonly="!canUpdateRes && yamlMode !== 'create'" :creating="yamlMode === 'create'" :preflight="preflightYaml" :target="yamlTarget" :mode="yamlDialogMode" :submit-label="yamlMode === 'create' ? '创建' : '保存'" @save="saveYaml"
     />
 
     <ScaleDialog
@@ -140,9 +140,9 @@ const columns = computed(() => columnsFor(meta.value.kind, meta.value.namespaced
 const scalable = computed(() => ['Deployment', 'StatefulSet', 'ReplicaSet'].includes(meta.value.kind))
 const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].includes(meta.value.kind))
 const actionWidth = computed(() => {
-  if (meta.value.kind === 'Pod') return 250
+  if (meta.value.kind === 'Pod') return 280
   if (scalable.value || restartable.value || meta.value.kind === 'Node') return 180
-  return 140
+  return 160
 })
 
 const loading = ref(false)
@@ -182,7 +182,6 @@ const scaleSaving = ref(false)
 const yamlVisible = ref(false)
 const yamlText = ref('')
 const yamlTitle = ref('')
-const yamlTip = ref('')
 const yamlMode = ref('create')
 const yamlDialogMode = ref('edit')
 const editingRow = shallowRef(null)
@@ -263,7 +262,6 @@ function openCreate() {
   yamlDialogMode.value = 'edit'
   editingRow.value = null
   yamlTitle.value = `新建 ${meta.value.kind}`
-  yamlTip.value = '填写完整 YAML 后提交，使用 POST 创建；同名资源已存在时会报冲突。metadata.name 必填。'
   yamlText.value = yamlTemplate(meta.value, store.namespace)
   yamlVisible.value = true
 }
@@ -273,9 +271,6 @@ async function openYaml(row, mode) {
   yamlMode.value = 'edit'
   yamlDialogMode.value = mode
   yamlTitle.value = `${mode === 'view' ? '查看' : '编辑'} ${row.name}`
-  yamlTip.value = mode === 'view'
-    ? '只读预览：双击内容区或点右下角「编辑」即可修改，保存等价于 kubectl replace。'
-    : '保存等价于 kubectl replace，会整体更新该资源；字段非法时 API Server 会拒绝并提示原因。'
   // 列表中的对象可能已过期，打开前重新拉最新版本，避免保存时撞上 K8s 乐观锁 409
   let latest = row._raw
   try {
