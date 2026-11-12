@@ -2,7 +2,7 @@
 
 轻量级 Kubernetes 多集群管理控制台：浏览器里查看集群状态、排查工作负载、编辑资源、执行常用运维操作。前端 Vue 3 + Element Plus，后端 Express，打包为单个非 root Docker 镜像。
 
-![KubePanel 集群概览](deploy/screenshots/console-overview.png)
+![KubePanel 最新集群概览（示例数据）](deploy/screenshots/console-overview-current.png)
 
 ## 功能
 
