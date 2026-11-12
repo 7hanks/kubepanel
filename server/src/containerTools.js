@@ -17,7 +17,7 @@ export function containerCommand(action,path,options={}) {
  const p=safeContainerPath(path)
  // All paths are positional arguments. Never concatenate untrusted paths into a script.
  const scripts={
-  list:'p=$1; [ -d "$p" ] || exit 2; n=0; for f in "$p"/.[!.]* "$p"/..?* "$p"/*; do [ -e "$f" ] || [ -L "$f" ] || continue; n=$((n+1)); if [ "$n" -gt 200 ]; then printf "limit\\000"; break; fi; t=file; if [ -L "$f" ]; then t=link; elif [ -d "$f" ]; then t=directory; fi; printf "%s\\000%s\\000" "$t" "${f##*/}"; done',
+  list:'p=$1; [ -d "$p" ] || exit 2; n=0; for f in "$p"/.[!.]* "$p"/..?* "$p"/*; do [ -e "$f" ] || [ -L "$f" ] || continue; n=$((n+1)); if [ "$n" -gt 200 ]; then printf "limit\\000"; break; fi; t=file; if [ -L "$f" ]; then t=link; elif [ -d "$f" ]; then t=directory; fi; m=$(stat -c "%A|%U|%G|%s|%Y" "$f" 2>/dev/null) || m=; printf "entry\\000%s\\000%s\\000%s\\000" "$t" "${f##*/}" "$m"; done',
   read:'[ -f "$1" ] && [ ! -L "$1" ] || exit 2; head -c 1048577 "$1"',
   write:'[ ! -L "$1" ] && { [ ! -e "$1" ] || [ -f "$1" ]; } || exit 2; if [ "$2" = create ]; then (set -C; head -c "$3" > "$1"); else head -c "$3" > "$1"; fi',
   mkdir:'mkdir "$1"',
@@ -105,7 +105,14 @@ export function createContainerTools({readPod=async t=>(await resRequest('GET',{
    if(result.exitCode!==0)fail(422,`容器内文件操作失败（退出码 ${result.exitCode}）。请检查路径、读写权限和容器内工具是否可用。`)
    if(action==='list'){
     const parts=result.stdout.toString('utf8').split('\0'),entries=[];let truncated=false
-    for(let i=0;i<parts.length-1;){const type=parts[i++];if(type==='limit'){truncated=true;break}const name=parts[i++];if(!name||!['file','directory','link'].includes(type))continue;entries.push({name,type,path:(path==='/'?'':path)+'/'+name})}
+    for(let i=0;i<parts.length-1;){
+     let type=parts[i++];if(type==='limit'){truncated=true;break}
+     const enriched=type==='entry';if(enriched)type=parts[i++]
+     const name=parts[i++],metadata=enriched?(parts[i++]||'').split('|'):[]
+     if(!name||!['file','directory','link'].includes(type))continue
+     const [permissions,owner,group,size,seconds]=metadata,timestamp=Number(seconds)*1000
+     entries.push({name,type,path:(path==='/'?'':path)+'/'+name,...(enriched?{permissions:permissions||null,owner:owner||null,group:group||null,size:size!==undefined&&/^\d+$/.test(size)?Number(size):null,modifiedAt:seconds&&Number.isFinite(timestamp)&&Math.abs(timestamp)<=8640000000000000?new Date(timestamp).toISOString():null}:{})})
+    }
     return {path,entries,truncated}
    }
    if(action==='read'){if(result.stdout.length>FILE_LIMIT)fail(413,'文件超过 1 MiB，无法在线读取');return {path,base64:result.stdout.toString('base64'),bytes:result.stdout.length}}

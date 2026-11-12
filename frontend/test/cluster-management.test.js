@@ -25,13 +25,13 @@ async function makeRouter(clusters, remembered = 'old') {
   const router = Function('createRouter', 'createWebHistory', 'Layout', 'store', 'canAny', 'landingPath', 'refreshSession', 'clearSession', 'confirmContextChange', 'localStorage', source)(options => createRouter({ ...options, routes: stubViews(options.routes) }), createMemoryHistory, {}, store, () => true, () => '/clusters', async () => {}, () => {}, async () => true, localStorage)
   return { router, store, localStorage }
 }
-function clusterView({ clusters = [], embedded = true, current = 'old', loadError } = {}) {
+function clusterView({ clusters = [], embedded = true, current = 'old', loadError, apiOverrides = {} } = {}) {
   const calls = [], mounted = [], scope = effectScope()
   const { store } = makeStore({ clusters: async () => { if (loadError) throw loadError; return clusters } })
   store.currentClusterId = current
   const { descriptor } = parse(fs.readFileSync(new URL('../src/views/ClusterList.vue', import.meta.url), 'utf8'))
   const source = stripImports(compileScript(descriptor, { id: 'cluster-behavior' }).content).replace('export default', 'return')
-  const bindings = { ref, reactive, computed, onMounted: fn => mounted.push(fn), onUnmounted() {}, useRouter: () => ({ push: path => calls.push(path), replace: path => calls.push(path) }), ElMessage: { success() {}, error() {}, warning() {} }, ElMessageBox: { confirm: async () => {} }, Plus: {}, Refresh: {}, Delete: {}, Search: {}, OfficeBuilding: {}, api: { clusters: async () => clusters, removeCluster: async () => {}, addCluster: async () => ({ added: 1 }) }, store, can: () => true, cpath: (path, id = store.currentClusterId) => '/c/' + id + path, PlatformLayout: {} }
+  const bindings = { ref, reactive, computed, watch, onMounted: fn => mounted.push(fn), onUnmounted() {}, useRouter: () => ({ push: path => calls.push(path), replace: path => calls.push(path) }), ElMessage: { success() {}, error() {}, warning() {} }, ElMessageBox: { confirm: async () => {} }, Plus: {}, Refresh: {}, Delete: {}, Search: {}, OfficeBuilding: {}, api: { clusters: async () => clusters, removeCluster: async () => {}, addCluster: async () => ({ added: 1 }), ...apiOverrides }, store, can: () => true, cpath: (path, id = store.currentClusterId) => '/c/' + id + path, PlatformLayout: {} }
   const definition = Function(...Object.keys(bindings), source)(...Object.values(bindings))
   const state = scope.run(() => definition.setup({ embedded }, { expose() {} }))
   return { state, store, calls, mount: async () => { for (const fn of mounted) await fn() }, destroy: () => scope.stop() }
@@ -110,15 +110,12 @@ test('first successful import enters overview and management search matches name
     view.state.search.value = 'absent'; assert.equal(view.state.filteredClusters.value.length, 0)
   } finally { view.destroy() }
 })
-test('management omits import time when metadata is unknown and shows it only for known dates', async () => {
-  const view = clusterView({ clusters: [{ id: 'old', name: 'Old' }] })
+test('creation time displays known dates and an honest placeholder for legacy metadata', async () => {
+  const view = clusterView()
   try {
-    await view.mount()
-    assert.equal(view.state.hasImportTime.value, false)
-    view.state.clusters.value[0].importedAt = '2026-11-12T01:00:00Z'
-    assert.equal(view.state.hasImportTime.value, true)
-    view.state.clusters.value[0].importedAt = 'invalid'
-    assert.equal(view.state.hasImportTime.value, false)
+    assert.equal(view.state.createdTime({}), '—')
+    assert.equal(view.state.createdTime({createdAt:'invalid'}), '—')
+    assert.notEqual(view.state.createdTime({createdAt:'2026-11-12T01:00:00Z'}), '—')
   } finally { view.destroy() }
 })
 
@@ -202,4 +199,47 @@ test('switching away and back invalidates requests from the earlier visit to the
   await earlierVisit
   assert.equal(store.ready, false)
   assert.equal(store.cluster, null)
+})
+
+test('editing a sibling context invalidates the active connection even if list refresh fails', async () => {
+  const view = clusterView({loadError:new Error('offline'),apiOverrides:{updateCluster:async()=>({affectedIds:['other','old']})}})
+  try {
+    view.store.ready=true;view.store.cluster={name:'stale'};view.store.discovery=[{kind:'stale'}]
+    view.state.openEdit({id:'other',name:'Other',removable:true})
+    await view.state.submitEdit()
+    assert.equal(view.store.ready,false)
+    assert.equal(view.store.cluster,null)
+    assert.deepEqual(view.store.discovery,[])
+  } finally { view.destroy() }
+})
+
+test('a delayed cluster detail cannot replace the new detail action target', async () => {
+  let finishA
+  const view = clusterView({apiOverrides:{topPods:async()=>({items:[]}),clusterDetail:id=>id==='a'?new Promise(resolve=>{finishA=resolve}):Promise.resolve({id:'b',name:'B'})}})
+  try {
+    const old=view.state.openDetail({id:'a',name:'A',removable:true})
+    view.state.detailVisible.value=false
+    await view.state.openDetail({id:'b',name:'B',removable:true})
+    finishA({id:'a',name:'A'})
+    await old
+    assert.equal(view.state.detail.value.id,'b')
+    assert.equal(view.state.detailLoading.value,false)
+  } finally { view.destroy() }
+})
+
+test('invalidating edited credentials prevents an earlier initialization from restoring stale connection data', async () => {
+  const {store,requests}=pendingClusterRequests()
+  const earlier=store.init()
+  await nextTick()
+  store.invalidateConnection()
+  requests[0].resolve({name:'old credentials',namespaces:['private']})
+  await earlier
+  assert.equal(store.ready,false)
+  assert.equal(store.cluster,null)
+  const fresh=store.init()
+  await nextTick()
+  assert.equal(requests.length,2)
+  requests[1].resolve({name:'fresh credentials',namespaces:['public']})
+  await fresh
+  assert.equal(store.cluster.name,'fresh credentials')
 })

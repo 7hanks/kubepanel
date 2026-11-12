@@ -78,6 +78,7 @@ export const api = {
   // ---- 集群管理（平台级） ----
   clusters: (refresh = false) => http.get('/v1/clusters', { params: { refresh: refresh ? 1 : 0 } }),
   addCluster: (name, kubeconfig) => http.post('/v1/clusters', { name, kubeconfig }),
+  updateCluster: (id, body) => http.put(`/v1/clusters/${encodeURIComponent(id)}`, body),
   removeCluster: id => http.delete(`/v1/clusters/${encodeURIComponent(id)}`),
   testCluster: id => http.post(`/v1/clusters/${encodeURIComponent(id)}/test`, {}),
   clusterDetail: id => http.get(`/v1/clusters/${encodeURIComponent(id)}/detail`),

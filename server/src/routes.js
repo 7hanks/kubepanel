@@ -8,7 +8,7 @@ import {
   resourceMeta,
 } from './kube.js'
 import {
-  initClusters, clusterSummaries, addCluster, removeCluster, testCluster, clusterDetail,
+  initClusters, clusterSummaries, addCluster, updateCluster, removeCluster, testCluster, clusterDetail,
 } from './clusterService.js'
 import { clusterInfo, overview, applyYaml, scaleResource, restartWorkload, cordonNode } from './actions.js'
 import { streamPodLogs } from './logs.js'
@@ -194,6 +194,10 @@ router.post('/v1/clusters', requirePerm('cluster:import'), wrap(async (req, res)
 router.post('/v1/clusters/:id/test', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {
   assertClusterAccess(req.account, req.params.id)
   res.json(await testCluster(req.params.id))
+}))
+router.put('/v1/clusters/:id', requirePerm('cluster:import'), wrap(async (req, res) => {
+  assertClusterAccess(req.account, req.params.id)
+  res.json(updateCluster(req.params.id, req.body || {}, req.account))
 }))
 router.get('/v1/clusters/:id/detail', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {
   assertClusterAccess(req.account, req.params.id)

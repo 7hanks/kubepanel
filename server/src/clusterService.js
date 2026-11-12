@@ -7,11 +7,14 @@ import { config } from './config.js'
 import {
   registerCluster, unregisterCluster, listClusters, getCluster,
   kubeRequest, clearDiscoveryCache, discoverResources, KubeError,
-  validateKubeconfigText,
+  validateKubeconfigText, validateKubeConfig,
 } from './kube.js'
 import { clusterInfo, overview } from './actions.js'
 import { canAccessCluster, resourceAllowed, assertClusterAccess } from './access.js'
 import { scopedList } from './resourceScope.js'
+import { readJson, writeJson } from './jsonStore.js'
+
+const META_FILE = 'cluster-metadata.json'
 
 const IN_CLUSTER_TOKEN = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 const CONFIG_EXT = ['.yaml', '.yml', '.conf', '.kubeconfig']
@@ -79,6 +82,7 @@ function safeRegister(entry) {
  * 5) 都没有时回退到本机默认 kubeconfig（方便本地开发）
  */
 export function initClusters() {
+  const metadata = readJson(META_FILE, {})
   const seen = new Set()
   let count = 0
   const warnings = []
@@ -91,7 +95,8 @@ export function initClusters() {
       if (seen.has(id)) continue
       seen.add(id)
       const name = contexts.length > 1 ? `${baseName} / ${context.split('@')[0]}` : baseName
-      if (safeRegister({ id, name, kc, source, mode, authMode, file, removable, context })) count++
+      const meta = metadata[id] || {}
+      if (safeRegister({ id, name: meta.name || name, createdAt: meta.createdAt || null, kc, source, mode, authMode, file, removable, context })) count++
     }
   }
 
@@ -156,6 +161,10 @@ export function initClusters() {
     } catch (e) { warnings.push(`default: ${e.message}`) }
   }
 
+  for (const cluster of listClusters()) {
+    const meta = metadata[cluster.id]
+    if (meta) { cluster.name = meta.name || cluster.name; cluster.createdAt = meta.createdAt || null }
+  }
   summaryCache = { at: 0, data: null }
   return { count, warnings }
 }
@@ -167,6 +176,7 @@ export async function clusterSummaries(force = false, account) {
     const base = {
       id: c.id, name: c.name, server: c.server, context: c.context,
       authMode: c.authMode, source: c.source, mode: c.mode, removable: c.removable,
+      createdAt: c.createdAt || null,
       credentialExpiry: certificateExpiry(c.kc.getCurrentUser()),
       healthy: false, version: 'unknown', nodes: null, namespaces: null, error: '',
     }
@@ -215,6 +225,7 @@ export function addCluster(name, kubeconfigText) {
   }
 
   const dir = ensureWritableDir()
+  const metadata = readJson(META_FILE, {})
   const id = `c-${slug(cleanName)}-${shortHash(cleanName + Date.now(), 6)}`
   const file = path.join(dir, `${id}.yaml`)
   try { fs.writeFileSync(file, kubeconfigText, { mode: 0o600 }) }
@@ -222,18 +233,60 @@ export function addCluster(name, kubeconfigText) {
 
   let added = 0
   const ids = []
+  const createdAt = new Date().toISOString()
   contexts.forEach(({ context, kc, authMode }) => {
     // Same derivation as startup: adding a cluster must not change its scope identity on restart.
     const cid = `c-${shortHash(`file:${path.basename(file)}|${context}`)}`
     ids.push(cid)
+    const displayName = contexts.length > 1 ? `${cleanName} / ${context.split('@')[0]}` : cleanName
+    metadata[cid] = { name: displayName, createdAt }
     if (safeRegister({
-      id: cid, name: contexts.length > 1 ? `${cleanName} / ${context.split('@')[0]}` : cleanName,
+      id: cid, name: displayName, createdAt,
       kc, source: `file:${path.basename(file)}`, mode: 'kubeconfig-file', authMode,
       file, removable: true, context,
     })) added++
   })
+  try { writeJson(META_FILE, metadata) }
+  catch (e) { for (const cid of ids) unregisterCluster(cid); fs.unlinkSync(file); throw e }
   summaryCache = { at: 0, data: null }
   return { added, ids }
+}
+
+/** Update labels and optionally credentials without changing IDs or context scopes. */
+export function updateCluster(id, body, account) {
+  const c = getCluster(id)
+  if (account) assertClusterAccess(account, id)
+  const name = String(body?.name || '').trim()
+  if (!name || name.length > 120) throw new KubeError(400, '集群名称须为 1–120 个字符')
+  const metadata = readJson(META_FILE, {})
+  let replacements = [], previous
+  if (body.kubeconfig?.trim()) {
+    if (!c.removable || !c.file) throw new KubeError(400, '此集群的连接配置由外部管理，无法在界面替换')
+    const siblings = listClusters().filter(x => x.file === c.file)
+    if (account) for (const sibling of siblings) assertClusterAccess(account, sibling.id)
+    let contexts
+    try { contexts = contextsFrom(body.kubeconfig) }
+    catch (e) { throw new KubeError(400, `kubeconfig 无效：${e.message}`) }
+    for (const { kc } of contexts) {
+      validateKubeConfig(kc)
+      if (!kc.getCurrentCluster()?.server) throw new KubeError(400, 'kubeconfig 的 context 必须引用有效的集群和 API Server 地址')
+    }
+    if (contexts.length !== siblings.length || siblings.some(x => !contexts.some(ctx => ctx.context === x.context))) {
+      throw new KubeError(400, '替换配置须保留原有的全部 context 名称，以保持集群身份和授权范围')
+    }
+    replacements = siblings.map(sibling => ({ ...sibling, ...contexts.find(ctx => ctx.context === sibling.context) }))
+    previous = fs.readFileSync(c.file, 'utf8')
+    const temp = `${c.file}.${crypto.randomBytes(6).toString('hex')}.tmp`
+    try { fs.writeFileSync(temp, body.kubeconfig, { mode: 0o600, flag: 'wx' }); fs.renameSync(temp, c.file) }
+    finally { if (fs.existsSync(temp)) fs.unlinkSync(temp) }
+  }
+  metadata[id] = { ...metadata[id], name, createdAt: c.createdAt || null }
+  try { writeJson(META_FILE, metadata) }
+  catch (e) { if (previous !== undefined) fs.writeFileSync(c.file, previous, { mode: 0o600 }); throw e }
+  for (const replacement of replacements) registerCluster({ ...replacement, name: replacement.id === id ? name : replacement.name })
+  if (!replacements.length) c.name = name
+  summaryCache = { at: 0, data: null }
+  return { id, name, createdAt: c.createdAt || null, affectedIds: replacements.length ? replacements.map(x => x.id) : [id] }
 }
 
 /** 删除集群：移除 kubeconfig 文件并注销同源的全部 context */
@@ -281,6 +334,7 @@ export async function clusterDetail(id, account) {
     source: c.source,
     mode: c.mode,
     removable: c.removable,
+    createdAt: c.createdAt || null,
     version: info.version,
     platform: info.platform,
     resourceTypes: disc ? disc.filter(r => !account || resourceAllowed(account, r)).length : null,

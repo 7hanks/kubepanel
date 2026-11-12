@@ -8,7 +8,7 @@
       <div class="cluster-toolbar">
         <h1>{{ embedded ? 'Kubernetes 集群' : '导入集群' }}</h1>
         <div class="cluster-toolbar-actions">
-          <el-input v-if="embedded" v-model="search" placeholder="搜索名称 / ID" clearable :prefix-icon="Search" style="width:220px" />
+          <el-input v-if="embedded" v-model="search" placeholder="搜索集群名称" clearable :prefix-icon="Search" style="width:220px" />
           <el-button v-if="embedded" :loading="loading" :icon="Refresh" @click="load(true).catch(() => {})">刷新</el-button>
           <el-button v-if="canAdd" type="primary" :icon="Plus" @click="openAdd">导入集群</el-button>
         </div>
@@ -21,22 +21,19 @@
           <el-button v-if="canAdd" type="primary" @click="openAdd">导入第一个集群</el-button>
         </div>
         <el-table v-else :data="filteredClusters" stripe border empty-text="没有匹配的集群">
-          <el-table-column label="集群名称 / ID" min-width="190" show-overflow-tooltip>
+          <el-table-column label="集群名称" min-width="190" show-overflow-tooltip>
             <template #default="{ row: c }">
               <el-button link type="primary" @click="enter(c)">{{ c.name }}</el-button>
-              <div class="kp-mono kp-muted" style="font-size:12px">{{ c.id }}</div>
             </template>
           </el-table-column>
           <el-table-column label="状态" width="90"><template #default="{ row: c }"><el-tag :type="c.healthy ? 'success' : 'danger'" size="small">{{ c.healthy ? '正常' : '异常' }}</el-tag></template></el-table-column>
           <el-table-column prop="version" label="版本" min-width="115" />
           <el-table-column prop="server" label="API Server" min-width="210" show-overflow-tooltip />
-          <el-table-column prop="source" label="来源" min-width="150" show-overflow-tooltip />
-          <el-table-column v-if="hasImportTime" label="导入时间" min-width="165"><template #default="{ row: c }">{{ importedTime(c) }}</template></el-table-column>
-          <el-table-column label="操作" width="190" fixed="right">
+          <el-table-column label="创建时间" min-width="180"><template #default="{ row: c }">{{ createdTime(c) }}</template></el-table-column>
+          <el-table-column label="操作" width="135" fixed="right">
             <template #default="{ row: c }">
               <el-button link type="primary" @click="openDetail(c)">详情</el-button>
-              <el-button link type="primary" :loading="testing === c.id" @click="test(c)">测试</el-button>
-              <el-button v-if="c.removable && canRemove" link type="danger" @click="remove(c)">删除</el-button>
+              <el-button v-if="canAdd" link type="primary" @click="openEdit(c)">编辑</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -68,7 +65,7 @@
 
           <div class="kp-section-title">基本信息</div>
           <table class="kp-kv"><tbody>
-            <tr><td>集群 ID</td><td class="kp-mono">{{ detail.id }}</td></tr>
+            <tr><td>创建时间</td><td>{{ createdTime(detail) }}</td></tr>
             <tr><td>API Server</td><td class="kp-mono">{{ detail.server }}</td></tr>
             <tr><td>K8s 版本</td><td>{{ detail.version }}</td></tr>
             <tr><td>平台</td><td>{{ detail.platform }}</td></tr>
@@ -153,7 +150,17 @@
           </div>
         </template>
       </div>
+      <template #footer><div class="cluster-detail-footer"><el-button v-if="detail?.removable && canRemove" type="danger" plain @click="remove(detail)">删除集群</el-button><span class="cluster-footer-spacer"/><el-button @click="detailVisible=false">关闭</el-button><el-button v-if="detail && canAdd" type="primary" @click="openEdit(detail)">编辑集群</el-button></div></template>
     </el-drawer>
+
+    <el-dialog v-model="editVisible" title="编辑集群" width="min(720px,94vw)" top="6vh" destroy-on-close :close-on-click-modal="false" :close-on-press-escape="!editing" :show-close="!editing" @closed="editForm.kubeconfig=''">
+      <el-form label-width="90px" @submit.prevent="submitEdit">
+        <el-form-item label="集群名称"><el-input v-model="editForm.name" maxlength="120" :disabled="editing" /></el-form-item>
+        <el-form-item label="连接配置"><el-input v-model="editForm.kubeconfig" type="textarea" :rows="12" spellcheck="false" :disabled="editing||!editTarget?.removable" :placeholder="editTarget?.removable?'留空保留现有连接配置；填写完整 kubeconfig 可替换凭据':'此集群的连接配置由外部管理'" /></el-form-item>
+      </el-form>
+      <p class="kp-muted">创建时间与集群授权保持不变；替换 kubeconfig 时须保留全部 context 名称。</p>
+      <template #footer><el-button :disabled="editing" @click="editVisible=false">取消</el-button><el-button type="primary" :loading="editing" @click="submitEdit">保存修改</el-button></template>
+    </el-dialog>
 
     <el-dialog v-model="addVisible" title="导入集群" width="720px" top="6vh" destroy-on-close>
       <el-alert type="info" :closable="false" style="margin-bottom:14px">
@@ -179,7 +186,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Search, OfficeBuilding } from '@element-plus/icons-vue'
@@ -199,6 +206,8 @@ const clusters = ref([])
 const canAdd = computed(() => can('cluster:import'))
 const canRemove = computed(() => can('cluster:remove'))
 const form = reactive({ name: '', kubeconfig: '' })
+const editVisible = ref(false), editing = ref(false), editTarget = ref(null)
+const editForm = reactive({ name: '', kubeconfig: '' })
 const search = ref('')
 const loadError = ref('')
 const filteredClusters = computed(() => {
@@ -210,6 +219,8 @@ const detailLoading = ref(false)
 const detail = ref(null)
 const top = ref({ available: true, items: [], total: 0 })
 const topLoading = ref(false)
+let detailEpoch = 0
+watch(detailVisible, visible => { if (!visible) detailEpoch++ }, { flush: 'sync' })
 
 /** metrics-server 的时间戳转成本地时间 HH:mm:ss */
 function clock(ts) {
@@ -217,11 +228,29 @@ function clock(ts) {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
-function importedTime(c) {
-  const date = c.importedAt ? new Date(c.importedAt) : null
+function createdTime(c) {
+  const date = c.createdAt ? new Date(c.createdAt) : null
   return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('zh-CN', { hour12: false }) : '—'
 }
-const hasImportTime = computed(() => clusters.value.some(c => importedTime(c) !== '—'))
+function openEdit(c) { editTarget.value = { ...c }; editForm.name = c.name; editForm.kubeconfig = ''; editVisible.value = true }
+async function submitEdit() {
+  if (editing.value) return
+  if (!editForm.name.trim()) return ElMessage.warning('请填写集群名称')
+  const id = editTarget.value?.id
+  if (!id) return
+  editing.value = true
+  try {
+    const result = await api.updateCluster(id, { name: editForm.name.trim(), kubeconfig: editForm.kubeconfig })
+    if ((result.affectedIds || [id]).includes(store.currentClusterId)) store.invalidateConnection()
+    editVisible.value = false
+    editForm.kubeconfig = ''
+    if (detail.value?.id === id) detail.value.name = editForm.name.trim()
+    ElMessage.success('集群已更新')
+    await load(true)
+    if (detailVisible.value && detail.value?.id === id) await openDetail(clusters.value.find(c => c.id === id) || detail.value)
+  } catch (e) { /* 拦截器提示错误；失败时保留表单 */ }
+  finally { editing.value = false }
+}
 
 async function load(force = false) {
   loading.value = true
@@ -242,18 +271,19 @@ function enter(c) {
 
 /** 打开集群详情抽屉（平台级接口，不改变当前选中集群） */
 async function openDetail(c) {
+  const epoch = ++detailEpoch
   detailVisible.value = true
   detailLoading.value = true
   detail.value = null
   top.value = { available: true, items: [], total: 0 }
   topLoading.value = true
   const topTask = api.topPods(c.id, 10)
-    .then(r => { top.value = r })
-    .catch(e => { top.value = { available: false, items: [], total: 0, message: e.message || '读取 metrics-server 失败' } })
-    .finally(() => { topLoading.value = false })
-  try { detail.value = await api.clusterDetail(c.id) }
-  catch (e) { detail.value = { name: c.name, error: e.message || '加载集群详情失败' } }
-  finally { detailLoading.value = false }
+    .then(r => { if (epoch === detailEpoch) top.value = r })
+    .catch(e => { if (epoch === detailEpoch) top.value = { available: false, items: [], total: 0, message: e.message || '读取 metrics-server 失败' } })
+    .finally(() => { if (epoch === detailEpoch) topLoading.value = false })
+  try { const result = await api.clusterDetail(c.id); if (epoch === detailEpoch) detail.value = { ...c, ...result } }
+  catch (e) { if (epoch === detailEpoch) detail.value = { ...c, error: e.message || '加载集群详情失败' } }
+  finally { if (epoch === detailEpoch) detailLoading.value = false }
   await topTask
 }
 
@@ -275,6 +305,7 @@ async function remove(c) {
       '危险操作', { type: 'warning', confirmButtonText: '确定移除', confirmButtonClass: 'el-button--danger' }
     )
     await api.removeCluster(c.id)
+    detailVisible.value = false
     ElMessage.success('已移除')
     const wasCurrent = store.currentClusterId === c.id
     if (wasCurrent) store.setCluster('')
@@ -316,6 +347,7 @@ onMounted(() => load(true).catch(() => {}))
 
 
 <style scoped>
+.cluster-detail-footer { display:flex;align-items:center;gap:10px;flex-wrap:wrap; }.cluster-footer-spacer { flex:1; }
 .cluster-embedded { max-width: none; padding: 0; }
 .cluster-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
 .cluster-toolbar h1 { margin:0; font-size:21px; font-weight:650; }

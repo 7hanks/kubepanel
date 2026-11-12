@@ -8,6 +8,7 @@
 /* One size and native Element Plus interaction states for every row action,
    including buttons nested inside a Dropdown trigger. */
 .kp-resource-action.el-button {
+  font-size: 12px;
   inline-size: 4em;
   flex: none;
   margin: 0;

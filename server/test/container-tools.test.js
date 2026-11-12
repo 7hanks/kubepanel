@@ -11,6 +11,14 @@ const account={username:'qa',permissions:['cluster:list','pod:files:read','pod:f
 const target={namespace:'team',pod:'web',container:'app',uid:'pod1'}
 const pod={metadata:{uid:'pod1'},spec:{containers:[{name:'app'}]},status:{phase:'Running',containerStatuses:[{name:'app',state:{running:{}}}]}}
 const fixture=()=>{const calls=[];return {calls,service:tools.createContainerTools({readPod:async()=>pod,execute:async(_t,command,options)=>{calls.push({command,options});return {stdout:Buffer.from(''),stderr:'',exitCode:0}},audit:()=>{}})}}
+
+test('directory entries expose stat metadata and tolerate missing stat tools',async()=>{
+ const service=tools.createContainerTools({readPod:async()=>pod,execute:async()=>({stdout:Buffer.from('entry\0file\0space name.txt\0-rw-r--r--|root|staff|42|1735689600\0entry\0directory\0etc\0\0'),exitCode:0}),audit:()=>{}})
+ const result=await service.file(account,'dev',{...target,action:'list',path:'/'})
+ assert.deepEqual(result.entries[0],{name:'space name.txt',type:'file',path:'/space name.txt',permissions:'-rw-r--r--',owner:'root',group:'staff',size:42,modifiedAt:'2025-01-01T00:00:00.000Z'})
+ assert.equal(result.entries[1].name,'etc')
+ assert.equal(result.entries[1].size,null)
+})
 test('container files reject missing grant and unauthorized namespace before upstream execution',async()=>{
  assert.equal(typeof tools.createContainerTools,'function')
  const {service,calls}=fixture()

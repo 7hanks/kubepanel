@@ -301,7 +301,7 @@ watch(() => route.path, () => {
   display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px;
   margin: 4px 0 2px; padding: 8px 10px; border: 0; border-radius: var(--kp-r-sm);
   background: transparent; text-align: left; color: var(--kp-text-2);
-  font-size: 13px; line-height: 18px; letter-spacing: 0; text-transform: none; cursor: pointer;
+  font-family: inherit; font-size: 14px; line-height: 20px; letter-spacing: 0; text-transform: none; cursor: pointer;
 }
 .kp-group-toggle:hover { background: var(--kp-side-hover); color: var(--kp-text); }
 .kp-group-toggle:disabled { cursor: default; }

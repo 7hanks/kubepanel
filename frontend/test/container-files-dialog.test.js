@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {parse,compileScript} from '@vue/compiler-sfc'
 import {ref,reactive,computed,watch,nextTick,effectScope} from 'vue'
+import * as icons from '@element-plus/icons-vue'
 import * as transfer from '../src/utils/container-transfer.js'
 
 function fixture({upload,ticket,confirm=async()=>{}}={}) {
@@ -11,7 +12,7 @@ function fixture({upload,ticket,confirm=async()=>{}}={}) {
  const {descriptor}=parse(fs.readFileSync(new URL('../src/components/ContainerFilesDialog.vue',import.meta.url),'utf8'))
  const source=compileScript(descriptor,{id:'files-test'}).content.replace(/^import[\s\S]*?from\s+['"][^'"]+['"]\s*\r?\n/gm,'').replace('export default','return')
  const api={containerFile:async body=>{calls.push(body);return {path:'/',entries:[]}},containerUpload:upload||(async()=>({ok:true})),containerDownloadTicket:ticket||(async body=>{calls.push({ticket:body});return {url:'/api/v1/container/files/download?ticket=one',bytes:transfer.MAX_TRANSFER_BYTES}})}
- const bindings={ref,reactive,computed,watch,onUnmounted:fn=>unmounted.push(fn),api,can:()=>true,registerUnsavedGuard:()=>()=>{},ElMessage:{success(){}},ElMessageBox:{confirm},...transfer,startNativeDownload:(...args)=>downloads.push(args)}
+ const bindings={...icons,ref,reactive,computed,watch,onUnmounted:fn=>unmounted.push(fn),api,can:()=>true,registerUnsavedGuard:()=>()=>{},ElMessage:{success(){}},ElMessageBox:{confirm},...transfer,startNativeDownload:(...args)=>downloads.push(args)}
  const definition=Function(...Object.keys(bindings),source)(...Object.values(bindings))
  const state=scope.run(()=>definition.setup(props,{expose(){},emit(){}}))
  return {state,props,calls,downloads,destroy(){unmounted.forEach(fn=>fn());scope.stop()}}
@@ -53,5 +54,20 @@ test('closing a dialog while upload confirmation is pending cannot start a stale
   await nextTick();view.props.modelValue=false;await nextTick();confirm();await operation
   assert.equal(view.state.busy.value,false)
   assert.notEqual(view.state.uploadState.value,'uploading')
+ }finally{view.destroy()}
+})
+
+test('file filtering sorts directories first, respects hidden items and resets pagination',async()=>{
+ const view=fixture()
+ try{
+  view.state.entries.value=[{name:'z.txt',type:'file',path:'/z.txt'},{name:'.env',type:'file',path:'/.env'},{name:'etc',type:'directory',path:'/etc'}]
+  assert.deepEqual(view.state.filteredEntries.value.map(x=>x.name),['etc','z.txt'])
+  view.state.page.value=3;view.state.filterText.value='Z';await nextTick()
+  assert.equal(view.state.page.value,1)
+  assert.deepEqual(view.state.pagedEntries.value.map(x=>x.name),['z.txt'])
+  view.state.filterText.value='';view.state.showHidden.value=true;await nextTick()
+  assert.equal(view.state.filteredEntries.value.length,3)
+  view.state.directoryCache.value={'/':view.state.entries.value,'/etc':[{name:'nginx',type:'directory',path:'/etc/nginx'}]}
+  assert.equal(view.state.directoryTree.value[0].children[0].children[0].path,'/etc/nginx')
  }finally{view.destroy()}
 })

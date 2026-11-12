@@ -21,7 +21,7 @@ await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { c
 const errors=[];page.on('pageerror',e=>errors.push(e.message))
 let failPods=false,overviewHealthy=false,overviewPartial=false,containerMode=false,fileContent='hello fixture\n',permissionSet=['*'],holdUpload=false,releaseUpload;const writes=[],reads=[]
 let failCluster=false,bulkMode=false,holdRestart=false,releaseRestart
-let clusterFixtures=[{id:'test',name:'测试集群',healthy:true,version:'v1.31',server:'https://fixture.invalid',source:'file:fixture.yaml',removable:true}]
+let clusterFixtures=[{id:'test',name:'测试集群',healthy:true,version:'v1.31',server:'https://fixture.invalid',source:'file:fixture.yaml',removable:true,createdAt:'2026-11-12T01:00:00Z'}]
 const ns='app'
 const pod={apiVersion:'v1',kind:'Pod',metadata:{uid:'pod-1',name:'api-broken',namespace:ns,resourceVersion:'1',creationTimestamp:'2026-11-09T01:00:00Z',labels:{app:'api'}},spec:{containers:[{name:'app',image:'example/app:1'}],nodeName:'worker-1'},status:{phase:'Running',conditions:[{type:'Ready',status:'False',reason:'ContainersNotReady',message:'Container is unready'}],containerStatuses:[{ready:false,restartCount:4,state:{waiting:{reason:'CrashLoopBackOff'}}}]}}
 pod.metadata.managedFields=[{manager:'kubelet',operation:'Update',fieldsV1:{'f:status':{}}}]
@@ -39,7 +39,10 @@ await page.route('**/api/**',async route=>{
  if(!['GET','HEAD'].includes(req.method()))writes.push({path,method:req.method(),params:Object.fromEntries(url.searchParams),body,csrf:req.headers()['x-csrf-token']})
  const send=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
  if(path==='/v1/auth/profile')return send({username:'fixture',role:'admin',permissions:permissionSet,csrfToken:'test-csrf',scope:{clusters:['*'],namespaces:['*'],resources:['*']}})
- if(path==='/v1/clusters'&&req.method()==='POST'){clusterFixtures=[{id:'imported',name:body.name,healthy:true,version:'v1.31',server:'https://imported.invalid',source:'file:imported.yaml',removable:true}];return send({added:1})}
+ if(path==='/v1/clusters'&&req.method()==='POST'){clusterFixtures=[{id:'imported',name:body.name,healthy:true,version:'v1.31',server:'https://imported.invalid',source:'file:imported.yaml',removable:true,createdAt:'2026-11-12T01:00:00Z'}];return send({added:1})}
+ if(path.match(/^\/v1\/clusters\/[^/]+$/)&&req.method()==='PUT'){const id=path.split('/').at(-1);clusterFixtures.find(c=>c.id===id).name=body.name;return send({id,name:body.name})}
+ if(path.endsWith('/detail'))return send(clusterFixtures.find(c=>c.id===path.split('/')[3])||{})
+ if(path.endsWith('/top-pods'))return send({available:false,items:[]})
  if(path==='/v1/clusters')return send(clusterFixtures)
  if(path==='/v1/clusters/imported'&&req.method()==='DELETE'){clusterFixtures=[];return send({ok:true})}
  if(path==='/v1/cluster')return failCluster?send({message:'fixture connection unavailable'},503):send({name:clusterFixtures.find(c=>c.id===url.searchParams.get('clusterId'))?.name||'测试集群',version:'v1.31',namespaces:['app'],server:'https://fixture.invalid'})
@@ -64,7 +67,7 @@ await page.route('**/api/**',async route=>{
   try{return await send({ok:true,path:url.searchParams.get('path'),bytes:Number(url.searchParams.get('size'))})}catch{return}
  }
  if(path==='/v1/container/files'){
-  if(body.action==='list')return send({path:body.path,entries:[{name:'hello.txt',type:'file',path:'/hello.txt'}]})
+  if(body.action==='list')return send({path:body.path,entries:body.path==='/'?[{name:'etc',type:'directory',path:'/etc',permissions:'drwxr-xr-x',owner:'root',group:'root',size:4096,modifiedAt:'2026-11-12T01:00:00Z'},{name:'.env',type:'file',path:'/.env'},{name:'hello.txt',type:'file',path:'/hello.txt',permissions:'-rw-r--r--',owner:'root',group:'root',size:14,modifiedAt:'2026-11-12T01:00:00Z'}]:[{name:'nginx',type:'directory',path:'/etc/nginx'}]})
   if(body.action==='read')return send({path:body.path,base64:Buffer.from(fileContent).toString('base64'),bytes:fileContent.length})
   if(body.action==='write')fileContent=Buffer.from(body.base64,'base64').toString()
   return send({ok:true,path:body.path})
@@ -161,6 +164,19 @@ try{
  await page.getByRole('button',{name:'文件浏览器',exact:true}).click()
  const files=page.getByRole('dialog',{name:'文件浏览器',exact:true})
  await files.getByText('hello.txt',{exact:true}).waitFor()
+ assert.equal(await files.getByText('.env',{exact:true}).count(),0)
+ await files.getByText('显示隐藏文件',{exact:true}).click()
+ await files.getByText('.env',{exact:true}).waitFor()
+ await files.getByText('显示隐藏文件',{exact:true}).click()
+ await files.getByRole('textbox',{name:'按文件名过滤'}).fill('HELLO')
+ assert.equal(await files.locator('.el-table__body-wrapper tbody tr').count(),1)
+ await files.getByRole('textbox',{name:'按文件名过滤'}).fill('')
+ await files.getByLabel('容器目录导航').getByText('etc',{exact:true}).click()
+ await page.waitForFunction(()=>document.querySelector('input[aria-label="容器路径"]')?.value==='/etc')
+ await files.getByRole('button',{name:'根目录',exact:true}).first().click()
+ await files.getByText('hello.txt',{exact:true}).waitFor()
+ await files.getByText('-rw-r--r--',{exact:true}).waitFor()
+ await page.screenshot({path:'.local/frontend-qa/file-browser-refined.png',fullPage:true,animations:'disabled'})
  assert.equal(await page.getByText('批量执行',{exact:true}).count(),0)
  const download=page.waitForEvent('download')
  await files.getByRole('button',{name:'下载',exact:true}).click()
@@ -226,8 +242,18 @@ try{
  await page.getByRole('link',{name:'Kubernetes 集群',exact:true}).click()
  await page.getByRole('heading',{name:'Kubernetes 集群',exact:true}).waitFor()
  assert.equal(await page.locator('.kp-layout').count(),1);assert.equal(await page.locator('.plat-layout').count(),0)
- const clusterSearch=page.getByPlaceholder('搜索名称 / ID')
+ const clusterSearch=page.getByPlaceholder('搜索集群名称')
  await clusterSearch.fill('not-a-cluster');await page.getByText('没有匹配的集群',{exact:true}).waitFor();await clusterSearch.fill('')
+ await page.getByRole('button',{name:'测试集群',exact:true}).waitFor()
+ assert.equal(await page.locator('.cluster-main').getByRole('button',{name:'删除',exact:true}).count(),0)
+ await page.locator('.cluster-main').getByRole('button',{name:'编辑',exact:true}).click()
+ const editCluster=page.getByRole('dialog',{name:'编辑集群',exact:true})
+ await editCluster.locator('input').fill('新集群名称')
+ await editCluster.getByRole('button',{name:'保存修改'}).click()
+ await page.getByRole('button',{name:'新集群名称',exact:true}).waitFor()
+ assert.ok(writes.some(w=>w.method==='PUT'&&w.path==='/v1/clusters/test'&&w.body.name==='新集群名称'))
+ clusterFixtures[0].name='测试集群'
+ await page.getByRole('button',{name:'刷新',exact:true}).click()
  await page.getByRole('button',{name:'测试集群',exact:true}).waitFor()
  await page.screenshot({path:'.local/frontend-qa/cluster-management.png',fullPage:true,animations:'disabled'})
  failCluster=true
@@ -288,7 +314,8 @@ try{
  await page.getByRole('heading',{name:'Kubernetes 集群',exact:true}).waitFor()
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
  await page.screenshot({path:'.local/frontend-qa/cluster-management-mobile.png',fullPage:true,animations:'disabled'})
- await page.getByRole('button',{name:'删除',exact:true}).click()
+ await page.getByRole('button',{name:'详情',exact:true}).click()
+ await page.getByRole('button',{name:'删除集群',exact:true}).click()
  await page.getByRole('button',{name:'确定移除',exact:true}).click()
  await page.waitForURL('**/clusters')
  await page.getByRole('button',{name:'导入第一个集群',exact:true}).waitFor()

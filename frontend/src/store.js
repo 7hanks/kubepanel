@@ -14,6 +14,15 @@ export const store = reactive({
   ready: false,
   error: '',
 
+  invalidateConnection() {
+    initEpoch++
+    pendingInit = null
+    this.ready = false
+    this.cluster = null
+    this.discovery = []
+    this.error = ''
+  },
+
   /** 切换集群：清掉上一集群的缓存，避免串数据 */
   setCluster(id) {
     if (this.currentClusterId === (id || '')) return
