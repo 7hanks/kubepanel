@@ -321,18 +321,24 @@ async function doRestart() {
 }
 /** 重启 Pod：后端会检查 ownerReferences，确认由控制器重建后才删除 */
 async function doRestartPod() {
+  const target={clusterId:store.currentClusterId,namespace:ns.value,name:name.value,uid:obj.value.metadata?.uid,path:route.fullPath}
+  const current=()=>store.currentClusterId===target.clusterId&&route.fullPath===target.path&&obj.value.metadata?.uid===target.uid
+  if(!target.uid||!canUpdateRes.value||!canDeleteRes.value)return ElMessage.warning('请刷新资源并检查重启权限')
   try {
     await ElMessageBox.confirm(
       `重启 ${name.value} 将通过 Eviction 驱逐，并由有效控制器重建；PDB 或控制器状态可能阻止操作。确认继续？`,
       '重启 Pod', { type: 'warning', confirmButtonText: '确定重启' }
     )
   } catch (e) { return }
+  if(!current()||!canUpdateRes.value||!canDeleteRes.value)return ElMessage.warning('资源或权限已变化，请重新选择')
   restarting.value = true
   try {
-    const r = await api.restartPod(ns.value, name.value)
+    const r = await api.restartPod(target.namespace,target.name,{uid:target.uid,clusterId:target.clusterId})
+    if(r?.ok!==true)throw new Error('服务端未确认提交结果，请刷新核对')
+    if(!current())return
     ElMessage.success(r.message || '已提交重启')
     // 删除后本详情页会变成 404，直接退回列表
-    setTimeout(() => router.back(), 1000)
+    setTimeout(() => {if(current())router.back()}, 1000)
   } catch (e) {
     ElMessage.error(e.message || '重启失败')
   } finally { restarting.value = false }

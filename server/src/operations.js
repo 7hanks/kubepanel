@@ -57,7 +57,10 @@ export function createOperations({ request = kubeRequest, sleep = ms => new Prom
   }
 
   async function restartPod(namespace, name, clusterId, options = {}) {
+    if(options.uid!==undefined&&(typeof options.uid!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,252}$/.test(options.uid)))throw new KubeError(400,'缺少合法的所选 Pod UID，请刷新后重新选择')
     const pod = await getPod(namespace, name, clusterId, options)
+    if(options.uid!==undefined&&pod.metadata?.uid!==options.uid)throw new KubeError(409,'所选 Pod 已被重新创建，请刷新后重新选择')
+    if(pod.metadata?.annotations?.['kubernetes.io/config.mirror']!==undefined)throw new KubeError(400,'静态镜像 Pod 不能通过重启操作驱逐')
     if (pod.metadata.deletionTimestamp || ['Succeeded', 'Failed'].includes(pod.status?.phase)) throw new KubeError(409, 'Pod 已终止或正在删除，无法提交重建操作')
     const owner = await validateLiveController(pod, clusterId, options)
     await evict(pod, clusterId, options)

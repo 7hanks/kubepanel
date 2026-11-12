@@ -88,7 +88,8 @@ import {
 } from '@element-plus/icons-vue'
 import api from '../api'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
-import { CLUSTERS_PATH } from '../utils/path'
+import { CLUSTERS_PATH, cpath } from '../utils/path'
+import { store } from '../store'
 import {
   canReadCluster, canReadUsers, canReadRegistry, canReadMonitor,
   refreshSession, clearSession, roleName, can,
@@ -107,7 +108,7 @@ const opened = ref({ 'user-mgmt': true })
 const navs = computed(() => {
   void tick.value
   return [
-    { key: 'clusters', label: '集群列表', icon: OfficeBuilding, path: CLUSTERS_PATH, hidden: !canReadCluster() },
+    { key: 'clusters', label: '集群管理', icon: OfficeBuilding, path: store.currentClusterId ? cpath('/clusters') : CLUSTERS_PATH, hidden: !canReadCluster() },
     {
       key: 'user-mgmt', label: '用户管理', icon: User, hidden: !canReadUsers(),
       children: [

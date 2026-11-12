@@ -4,7 +4,7 @@ import Layout from '../layout/Layout.vue'
 import { store } from '../store'
 import { canAny, landingPath, refreshSession, clearSession } from '../utils/perm'
 
-// 两级信息架构：/clusters（平台级集群列表） → /c/:clusterId/...（单个集群的资源控制台）
+// /clusters 仅用于首次导入；已有集群的管理入口保留在控制台布局内。
 const routes = [
   { path: '/login', name: 'login', component: () => import('../views/Login.vue'), meta: { public: true } },
   { path: '/clusters', name: 'clusters', component: () => import('../views/ClusterList.vue'), meta: { title: '集群列表', perm: ['cluster:list', 'cluster:detail'] } },
@@ -19,6 +19,7 @@ const routes = [
     children: [
       { path: '', redirect: to => ({ name: 'overview', params: { clusterId: to.params.clusterId } }) },
       { path: 'overview', name: 'overview', component: () => import('../views/Overview.vue'), meta: { title: '集群概览' } },
+      { path: 'clusters', name: 'cluster-management', component: () => import('../views/ClusterList.vue'), props: { embedded: true }, meta: { title: 'Kubernetes 集群', clusterManagement: true } },
       { path: 'monitor', name: 'cluster-monitor', component: () => import('../views/Monitor.vue'), meta: { title: '监控', perm: ['monitor:list','monitor:detail'], clusterMonitor: true } },
       { path: 'r/:group/:version/:plural', name: 'resource-list', component: () => import('../views/ResourceList.vue') },
       { path: 'r/:group/:version/:plural/:namespace/:name', name: 'resource-detail', component: () => import('../views/ResourceDetail.vue') },
@@ -46,10 +47,25 @@ router.beforeEach(async (to) => {
     const target = landingPath()
     if (target !== to.path) return target
   }
+  if (canAny(['cluster:list', 'cluster:detail']) && (to.name === 'clusters' || to.params.clusterId)) {
+    try {
+      // 此列表已由服务端按账号授权范围过滤，连接异常仍允许进入主界面。
+      const clusters = await store.loadClusters()
+      const current = clusters.find(c => c.id === store.currentClusterId) || clusters[0]
+      if (!current) {
+        store.setCluster('')
+        if (to.name !== 'clusters') return '/clusters'
+      } else if (to.name === 'clusters' || !clusters.some(c => c.id === to.params.clusterId)) {
+        return `/c/${encodeURIComponent(current.id)}/overview`
+      }
+    } catch (e) {
+      // 平台接口暂时不可用时保留目标页面，页面显示重试入口，不伪装成空列表。
+      store.error = e.message || '加载集群列表失败'
+    }
+  }
   // 必须在组件挂载前同步 clusterId：Vue 子组件的 onMounted 早于父级 Layout，
   // 否则首屏请求会带着上一个集群的 id 打到错误的 API Server
   if (to.params.clusterId) {
-    localStorage.setItem('kp_cluster', to.params.clusterId)
     store.setCluster(to.params.clusterId)
   }
   return true

@@ -36,6 +36,7 @@
       <span class="spacer" />
       <el-tooltip :content="nextContinue ? `已加载 ${items.length} 项；当前筛选仅覆盖已加载资源，可继续加载。标签选择器由 Kubernetes 服务端执行。` : `已加载 ${items.length} 项；标签选择器由 Kubernetes 服务端执行，其他条件筛选已加载资源。`"><span class="resource-count">{{ filtered.length }} 项<span v-if="nextContinue"> · 已加载 {{ items.length }}</span></span></el-tooltip>
       <el-button v-if="canCreateRes" type="primary" :icon="Plus" @click="openCreate">新建</el-button>
+      <el-button v-if="canBulkRestart" type="warning" plain :disabled="!selected.length" @click="openBulkRestart">批量重启 ({{ selected.length }})</el-button>
       <el-button v-if="canDeleteRes" type="danger" plain :disabled="!selected.length" @click="batchDelete">删除 ({{ selected.length }})</el-button>
     </div>
 
@@ -104,6 +105,7 @@
     </div>
 
     <ContainerFilePicker v-model="filesVisible" :resource="filesResource" />
+    <BulkPodRestartDialog v-model="bulkRestartVisible" :targets="bulkRestartTargets" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :context-key="bulkContextKey" :can-restart="canRestartTarget" @submitted="load" />
     <YamlDialog
       v-model="yamlVisible" :title="yamlTitle" :content="yamlText" :saving="saving"
       :readonly="!canUpdateRes && yamlMode !== 'create'" :creating="yamlMode === 'create'" :preflight="preflightYaml" :target="yamlTarget" :mode="yamlDialogMode" :submit-label="yamlMode === 'create' ? '创建' : '保存'" @save="saveYaml"
@@ -136,6 +138,8 @@ import { filterRows, sortRows, createRequestGate, targetDescription } from '../u
 import { normalizeFilters, filterCapabilities, activeFilterCount, filterQuery, filterQueryKeys } from '../utils/resource-filters'
 import ResourceActionButton from '../components/ResourceActionButton.vue'
 import ContainerFilePicker from '../components/ContainerFilePicker.vue'
+import BulkPodRestartDialog from '../components/BulkPodRestartDialog.vue'
+import {MAX_BULK_POD_RESTART} from '../utils/bulk-pod-restart'
 
 const route = useRoute()
 const router = useRouter()
@@ -159,6 +163,16 @@ const removeContextGuard=registerUnsavedGuard(()=>{if(saving.value || scaleSavin
 const canCreateRes = computed(() => canResource(meta.value,'create',store.namespace))
 const canUpdateRes = computed(() => canResource(meta.value,'update',store.namespace))
 const canDeleteRes = computed(() => canResource(meta.value,'delete',store.namespace))
+const canBulkRestart = computed(() => meta.value.kind === 'Pod' && canUpdateRes.value && canDeleteRes.value)
+const bulkRestartVisible=ref(false),bulkRestartTargets=shallowRef([])
+const bulkContextKey=computed(()=>JSON.stringify([route.path,store.currentClusterId,store.namespace]))
+function canRestartTarget(target){return canResource({group:'',plural:'pods',namespaced:true},'update',target.namespace,target.clusterId) && canResource({group:'',plural:'pods',namespaced:true},'delete',target.namespace,target.clusterId)}
+function openBulkRestart(){
+  if(!canBulkRestart.value || !selected.value.length)return
+  if(selected.value.length>MAX_BULK_POD_RESTART)return ElMessage.warning(`一次最多重启 ${MAX_BULK_POD_RESTART} 个已选 Pod，请缩小选择范围`)
+  bulkRestartTargets.value=selected.value.slice()
+  bulkRestartVisible.value=true
+}
 const writable = computed(() => canCreateRes.value || canUpdateRes.value || canDeleteRes.value)
 const items = ref([])
 const tableRef = ref(null)
@@ -343,12 +357,20 @@ async function onCommand(cmd, row) {
   try {
     if (cmd === 'editYaml') return editYaml(row)
     if (cmd === 'restartPod') {
+      const clusterId=store.currentClusterId,context=bulkContextKey.value
+      const target={clusterId,namespace:row._raw?.metadata?.namespace,name:row._raw?.metadata?.name,uid:row._raw?.metadata?.uid}
+      if(!target.uid || !target.namespace || !target.name)return ElMessage.warning('缺少 Pod 原始 UID，请刷新后重试')
+      if(!canRestartTarget(target))return ElMessage.warning('没有此命名空间的更新和删除权限')
       await ElMessageBox.confirm(
         `重启 Pod ${row.name} 会通过 Eviction 驱逐，由有效控制器重建；PDB 或控制器状态可能阻止操作。确认继续？`,
         '重启 Pod', { type: 'warning', confirmButtonText: '确定重启' }
       )
-      const r = await api.restartPod(row.namespace, row.name)
-      ElMessage.success(r.message || '已提交重启')
+      if(context!==bulkContextKey.value || !canRestartTarget(target))return ElMessage.warning('上下文或权限已变化，请重新选择 Pod')
+      actionBusy.value=true
+      let r
+      try { r = await api.restartPod(target.namespace,target.name,{uid:target.uid,clusterId}) }
+      finally { actionBusy.value=false }
+      ElMessage.success(r.message || '已提交驱逐，请刷新核对替代 Pod 的就绪状态')
       return load()
     }
     if (cmd === 'scale') {

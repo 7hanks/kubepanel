@@ -20,10 +20,12 @@ page.setDefaultTimeout(12000)
 await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__copiedYaml = text } } }))
 const errors=[];page.on('pageerror',e=>errors.push(e.message))
 let failPods=false,overviewHealthy=false,overviewPartial=false,containerMode=false,fileContent='hello fixture\n',permissionSet=['*'],holdUpload=false,releaseUpload;const writes=[],reads=[]
+let failCluster=false,bulkMode=false,holdRestart=false,releaseRestart
+let clusterFixtures=[{id:'test',name:'测试集群',healthy:true,version:'v1.31',server:'https://fixture.invalid',source:'file:fixture.yaml',removable:true}]
 const ns='app'
 const pod={apiVersion:'v1',kind:'Pod',metadata:{uid:'pod-1',name:'api-broken',namespace:ns,resourceVersion:'1',creationTimestamp:'2026-11-09T01:00:00Z',labels:{app:'api'}},spec:{containers:[{name:'app',image:'example/app:1'}],nodeName:'worker-1'},status:{phase:'Running',conditions:[{type:'Ready',status:'False',reason:'ContainersNotReady',message:'Container is unready'}],containerStatuses:[{ready:false,restartCount:4,state:{waiting:{reason:'CrashLoopBackOff'}}}]}}
 pod.metadata.managedFields=[{manager:'kubelet',operation:'Update',fieldsV1:{'f:status':{}}}]
-pod.metadata.ownerReferences=[{kind:'ReplicaSet',name:'api-deploy-abc',uid:'replica-1',controller:true}]
+pod.metadata.ownerReferences=[{apiVersion:'apps/v1',kind:'ReplicaSet',name:'api-deploy-abc',uid:'replica-1',controller:true}]
 pod.metadata.annotations={'cni.projectcalico.org/containerID':'fixture-runtime-id','cni.projectcalico.org/podIP':'10.0.0.4/32'}
 pod.spec.volumes=[{name:'kube-api-access-test1',projected:{defaultMode:420,sources:[{serviceAccountToken:{expirationSeconds:3607,path:'token'}},{configMap:{name:'kube-root-ca.crt',items:[{key:'ca.crt',path:'ca.crt'}]}},{downwardAPI:{items:[{path:'namespace',fieldRef:{apiVersion:'v1',fieldPath:'metadata.namespace'}}]}}]}}]
 Object.assign(pod.spec,{dnsPolicy:'ClusterFirst',restartPolicy:'Always',schedulerName:'default-scheduler',terminationGracePeriodSeconds:30,serviceAccountName:'default',enableServiceLinks:true,securityContext:{}})
@@ -37,10 +39,20 @@ await page.route('**/api/**',async route=>{
  if(!['GET','HEAD'].includes(req.method()))writes.push({path,method:req.method(),params:Object.fromEntries(url.searchParams),body,csrf:req.headers()['x-csrf-token']})
  const send=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
  if(path==='/v1/auth/profile')return send({username:'fixture',role:'admin',permissions:permissionSet,csrfToken:'test-csrf',scope:{clusters:['*'],namespaces:['*'],resources:['*']}})
- if(path==='/v1/clusters')return send([{id:'test',name:'测试集群'}])
- if(path==='/v1/cluster')return send({name:'测试集群',version:'v1.31',namespaces:['app'],server:'https://fixture.invalid'})
+ if(path==='/v1/clusters'&&req.method()==='POST'){clusterFixtures=[{id:'imported',name:body.name,healthy:true,version:'v1.31',server:'https://imported.invalid',source:'file:imported.yaml',removable:true}];return send({added:1})}
+ if(path==='/v1/clusters')return send(clusterFixtures)
+ if(path==='/v1/clusters/imported'&&req.method()==='DELETE'){clusterFixtures=[];return send({ok:true})}
+ if(path==='/v1/cluster')return failCluster?send({message:'fixture connection unavailable'},503):send({name:clusterFixtures.find(c=>c.id===url.searchParams.get('clusterId'))?.name||'测试集群',version:'v1.31',namespaces:['app'],server:'https://fixture.invalid'})
  if(path==='/v1/resources')return send(discovery)
  if(path==='/v1/auth/stream-ticket')return send({ticket:'fixture-ticket'})
+ const restartTarget=/^\/v1\/pods\/app\/([^/]+)\/restart$/.exec(path)
+ if(restartTarget){
+  assert.equal(url.searchParams.get('clusterId'),'test');assert.equal(req.headers()['x-csrf-token'],'test-csrf')
+  assert.ok(body.uid,'restart must keep selected UID')
+  if(restartTarget[1]==='pdb-block')return send({message:'fixture PDB prevents disruption'},429)
+  if(holdRestart&&!body.dryRun)await new Promise(resolve=>releaseRestart=resolve)
+  try{return await send({ok:true,dryRun:body.dryRun,message:body.dryRun?'fixture preflight passed':'fixture eviction submitted'})}catch{return}
+ }
  if(path==='/v1/container/files/download-ticket')return send({url:'/api/v1/container/files/download?clusterId=test&ticket=fixture',bytes:Buffer.byteLength(fileContent)})
  if(path==='/v1/container/files/download')return route.fulfill({status:200,headers:{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="hello.txt"'},body:fileContent})
  if(path==='/v1/container/files/upload'){
@@ -57,7 +69,7 @@ await page.route('**/api/**',async route=>{
   if(body.action==='write')fileContent=Buffer.from(body.base64,'base64').toString()
   return send({ok:true,path:body.path})
  }
- if(path==='/v1/overview')return send({stat:{nodes:1,namespaces:1,pods:1,deployments:0,services:0,unhealthyPods:overviewPartial ? null : overviewHealthy ? 0:1,failedPods:0},podPhases:{Running:1},nodes:[{name:'worker-1',ready:overviewHealthy,capacity:{cpu:'8',memory:'16Gi'},allocatable:{cpu:'7',memory:'15Gi',pods:'110'},pods:1}],podUsage:{available:true,timestamp:'2026-11-09T03:00:00Z',items:[{name:pod.metadata.name,namespace:ns,cpu:0.2,cpuText:'200m',cpuPercent:120,memory:1024,memoryText:'1 KiB',memoryPercent:null}],sampled:1,total:1},errors:overviewPartial ? {pods:{message:'fixture partial'}}:{},partial:overviewPartial})
+ if(path==='/v1/overview')return send({stat:{nodes:1,namespaces:1,pods:1,deployments:0,services:0,unhealthyPods:overviewPartial ? null : overviewHealthy ? 0:1,failedPods:0},nodeUsage:overviewPartial?{available:false,reason:'metrics-unavailable'}:{available:true,sampled:1,total:1,cpu:{used:2600,allocatable:4000,percent:65},memory:{used:8*1024**3,allocatable:15.5*1024**3,percent:51.6}},events:[{type:'Warning',reason:'BackOff',object:'Pod/api-broken',message:'fixture warning',age:'1m'}],podPhases:{Running:1},nodes:[{name:'worker-1',ready:overviewHealthy,capacity:{cpu:'8',memory:'16Gi'},allocatable:{cpu:'7',memory:'15Gi',pods:'110'},pods:1}],podUsage:{available:true,timestamp:'2026-11-09T03:00:00Z',items:[{name:pod.metadata.name,namespace:ns,cpu:0.2,cpuText:'200m',cpuPercent:120,memory:1024,memoryText:'1 KiB',memoryPercent:null}],sampled:1,total:1},errors:overviewPartial ? {pods:{message:'fixture partial'}}:{},partial:overviewPartial})
  if(path==='/v1/registries')return send([{id:'harbor',name:'Harbor fixture',url:'https://harbor.invalid',host:'harbor.invalid',type:'harbor',health:{ok:true}}])
  if(path==='/v1/registries/harbor/projects'){const p=Number(url.searchParams.get('page') || 1);return send({items:[{name:p===1?'project-one':'project-two',repoCount:21}],total:21,page:p,pageSize:20})}
  if(path==='/v1/registries/harbor/repositories'){const p=Number(url.searchParams.get('page') || 1),project=url.searchParams.get('project');return send({items:[{name:`${project}/repo-${p}`,shortName:`repo-${p}`,artifactCount:21,pullRef:`harbor.invalid/${project}/repo-${p}`}],total:21,page:p,pageSize:20})}
@@ -74,7 +86,9 @@ await page.route('**/api/**',async route=>{
  if(path==='/v1/audit')return send({items:[{id:'1',time:'2026-11-09T03:00:00Z',username:'fixture',action:'POST',path:'/fixture',status:200}],nextCursor:null})
  if(path==='/v1/resources/_core/v1/pods' && req.method()==='GET'){
   const {kind,apiVersion,...listed}=pod
-  return failPods ? send({message:'fixture forbidden'},403):send({items:[overviewHealthy ? {...listed,status:{phase:'Running',conditions:[{type:'Ready',status:'True'}],containerStatuses:[{ready:true,restartCount:0}]}}:listed],metadata:{}})
+  const second={...listed,metadata:{...listed.metadata,name:bulkMode==='cancel'?'web-second':'pdb-block',uid:'pod-2'}}
+  const bare={...listed,metadata:{...listed.metadata,name:'standalone',uid:'bare-1',ownerReferences:[]}}
+  return failPods ? send({message:'fixture forbidden'},403):send({items:bulkMode?[listed,second,bare]:[overviewHealthy ? {...listed,status:{phase:'Running',conditions:[{type:'Ready',status:'True'}],containerStatuses:[{ready:true,restartCount:0}]}}:listed],metadata:{}})
  }
  if(path.includes('/pods/app/api-broken'))return send(containerMode?{...pod,status:{phase:'Running',containerStatuses:[{name:'app',state:{running:{startedAt:'2026-11-11T01:00:00Z'}},ready:true,restartCount:0}],conditions:[{type:'Ready',status:'True'}]}}:pod)
  if(path==='/v1/resources/_core/v1/configmaps' && req.method()==='POST')return send({...body,metadata:{...body.metadata,resourceVersion:'2'}})
@@ -97,7 +111,10 @@ try{
  await page.goto('http://127.0.0.1:5178/c/test/r/_core/v1/pods')
  await page.getByRole('link',{name:'api-broken',exact:true}).waitFor()
  assert.equal(await page.getByRole('form',{name:'资源查询'}).count(),0)
- assert.equal(await page.getByRole('button',{name:/批量执行|批量重启/}).count(),0)
+ assert.equal(await page.getByRole('button',{name:/批量执行/}).count(),0)
+ assert.equal(await page.getByRole('button',{name:/批量重启/}).isDisabled(),true)
+ assert.equal(await page.getByRole('columnheader',{name:/^就绪/}).count(),1)
+ assert.equal(await page.getByRole('columnheader',{name:/^Pod IP/}).count(),0)
  await page.getByRole('button',{name:'筛选',exact:true}).click()
  const filters=page.getByRole('form',{name:'资源筛选'})
  await filters.waitFor()
@@ -113,12 +130,15 @@ try{
  await editor.waitFor()
  assert.equal(await yamlDialog.locator('.cm-editor').count(),0)
  const full=await editor.inputValue()
+ assert.equal(await yamlDialog.getByRole('button',{name:'导入 YAML',exact:true}).count(),0)
+ assert.equal(await yamlDialog.getByRole('button',{name:'导出 YAML',exact:true}).count(),1)
  assert.match(full,/managedFields:/)
  await yamlDialog.getByText('精简 YAML',{exact:true}).click()
  assert.doesNotMatch(await editor.inputValue(),/managedFields:|^status:/m)
  await yamlDialog.getByText('完整 YAML',{exact:true}).click()
  assert.equal(await editor.inputValue(),full)
  await yamlDialog.getByRole('button',{name:'编辑',exact:true}).click()
+ assert.equal(await yamlDialog.getByRole('button',{name:'导入 YAML',exact:true}).count(),1)
  const draft=full.replace('example/app:1','example/app:2')
  await editor.fill(draft)
  await yamlDialog.getByRole('button',{name:'差异对比',exact:true}).click()
@@ -132,6 +152,11 @@ try{
  await yamlDialog.waitFor({state:'hidden'})
  const updates=writes.filter(w=>w.method==='PUT'&&w.path.endsWith('/pods/app/api-broken'))
  assert.equal(updates.length,2);assert.equal(updates[0].params.dryRun,'true');assert.ok(updates.every(w=>w.body.metadata.resourceVersion==='1'))
+ await page.getByRole('button',{name:'新建',exact:true}).click()
+ const createDialog=page.getByRole('dialog')
+ await createDialog.getByRole('button',{name:'导入 YAML',exact:true}).waitFor()
+ assert.equal(await createDialog.getByRole('button',{name:'导出 YAML',exact:true}).count(),0)
+ await createDialog.getByRole('button',{name:'取消',exact:true}).click()
  containerMode=true
  await page.getByRole('button',{name:'文件浏览器',exact:true}).click()
  const files=page.getByRole('dialog',{name:'文件浏览器',exact:true})
@@ -160,6 +185,61 @@ try{
  await page.screenshot({path:'.local/frontend-qa/file-browser.png',fullPage:true,animations:'disabled'})
  await files.getByRole('button',{name:'关闭',exact:true}).click()
  await page.getByRole('dialog',{name:'选择文件浏览器容器',exact:true}).waitFor({state:'hidden'})
+ bulkMode=true
+ await page.getByRole('button',{name:'刷新',exact:true}).click()
+ await page.getByRole('link',{name:'standalone',exact:true}).waitFor()
+ await page.locator('.el-table__header-wrapper .el-checkbox').first().click()
+ await page.getByRole('button',{name:/^批量重启/}).click()
+ const bulk=page.getByRole('dialog',{name:'批量重启 Pod',exact:true})
+ await bulk.getByRole('button',{name:/预检/}).click()
+ await bulk.getByText('fixture PDB prevents disruption',{exact:true}).waitFor()
+ await bulk.getByRole('button',{name:'重启可执行的 1 项',exact:true}).waitFor()
+ assert.equal(writes.filter(w=>w.path==='/v1/pods/app/standalone/restart').length,0)
+ await page.screenshot({path:'.local/frontend-qa/bulk-pod-preflight.png',fullPage:true,animations:'disabled'})
+ await bulk.getByRole('button',{name:'重启可执行的 1 项',exact:true}).click()
+ await bulk.getByText('已提交驱逐',{exact:true}).waitFor()
+ assert.equal(writes.filter(w=>w.path==='/v1/pods/app/api-broken/restart'&&w.body.dryRun===false).length,1)
+ await bulk.getByRole('button',{name:'关闭',exact:true}).click()
+ bulkMode='cancel'
+ await page.getByRole('button',{name:'刷新',exact:true}).click()
+ await page.getByRole('link',{name:'web-second',exact:true}).waitFor()
+ await page.locator('.el-table__header-wrapper .el-checkbox').first().click()
+ await page.getByRole('button',{name:/^批量重启/}).click()
+ await bulk.getByRole('button',{name:/预检/}).click()
+ await bulk.getByRole('button',{name:'重启可执行的 2 项',exact:true}).waitFor()
+ holdRestart=true
+ const pendingRestart=page.waitForRequest(r=>r.url().includes('/v1/pods/app/api-broken/restart')&&r.postDataJSON()?.dryRun===false)
+ await bulk.getByRole('button',{name:'重启可执行的 2 项',exact:true}).click();await pendingRestart
+ await bulk.getByRole('button',{name:'停止并关闭',exact:true}).click()
+ await bulk.waitFor({state:'hidden'});releaseRestart?.();holdRestart=false
+ assert.equal(writes.filter(w=>w.path==='/v1/pods/app/web-second/restart'&&w.body.dryRun===false).length,0)
+ bulkMode=false;overviewHealthy=true
+ await page.goto('http://127.0.0.1:5178/clusters')
+ await page.waitForURL('**/c/test/overview')
+ const overviewMetrics=page.getByLabel('当前集群关键指标',{exact:true})
+ await overviewMetrics.getByText('65%',{exact:true}).waitFor()
+ assert.equal(await overviewMetrics.getByText('51.6%',{exact:true}).count(),1)
+ assert.equal(await page.locator('.plat-layout').count(),0)
+ await page.screenshot({path:'.local/frontend-qa/overview-metrics.png',fullPage:true,animations:'disabled'})
+ const clusterGroup=page.getByRole('navigation',{name:'控制台导航'}).getByRole('button',{name:'集群管理',exact:true})
+ if(await clusterGroup.getAttribute('aria-expanded')!=='true')await clusterGroup.click()
+ await page.getByRole('link',{name:'Kubernetes 集群',exact:true}).click()
+ await page.getByRole('heading',{name:'Kubernetes 集群',exact:true}).waitFor()
+ assert.equal(await page.locator('.kp-layout').count(),1);assert.equal(await page.locator('.plat-layout').count(),0)
+ const clusterSearch=page.getByPlaceholder('搜索名称 / ID')
+ await clusterSearch.fill('not-a-cluster');await page.getByText('没有匹配的集群',{exact:true}).waitFor();await clusterSearch.fill('')
+ await page.getByRole('button',{name:'测试集群',exact:true}).waitFor()
+ await page.screenshot({path:'.local/frontend-qa/cluster-management.png',fullPage:true,animations:'disabled'})
+ failCluster=true
+ await page.goto('http://127.0.0.1:5178/c/test/overview')
+ await page.getByRole('button',{name:'重新连接',exact:true}).waitFor()
+ await page.locator('.kp-content').getByRole('button',{name:'集群管理',exact:true}).click()
+ await page.getByRole('heading',{name:'Kubernetes 集群',exact:true}).waitFor()
+ await page.getByRole('button',{name:'测试集群',exact:true}).click()
+ await page.getByRole('button',{name:'重新连接',exact:true}).waitFor()
+ failCluster=false
+ await page.getByRole('button',{name:'刷新当前数据',exact:true}).click()
+ await page.getByLabel('当前集群关键指标',{exact:true}).waitFor()
  const platform=page.getByRole('navigation',{name:'控制台导航'}).getByRole('button',{name:'平台',exact:true})
  await platform.click()
  await page.getByRole('link',{name:'监控',exact:true}).click()
@@ -192,6 +272,26 @@ try{
  await page.setViewportSize({width:390,height:844})
  await page.screenshot({path:'.local/frontend-qa/restored-mobile.png',fullPage:true,animations:'disabled'})
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
+ permissionSet=['*'];clusterFixtures=[]
+ await page.goto('http://127.0.0.1:5178/clusters')
+ await page.getByRole('button',{name:'导入第一个集群',exact:true}).waitFor()
+ await page.screenshot({path:'.local/frontend-qa/cluster-onboarding.png',fullPage:true,animations:'disabled'})
+ await page.getByRole('button',{name:'导入第一个集群',exact:true}).click()
+ const importDialog=page.getByRole('dialog',{name:/导入/})
+ await importDialog.getByPlaceholder('例如：生产集群 / prod-beijing').fill('导入测试集群')
+ await importDialog.locator('textarea').fill('apiVersion: v1\nkind: Config\nclusters: []\n')
+ await importDialog.getByRole('button',{name:'校验并导入',exact:true}).click()
+ await page.waitForURL('**/c/imported/overview')
+ await page.getByLabel('当前集群关键指标',{exact:true}).waitFor()
+ if(await clusterGroup.getAttribute('aria-expanded')!=='true')await clusterGroup.click()
+ await page.getByRole('link',{name:'Kubernetes 集群',exact:true}).click()
+ await page.getByRole('heading',{name:'Kubernetes 集群',exact:true}).waitFor()
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
+ await page.screenshot({path:'.local/frontend-qa/cluster-management-mobile.png',fullPage:true,animations:'disabled'})
+ await page.getByRole('button',{name:'删除',exact:true}).click()
+ await page.getByRole('button',{name:'确定移除',exact:true}).click()
+ await page.waitForURL('**/clusters')
+ await page.getByRole('button',{name:'导入第一个集群',exact:true}).waitFor()
  assert.deepEqual(errors,[])
- console.log('PASS: original resource/YAML UI, native file download, 2MiB raw upload/progress/cancel/edit/permissions, full draft/diff/preflight, cluster monitor context, terminal auto-connect/disconnect/retry, mobile; no live mutations')
+ console.log('PASS: Pod/YAML modes + bulk partial preflight/UID/PDB/cancel; overview actual usage; default landing + embedded cluster management + offline recovery + first import/last deletion + mobile; native file transfers/drafts/terminal/monitor retained; all fixture data, no live mutations')
 }catch(e){console.error('Browser errors:',errors);console.error('URL:',page.url());console.error((await page.locator('body').innerText()).slice(0,4500));await page.screenshot({path:'.local/frontend-qa/failure.png',fullPage:true});throw e}finally{await browser.close();await vite.close()}

@@ -7,8 +7,8 @@
     <p v-if="target" class="kp-mono yaml-target">{{ target }}</p>
     <div class="yaml-bar">
       <YamlViewToggle v-model="viewMode" :disabled="saving || checking || importing || diffOpen || editing" />
-      <el-button v-if="canEdit" size="small" :disabled="saving || checking" :loading="importing" @click="pickFile">导入 YAML</el-button>
-      <el-button size="small" :disabled="!!preview.error" @click="downloadFile">导出 YAML</el-button>
+      <el-button v-if="allowImport" size="small" :disabled="saving || checking" :loading="importing" @click="pickFile">导入 YAML</el-button>
+      <el-button v-if="allowExport" size="small" :disabled="!!preview.error" @click="downloadFile">导出 YAML</el-button>
       <input ref="fileInput" type="file" accept=".yaml,.yml,.txt" style="display:none" @change="onFileChange" />
       <span style="flex:1" />
       <el-tag disable-transitions v-if="!editing" type="info" size="small" effect="plain">{{ canEdit && !importing ? '只读 · 双击可编辑' : '只读' }}</el-tag>
@@ -80,6 +80,8 @@ const compact = computed(() => viewMode.value === 'compact')
 const preview = computed(() => yamlPreview(text.value, compact.value))
 const editing = ref(!props.readonly && props.mode !== 'view')
 const canEdit = computed(() => !props.readonly)
+const allowImport = computed(() => canEdit.value && editing.value)
+const allowExport = computed(() => !props.creating)
 /* 精简 YAML 也能就地编辑：编辑时用独立草稿，避免每次按键都重新生成精简文本 */
 const compactDraft = ref('')
 const compactBaseline = ref('')
@@ -181,12 +183,12 @@ function beforeUnload(event) { if (props.modelValue && dirty.value) { event.prev
 onMounted(()=>window.addEventListener('beforeunload',beforeUnload))
 onUnmounted(()=>{removeGuard();window.removeEventListener('beforeunload',beforeUnload)})
 
-function pickFile() { if (canEdit.value && !props.saving && !checking.value && !importing.value) fileInput.value?.click() }
+function pickFile() { if (allowImport.value && !props.saving && !checking.value && !importing.value) fileInput.value?.click() }
 async function onFileChange(e) {
   const file = e.target.files?.[0]
   e.target.value = ''
   if (!file) return
-  if (!canEdit.value || props.saving || checking.value || importing.value) return
+  if (!allowImport.value || props.saving || checking.value || importing.value) return
   const epoch=++importEpoch, baseline=props.content, target=props.target
   const current=()=>epoch===importEpoch && props.modelValue && baseline===props.content && target===props.target
   importing.value=true
@@ -209,6 +211,7 @@ async function onFileChange(e) {
 }
 
 function downloadFile() {
+  if (!allowExport.value || preview.value.error) return
   const safe = String(props.title || 'resource').replace(/[^\w\u4e00-\u9fa5.-]+/g, '_').slice(0, 80)
   const blob = new Blob([workingText.value], { type: 'text/yaml;charset=utf-8' })
   const a = document.createElement('a')

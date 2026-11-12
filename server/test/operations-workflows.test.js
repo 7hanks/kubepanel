@@ -35,6 +35,23 @@ test('restart rejects a noncontroller reference and a stale owner UID without an
   }
 })
 
+test('restart refuses a replaced selected Pod UID before controller lookup or mutation',async()=>{
+  const calls=[]
+  const service=createOperations({request:async(method,url)=>{calls.push({method,url});return {data:pod()}}})
+  for(const dryRun of [true,false])await assert.rejects(service.restartPod('team','web','c',{dryRun,uid:'old-selection'}),{status:409})
+  assert.equal(calls.length,2)
+  assert.ok(calls.every(call=>call.method==='GET'&&call.url.endsWith('/pods/web')))
+})
+
+test('restart rejects malformed identity and static mirror Pods even with a supported owner',async()=>{
+  const calls=[]
+  const service=createOperations({request:async(method,url)=>{calls.push({method,url});const item=pod();item.metadata.annotations={'kubernetes.io/config.mirror':'mirror-hash'};return {data:item}}})
+  for(const uid of ['',null,{},'bad\nidentity'])await assert.rejects(service.restartPod('team','web','c',{uid}),{status:400})
+  assert.equal(calls.length,0)
+  await assert.rejects(service.restartPod('team','web','c',{uid:'pod-uid',dryRun:true}),/静态|镜像/)
+  assert.equal(calls.length,1)
+})
+
 test('drain refuses unmanaged or local-storage pods before cordoning', async () => {
   let writes = 0
   const p = pod({ volumes: [{ emptyDir: {}, name: 'cache' }] }); delete p.metadata.ownerReferences

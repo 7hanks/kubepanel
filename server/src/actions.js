@@ -6,6 +6,7 @@ import {
 import { parseCpu, parseMem, fmtCpu as fmtUsageCpu, fmtBytes } from './monitorService.js'
 import { scopedList } from './resourceScope.js'
 import { resourceAllowed, allowedNamespaces } from './access.js'
+import { aggregateNodeUsage } from './overviewMetrics.js'
 
 /** 把并发请求统一转成「失败不抛、值为 null」，保证概览页部分可用 */
 async function safe(fn) {
@@ -127,6 +128,8 @@ export async function overview(clusterId, namespace, account) {
 
   const usage = {}
   for (const n of metrics?.data?.items || []) usage[n.metadata.name] = n.usage || {}
+  const nodeUsage = aggregateNodeUsage(nodes?.data, metrics?.data)
+  if (nodes && metrics && !nodeUsage.available && nodeUsage.reason !== 'no-nodes') errors.nodeMetrics = { status: 206, message: '节点指标或可分配资源不完整，集群用量暂不可用' }
 
   const nodeRows = (nodes?.data?.items || []).map(n => {
     const ready = (n.status?.conditions || []).some(c => c.type === 'Ready' && c.status === 'True')
@@ -136,8 +139,8 @@ export async function overview(clusterId, namespace, account) {
       ready,
       unschedulable: !!n.spec?.unschedulable,
       version: n.status?.nodeInfo?.kubeletVersion || '-',
-      cpu: u ? fmtCpu(u.cpu) : (n.status?.capacity?.cpu || '-'),
-      memory: u ? fmtMem(u.memory) : (n.status?.capacity?.memory || '-'),
+      cpu: u?.cpu != null ? fmtCpu(u.cpu) : null,
+      memory: u?.memory != null ? fmtMem(u.memory) : null,
       pods: pods ? (pods.data?.items || []).filter(p => p.spec?.nodeName === n.metadata.name && !['Failed', 'Succeeded'].includes(p.status?.phase)).length : null,
       allocatable: n.status?.allocatable || {},
       capacity: n.status?.capacity || {},
@@ -188,7 +191,8 @@ export async function overview(clusterId, namespace, account) {
     podUsage: podMetrics
       ? { available: true, ...podUsageRows(podMetrics.data?.items || [], podList) }
       : { available: false, sampled: 0, total: podList.length, items: [] },
-    metricsAvailable: !!metrics,
+    nodeUsage,
+    metricsAvailable: nodeUsage.available,
     resourceTypes: discovery ? discovery.filter(r => !account || resourceAllowed(account, r)).length : null,
     errors,
     partial: Object.keys(errors).length > 0,

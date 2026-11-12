@@ -194,10 +194,9 @@ const AGE = { key: 'age', label: '运行时间', width: 105 }
 
 const KIND_COLS = {
   Pod: [
-    { key: 'ready', label: 'Ready', width: 85 },
+    { key: 'ready', label: '就绪', width: 85 },
     { key: 'status', label: '状态', width: 145, tag: true },
     { key: 'restarts', label: '重启', width: 75 },
-    { key: 'podIP', label: 'Pod IP', width: 130 },
     { key: 'node', label: '节点', width: 150 },
   ],
   Deployment: [

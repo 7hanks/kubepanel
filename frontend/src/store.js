@@ -1,6 +1,9 @@
 import { reactive } from 'vue'
 import api from './api'
 
+let initEpoch = 0
+let pendingInit = null
+
 // 全局轻量状态（Vue reactive 单例，无需引入额外状态库）
 export const store = reactive({
   clusters: [],                                   // 平台级：所有已注册集群
@@ -13,7 +16,10 @@ export const store = reactive({
 
   /** 切换集群：清掉上一集群的缓存，避免串数据 */
   setCluster(id) {
-    if (this.currentClusterId === id && this.ready) return
+    if (this.currentClusterId === (id || '')) return
+    initEpoch++
+    pendingInit = null
+    this.setNamespace('all')
     this.currentClusterId = id || ''
     localStorage.setItem('kp_cluster', id || '')
     this.ready = false
@@ -35,23 +41,33 @@ export const store = reactive({
   // 进入某个集群后加载集群信息与 API 资源发现
   async init(force = false) {
     if (this.ready && !force) return
-    this.error = ''
     if (!this.currentClusterId) {
       this.error = '未选择集群'
       throw new Error('未选择集群')
     }
-    const clusterId=this.currentClusterId
-    try {
-      const [cluster, discovery] = await Promise.all([api.cluster(), api.discovery()])
-      if (this.currentClusterId!==clusterId) return
-      this.cluster = cluster
-      this.discovery = discovery
-      this.ready = true
-    } catch (e) {
-      if (this.currentClusterId!==clusterId) return
-      this.error = e.message || '无法连接 Kubernetes 集群'
-      throw e
-    }
+    const clusterId = this.currentClusterId
+    if (!force && pendingInit?.clusterId === clusterId) return pendingInit.promise
+    const epoch = ++initEpoch
+    this.error = ''
+    // 显式刷新替代旧请求；同一集群的普通路由跳转共用正在进行的初始化。
+    const promise = Promise.resolve().then(async () => {
+      try {
+        const [cluster, discovery] = await Promise.all([api.cluster(), api.discovery()])
+        if (this.currentClusterId !== clusterId || initEpoch !== epoch) return
+        this.cluster = cluster
+        this.discovery = discovery
+        if (this.namespace !== 'all' && !cluster.namespaces?.includes(this.namespace)) this.setNamespace('all')
+        this.ready = true
+      } catch (e) {
+        if (this.currentClusterId !== clusterId || initEpoch !== epoch) return
+        this.error = e.message || '无法连接 Kubernetes 集群'
+        throw e
+      } finally {
+        if (pendingInit?.epoch === epoch) pendingInit = null
+      }
+    })
+    pendingInit = { clusterId, epoch, promise }
+    return promise
   },
 
   get namespaces() {

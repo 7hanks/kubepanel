@@ -53,7 +53,13 @@ test('overview scope guards cluster nodes and only queries allowed namespaces', 
     const result = await overview('test', undefined, account)
     assert.equal(result.stat.nodes, null)
     assert.equal(result.errors.nodes.status, 403)
+    assert.equal(result.nodeUsage.available, false)
+    assert.equal(result.nodeUsage.total, null)
+    assert.equal(result.nodeUsage.cpu, null)
+    assert.equal(result.nodeUsage.memory, null)
+    assert.equal(result.metricsAvailable, false)
     assert.ok(!calls.some(c => c.url === '/api/v1/pods' || c.url === '/api/v1/nodes' || c.url === '/api/v1/namespaces'))
+    assert.ok(!calls.some(c => c.url === '/apis/metrics.k8s.io/v1beta1/nodes'))
   })
 })
 

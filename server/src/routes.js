@@ -456,7 +456,7 @@ router.get('/v1/pods/:namespace/:name/logs', requirePerm('pod:logs'), wrap(async
  * Pod 重建通过 Eviction 保留 PDB 与 UID 保护，不保证控制器一定能补足副本。
  */
 router.post('/v1/pods/:namespace/:name/restart', requireAll('cluster:update', 'cluster:delete'), wrap(async (req, res) => {
-  res.json(await operations.restartPod(req.params.namespace, req.params.name, req.clusterId, opOptions(req)))
+  res.json(await operations.restartPod(req.params.namespace, req.params.name, req.clusterId, {...opOptions(req),uid:req.body?.uid}))
 }))
 
 router.get('/v1/pods/:namespace/:name/events', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {

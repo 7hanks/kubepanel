@@ -1,76 +1,49 @@
 <template>
-  <PlatformLayout active="clusters">
+  <component :is="embedded ? 'div' : PlatformLayout" active="clusters">
     <template #actions>
-      <el-button size="small" :loading="loading" circle @click="load(true)"><el-icon><Refresh /></el-icon></el-button>
+      <el-button size="small" :loading="loading" circle @click="load(true).catch(() => {})"><el-icon><Refresh /></el-icon></el-button>
     </template>
 
-    <main class="cluster-main">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px">
-        <div>
-          <h1 style="margin:0;font-size: 21px;font-weight:650">集群列表</h1>
-          <p class="kp-muted" style="margin:6px 0 0;font-size: 12px">选择一个集群进入控制台；也可以导入新的 kubeconfig 纳管更多集群</p>
+    <main class="cluster-main" :class="{ 'cluster-embedded': embedded }">
+      <div class="cluster-toolbar">
+        <h1>{{ embedded ? 'Kubernetes 集群' : '导入集群' }}</h1>
+        <div class="cluster-toolbar-actions">
+          <el-input v-if="embedded" v-model="search" placeholder="搜索名称 / ID" clearable :prefix-icon="Search" style="width:220px" />
+          <el-button v-if="embedded" :loading="loading" :icon="Refresh" @click="load(true).catch(() => {})">刷新</el-button>
+          <el-button v-if="canAdd" type="primary" :icon="Plus" @click="openAdd">导入集群</el-button>
         </div>
-        <el-button v-if="canAdd" type="primary" :icon="Plus" @click="openAdd">导入集群</el-button>
       </div>
-
-      <div class="kp-stat-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-        <div class="kp-stat"><div class="label">集群总数</div><div class="value">{{ clusters.length }}</div></div>
-        <div class="kp-stat"><div class="label">连接正常</div><div class="value kp-ok">{{ healthyCount }}</div></div>
-        <div class="kp-stat"><div class="label">连接异常</div><div class="value" :class="clusters.length - healthyCount ? 'kp-danger' : ''">{{ clusters.length - healthyCount }}</div></div>
-      </div>
-
+      <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" style="margin-bottom:16px" />
       <div v-loading="loading">
-        <div v-if="!clusters.length && !loading" class="kp-card" style="text-align:center;padding:56px 20px">
-          <el-icon style="font-size: 43px;color:#9ca3af"><OfficeBuilding /></el-icon>
-          <p style="font-size: 15px;font-weight:600;margin:14px 0 6px">还没有纳管任何集群</p>
-          <p class="kp-muted" style="margin:0 0 18px;font-size: 12px">
-            点「导入集群」粘贴 kubeconfig，或把 kubeconfig 文件放进服务器的集群目录后刷新
-          </p>
+        <div v-if="!clusters.length && !loading && !loadError" class="kp-card" style="text-align:center;padding:56px 20px">
+          <el-icon style="font-size:43px;color:#9ca3af"><OfficeBuilding /></el-icon>
+          <p style="font-size:15px;font-weight:600;margin:14px 0 18px">还没有可访问的集群</p>
           <el-button v-if="canAdd" type="primary" @click="openAdd">导入第一个集群</el-button>
         </div>
-
-        <div v-else class="cluster-grid">
-          <div v-for="c in clusters" :key="c.id" class="kp-card cluster-card">
-              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
-                <div style="min-width:0">
-                  <div style="display:flex;align-items:center;gap:8px">
-                    <span class="status-dot" :class="c.healthy ? 'ok' : 'bad'" />
-                    <h3 class="cluster-name" style="margin:0;font-size: 15px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" @click="openDetail(c)">{{ c.name }}</h3>
-                  </div>
-                  <div class="kp-mono kp-muted" style="margin-top:6px;font-size:12px;word-break:break-all">{{ c.server }}</div>
-                </div>
-                <el-tag disable-transitions :type="c.healthy ? 'success' : 'danger'" size="small" effect="light">{{ c.healthy ? '正常' : '异常' }}</el-tag>
-              </div>
-
-              <el-divider style="margin:14px 0" />
-
-              <table class="kp-kv" style="font-size:12.5px">
-                <tr><td>K8s 版本</td><td class="kp-mono">{{ c.version }}</td></tr>
-                <tr><td>节点 / 命名空间</td><td>{{ c.nodes ?? '-' }} / {{ c.namespaces ?? '-' }}</td></tr>
-                <tr><td>认证方式</td><td>{{ c.authMode }}</td></tr>
-                <tr><td>Context</td><td class="kp-mono" style="word-break:break-all">{{ c.context || '-' }}</td></tr>
-                <tr><td>来源</td><td class="kp-mono">{{ c.source }}</td></tr>
-              </table>
-
-              <el-alert v-if="['expiring','expired'].includes(c.credentialExpiry?.status)" :type="c.credentialExpiry.status === 'expired' ? 'error':'warning'" :closable="false" style="margin-top:12px" :title="`客户端证书${c.credentialExpiry.status === 'expired' ? '已到期' : `将在 ${c.credentialExpiry.daysRemaining} 天后到期`} · ${c.credentialExpiry.notAfter}`" />
-              <div v-if="c.error" class="kp-danger" style="font-size:12px;margin-top:10px;word-break:break-all">{{ c.error }}</div>
-
-              <div style="display:flex;gap:8px;margin-top:16px">
-                <el-button type="primary" style="flex:1" :disabled="!c.healthy" @click="enter(c)">进入控制台</el-button>
-                <el-button @click="openDetail(c)">详情</el-button>
-                <el-button :loading="testing === c.id" @click="test(c)">测试</el-button>
-                <el-button v-if="c.removable && canRemove" type="danger" plain @click="remove(c)"><el-icon><Delete /></el-icon></el-button>
-              </div>
-            </div>
-        </div>
+        <el-table v-else :data="filteredClusters" stripe border empty-text="没有匹配的集群">
+          <el-table-column label="集群名称 / ID" min-width="190" show-overflow-tooltip>
+            <template #default="{ row: c }">
+              <el-button link type="primary" @click="enter(c)">{{ c.name }}</el-button>
+              <div class="kp-mono kp-muted" style="font-size:12px">{{ c.id }}</div>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="90"><template #default="{ row: c }"><el-tag :type="c.healthy ? 'success' : 'danger'" size="small">{{ c.healthy ? '正常' : '异常' }}</el-tag></template></el-table-column>
+          <el-table-column prop="version" label="版本" min-width="115" />
+          <el-table-column prop="server" label="API Server" min-width="210" show-overflow-tooltip />
+          <el-table-column prop="source" label="来源" min-width="150" show-overflow-tooltip />
+          <el-table-column v-if="hasImportTime" label="导入时间" min-width="165"><template #default="{ row: c }">{{ importedTime(c) }}</template></el-table-column>
+          <el-table-column label="操作" width="190" fixed="right">
+            <template #default="{ row: c }">
+              <el-button link type="primary" @click="openDetail(c)">详情</el-button>
+              <el-button link type="primary" :loading="testing === c.id" @click="test(c)">测试</el-button>
+              <el-button v-if="c.removable && canRemove" link type="danger" @click="remove(c)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
-
-      <p class="kp-muted" style="font-size:12px;margin-top:8px">
-        凭据保存在容器挂载目录 <code>{{ clustersDirHint }}</code>，界面导入的集群重启后不会丢失；只读挂载时只能查看，不能导入或删除。
-      </p>
     </main>
 
-    <!-- 集群详情抽屉：点卡片名称或「详情」按钮打开，不影响当前选中的集群 -->
+    <!-- 查看详情不会切换当前集群 -->
     <el-drawer v-model="detailVisible" :title="`集群详情 · ${detail?.name || ''}`" size="62%" destroy-on-close>
       <div v-loading="detailLoading">
         <el-alert v-if="['expiring','expired'].includes(detail?.credentialExpiry?.status)" :type="detail.credentialExpiry.status === 'expired' ? 'error':'warning'" :closable="false" :title="`客户端证书${detail.credentialExpiry.status === 'expired' ? '已到期' : `将在 ${detail.credentialExpiry.daysRemaining} 天后到期`} · ${detail.credentialExpiry.notAfter}`" style="margin-bottom:12px" />
@@ -94,7 +67,7 @@
           </div>
 
           <div class="kp-section-title">基本信息</div>
-          <table class="kp-kv">
+          <table class="kp-kv"><tbody>
             <tr><td>集群 ID</td><td class="kp-mono">{{ detail.id }}</td></tr>
             <tr><td>API Server</td><td class="kp-mono">{{ detail.server }}</td></tr>
             <tr><td>K8s 版本</td><td>{{ detail.version }}</td></tr>
@@ -105,7 +78,7 @@
             <tr><td>API 资源类型</td><td>{{ detail.resourceTypes }}</td></tr>
             <tr><td>可在界面移除</td><td>{{ detail.removable ? '是' : '否（环境变量 / ServiceAccount / 只读挂载）' }}</td></tr>
             <tr><td>metrics-server</td><td>{{ detail.metricsAvailable ? '已安装（显示实时用量）' : '不可用（实际用量显示未知）' }}</td></tr>
-          </table>
+          </tbody></table>
 
           <div class="kp-section-title" style="margin-top:20px">命名空间（{{ detail.namespaces?.length || 0 }}）</div>
           <div class="kp-tag-row">
@@ -202,20 +175,21 @@
         <el-button type="primary" :loading="adding" @click="submitAdd">校验并导入</el-button>
       </template>
     </el-dialog>
-  </PlatformLayout>
+  </component>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh, Delete, OfficeBuilding } from '@element-plus/icons-vue'
+import { Plus, Refresh, Search, OfficeBuilding } from '@element-plus/icons-vue'
 import api from '../api'
 import { store } from '../store'
 import { cpath } from '../utils/path'
 import { can } from '../utils/perm'
 import PlatformLayout from '../layout/PlatformLayout.vue'
 
+const props = defineProps({ embedded: { type: Boolean, default: false } })
 const router = useRouter()
 const loading = ref(false)
 const adding = ref(false)
@@ -225,7 +199,12 @@ const clusters = ref([])
 const canAdd = computed(() => can('cluster:import'))
 const canRemove = computed(() => can('cluster:remove'))
 const form = reactive({ name: '', kubeconfig: '' })
-const clustersDirHint = '/app/kube/clusters'
+const search = ref('')
+const loadError = ref('')
+const filteredClusters = computed(() => {
+  const term = search.value.trim().toLowerCase()
+  return clusters.value.filter(c => !term || [c.name, c.id].some(value => String(value || '').toLowerCase().includes(term)))
+})
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detail = ref(null)
@@ -238,17 +217,26 @@ function clock(ts) {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('zh-CN', { hour12: false })
 }
 
-const healthyCount = computed(() => clusters.value.filter(c => c.healthy).length)
+function importedTime(c) {
+  const date = c.importedAt ? new Date(c.importedAt) : null
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('zh-CN', { hour12: false }) : '—'
+}
+const hasImportTime = computed(() => clusters.value.some(c => importedTime(c) !== '—'))
 
 async function load(force = false) {
   loading.value = true
-  try { clusters.value = await api.clusters(force) }
-  catch (e) { clusters.value = [] }
+  loadError.value = ''
+  try {
+    clusters.value = await store.loadClusters(force)
+    return clusters.value
+  } catch (e) {
+    loadError.value = e.message || '加载集群列表失败'
+    throw e
+  }
   finally { loading.value = false }
 }
 
 function enter(c) {
-  store.setCluster(c.id)
   router.push(cpath('/overview', c.id))
 }
 
@@ -288,8 +276,18 @@ async function remove(c) {
     )
     await api.removeCluster(c.id)
     ElMessage.success('已移除')
-    if (store.currentClusterId === c.id) store.setCluster('')
-    await load(true)
+    const wasCurrent = store.currentClusterId === c.id
+    if (wasCurrent) store.setCluster('')
+    try { await load(true) }
+    catch (e) {
+      if (wasCurrent) router.replace('/clusters')
+      throw e
+    }
+    if (wasCurrent || !clusters.value.some(item => item.id === store.currentClusterId)) {
+      const next = clusters.value[0]
+      store.setCluster(next?.id || '')
+      router.replace(next ? cpath('/overview', next.id) : '/clusters')
+    }
   } catch (e) {
     if (e?.message && !/cancel|close/i.test(e.message)) ElMessage.error(e.message)
   }
@@ -302,14 +300,24 @@ async function submitAdd() {
   if (!form.kubeconfig.trim()) return ElMessage.warning('请粘贴 kubeconfig 内容')
   adding.value = true
   try {
+    const firstImport = !clusters.value.length
     const r = await api.addCluster(form.name.trim(), form.kubeconfig)
     ElMessage.success(`导入成功，新增 ${r.added} 个集群`)
     addVisible.value = false
+    form.kubeconfig = ''
     await load(true)
+    if (firstImport && clusters.value.length && !props.embedded) enter(clusters.value[0])
   } catch (e) { /* 拦截器已提示 */ }
   finally { adding.value = false }
 }
 
-onMounted(() => load(true))
+onMounted(() => load(true).catch(() => {}))
 </script>
 
+
+<style scoped>
+.cluster-embedded { max-width: none; padding: 0; }
+.cluster-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
+.cluster-toolbar h1 { margin:0; font-size:21px; font-weight:650; }
+.cluster-toolbar-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+</style>

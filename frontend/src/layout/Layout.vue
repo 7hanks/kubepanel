@@ -48,8 +48,8 @@
               <el-icon><component :is="collapsed ? 'Expand' : 'Fold'" /></el-icon>
             </el-button>
           </el-tooltip>
-          <el-tooltip content="返回集群列表" placement="bottom">
-            <el-button size="small" circle text aria-label="返回集群列表" @click="goClusterList"><el-icon><OfficeBuilding /></el-icon></el-button>
+          <el-tooltip content="集群管理" placement="bottom">
+            <el-button size="small" circle text aria-label="集群管理" @click="goClusterList"><el-icon><OfficeBuilding /></el-icon></el-button>
           </el-tooltip>
           <span class="kp-header-sep" />
           <el-select
@@ -93,7 +93,7 @@
             <template #dropdown>
               <el-dropdown-menu>
                 <el-dropdown-item v-if="roleLabel" disabled>{{ roleLabel }}</el-dropdown-item>
-                <el-dropdown-item command="clusters">集群列表</el-dropdown-item>
+                <el-dropdown-item command="clusters">集群管理</el-dropdown-item>
                 <el-dropdown-item command="password" divided>修改密码</el-dropdown-item>
                 <el-dropdown-item command="about">关于</el-dropdown-item>
                 <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
@@ -109,10 +109,10 @@
           <template #default>
             请检查该集群的 kubeconfig、网络连通性与 RBAC 权限。
             <el-button link type="primary" @click="reload">重新连接</el-button>
-            <el-button link type="primary" @click="goClusterList">返回集群列表</el-button>
+            <el-button v-if="!route.meta.clusterManagement" link type="primary" @click="goClusterList">集群管理</el-button>
           </template>
         </el-alert>
-        <router-view v-if="store.ready" v-slot="{ Component }">
+        <router-view v-if="store.ready || route.meta.clusterManagement" v-slot="{ Component }">
           <component :is="Component" :key="route.path" />
         </router-view>
       </main>
@@ -133,7 +133,7 @@ import { store } from '../store'
 import { navGroups, metaFromRoute } from '../config/resources'
 import { parseNavigationExpansion, visibleNavigationGroups, revealActiveNavigationGroup } from '../utils/navigation-groups'
 import { confirmContextChange } from '../utils/navigation'
-import { cpath, CLUSTERS_PATH } from '../utils/path'
+import { cpath } from '../utils/path'
 import api from '../api'
 import ChangePasswordDialog from '../components/ChangePasswordDialog.vue'
 import {
@@ -171,7 +171,6 @@ const autoLabel = computed(() => autoRefresh.value ? `${autoRefresh.value}s 刷�
 const baseGroups = computed(() => {
   const platform = [
     { label: '操作审计', icon: 'Document', path: '/audit', allowed: can('audit:list') },
-    { label: '集群列表', icon: 'OfficeBuilding', path: '/clusters', allowed: allow.value.cluster },
     { label: '用户管理', icon: 'User', path: '/users', allowed: allow.value.users },
     { label: '平台角色', icon: 'UserFilled', path: '/roles', allowed: allow.value.users },
     { label: '镜像仓库', icon: 'Box', path: '/registries', allowed: allow.value.registry },
@@ -230,7 +229,7 @@ function isActive(path, platform = false) {
   return route.path === full || route.path.startsWith(full + '/')
 }
 function go(path) { if (route.path !== cpath(path)) router.push(cpath(path)) }
-function goClusterList() { router.push(CLUSTERS_PATH) }
+function goClusterList() { router.push(cpath('/clusters')) }
 function switchCluster(id) {
   router.push(cpath(route.name==='cluster-monitor' ? '/monitor' : '/overview', id))
 }
@@ -260,7 +259,7 @@ async function onCommand(cmd) {
     goClusterList()
   } else {
     ElMessageBox.alert(
-      'KubePanel · 轻量多集群 Kubernetes 控制台。<br/>先在集群列表选择集群，再进入资源控制台；所有写操作最终由 API Server 执行。',
+      'KubePanel · 轻量多集群 Kubernetes 控制台。',
       '关于', { dangerouslyUseHTMLString: true, confirmButtonText: '知道了' }
     )
   }
@@ -280,10 +279,12 @@ onMounted(async () => {
 })
 onUnmounted(() => clearInterval(refreshTimer))
 
-watch(() => route.params.clusterId, id => {
+// 同一集群从管理页返回资源页也需要重试失败的初始化。
+watch(() => route.path, () => {
+  const id = route.params.clusterId
   if (!id) return
   if (id !== store.currentClusterId) store.setCluster(id)
-  if (!store.ready) store.init(true).catch(() => {})
+  if (!store.ready) store.init().catch(() => {})
 })
 </script>
 

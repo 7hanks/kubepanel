@@ -46,8 +46,9 @@ export const navGroups = [
     ],
   },
   {
-    id: 'cluster', title: '集群', icon: 'Monitor',
+    id: 'cluster', title: '集群管理', icon: 'Monitor',
     items: [
+      { label: 'Kubernetes 集群', icon: 'OfficeBuilding', path: '/clusters' },
       R('Nodes', 'Node', 'nodes', '', 'v1', false, 'Monitor', '节点'),
       R('Namespaces', 'Namespace', 'namespaces', '', 'v1', false, 'Collection', '命名空间'),
       R('Events', 'Event', 'events', '', 'v1', true, 'Bell', '事件'),

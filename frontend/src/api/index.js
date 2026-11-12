@@ -30,7 +30,7 @@ http.interceptors.response.use(
     if (!isLogin) {
       if (status === 401) {
         if (!location.pathname.startsWith('/login')) location.href = '/login'
-      } else if (status !== 404) {
+      } else if (status !== 404 && !err.config?.silent) {
         ElMessage.error(typeof msg === 'string' ? msg.slice(0, 300) : '请求失败')
       }
     }
@@ -112,7 +112,7 @@ export const api = {
   // ---- 节点 / Pod ----
   cordon: (name, unschedulable) => http.post(`/v1/nodes/${encodeURIComponent(name)}/cordon`, { unschedulable }),
   podEvents: (namespace, name) => http.get(`/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/events`),
-  restartPod: (namespace, name) => http.post(`/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/restart`, {}),
+  restartPod: (namespace, name, {dryRun=false,uid,clusterId,signal,silent=false}={}) => http.post(`/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/restart`, {dryRun,...(uid===undefined?{}:{uid})},{params:clusterId?{clusterId}:{},signal,silent}),
   nodeMetrics: () => http.get('/v1/metrics/nodes'),
   podMetrics: (namespace) => http.get('/v1/metrics/pods', { params: { namespace } }),
 

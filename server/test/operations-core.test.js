@@ -76,6 +76,32 @@ test('overview reports failures separately from zero and terminal pod history fr
     assert.equal(result.nodes[0].pods, 1)
     assert.equal(result.nodes[0].allocatable.pods, '10')
     assert.equal(result.nodes[0].diskPressure, true)
+    assert.equal(result.nodeUsage.available, false)
+    assert.equal(result.nodeUsage.reason, 'incomplete-metrics')
+    assert.equal(result.nodes[0].cpu, null)
+    assert.equal(result.metricsAvailable, false)
+  })
+})
+
+test('overview exposes cluster node utilization and keeps an incomplete sample unavailable', async () => {
+  let missing = false
+  await fixture(req => {
+    if (discovery(req)) return discovery(req)
+    if (req.url === '/api/v1/nodes') return { items: ['a', 'b'].map(name => ({ metadata: { name }, status: { allocatable: { cpu: '2', memory: '4Gi' }, capacity: { cpu: '8', memory: '16Gi' } } })) }
+    if (req.url === '/apis/metrics.k8s.io/v1beta1/nodes') return { items: (missing ? ['a'] : ['a', 'b']).map(name => ({ metadata: { name }, usage: { cpu: '500m', memory: '1Gi' } })) }
+    return { items: [] }
+  }, async id => {
+    const complete = await overview(id)
+    assert.equal(complete.nodeUsage.available, true)
+    assert.equal(complete.nodeUsage.cpu.percent, 25)
+    assert.equal(complete.nodeUsage.memory.percent, 25)
+    assert.equal(complete.metricsAvailable, true)
+    missing = true
+    const incomplete = await overview(id)
+    assert.equal(incomplete.nodeUsage.available, false)
+    assert.equal(incomplete.nodeUsage.cpu, null)
+    assert.equal(incomplete.errors.nodeMetrics.status, 206)
+    assert.equal(incomplete.partial, true)
   })
 })
 
