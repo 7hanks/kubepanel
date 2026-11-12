@@ -4,7 +4,12 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import {fileURLToPath} from 'node:url'
 import {createServer} from '../node_modules/vite/dist/node/index.js'
-const vite=await createServer({root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:5178,strictPort:true}})
+const vite=await createServer({root:fileURLToPath(new URL('../',import.meta.url)),server:{host:'127.0.0.1',port:5178,strictPort:true},plugins:[{name:'native-download-fixture',configureServer(server){server.middlewares.use((req,res,next)=>{
+ // Browser-owned downloads can bypass page.route interception. Serve this one
+ // fixture over real local HTTP; it has no connection to a live cluster.
+ if(!req.url.startsWith('/api/v1/container/files/download?'))return next()
+ res.setHeader('Content-Type','application/octet-stream');res.setHeader('Content-Disposition','attachment; filename="hello.txt"');res.end(fileContent)
+})}}]})
 await vite.listen()
 const require=createRequire(import.meta.url)
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright')
@@ -14,7 +19,7 @@ const page=await context.newPage()
 page.setDefaultTimeout(12000)
 await page.addInitScript(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__copiedYaml = text } } }))
 const errors=[];page.on('pageerror',e=>errors.push(e.message))
-let failPods=false,overviewHealthy=false,overviewPartial=false,containerMode=false,fileContent='hello fixture\n',permissionSet=['*'];const writes=[],reads=[]
+let failPods=false,overviewHealthy=false,overviewPartial=false,containerMode=false,fileContent='hello fixture\n',permissionSet=['*'],holdUpload=false,releaseUpload;const writes=[],reads=[]
 const ns='app'
 const pod={apiVersion:'v1',kind:'Pod',metadata:{uid:'pod-1',name:'api-broken',namespace:ns,resourceVersion:'1',creationTimestamp:'2026-11-09T01:00:00Z',labels:{app:'api'}},spec:{containers:[{name:'app',image:'example/app:1'}],nodeName:'worker-1'},status:{phase:'Running',conditions:[{type:'Ready',status:'False',reason:'ContainersNotReady',message:'Container is unready'}],containerStatuses:[{ready:false,restartCount:4,state:{waiting:{reason:'CrashLoopBackOff'}}}]}}
 pod.metadata.managedFields=[{manager:'kubelet',operation:'Update',fieldsV1:{'f:status':{}}}]
@@ -28,7 +33,7 @@ await page.route('**/api/**',async route=>{
  const req=route.request(),url=new URL(req.url()),path=url.pathname.replace(/^\/api/,'')
  if(!url.pathname.startsWith('/api/')) return route.continue()
  if(req.method()==='GET')reads.push({path,params:Object.fromEntries(url.searchParams)})
- const body=req.postDataJSON?.()
+ const body=req.headers()['content-type']?.includes('application/json')?req.postDataJSON():undefined
  if(!['GET','HEAD'].includes(req.method()))writes.push({path,method:req.method(),params:Object.fromEntries(url.searchParams),body,csrf:req.headers()['x-csrf-token']})
  const send=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
  if(path==='/v1/auth/profile')return send({username:'fixture',role:'admin',permissions:permissionSet,csrfToken:'test-csrf',scope:{clusters:['*'],namespaces:['*'],resources:['*']}})
@@ -36,6 +41,16 @@ await page.route('**/api/**',async route=>{
  if(path==='/v1/cluster')return send({name:'测试集群',version:'v1.31',namespaces:['app'],server:'https://fixture.invalid'})
  if(path==='/v1/resources')return send(discovery)
  if(path==='/v1/auth/stream-ticket')return send({ticket:'fixture-ticket'})
+ if(path==='/v1/container/files/download-ticket')return send({url:'/api/v1/container/files/download?clusterId=test&ticket=fixture',bytes:Buffer.byteLength(fileContent)})
+ if(path==='/v1/container/files/download')return route.fulfill({status:200,headers:{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="hello.txt"'},body:fileContent})
+ if(path==='/v1/container/files/upload'){
+  assert.equal(req.headers()['content-type'],'application/octet-stream')
+  assert.equal(req.headers()['x-csrf-token'],'test-csrf')
+  assert.equal(url.searchParams.get('clusterId'),'test')
+  assert.equal(req.postDataBuffer().length,Number(url.searchParams.get('size')))
+  if(holdUpload)await new Promise(resolve=>releaseUpload=resolve)
+  try{return await send({ok:true,path:url.searchParams.get('path'),bytes:Number(url.searchParams.get('size'))})}catch{return}
+ }
  if(path==='/v1/container/files'){
   if(body.action==='list')return send({path:body.path,entries:[{name:'hello.txt',type:'file',path:'/hello.txt'}]})
   if(body.action==='read')return send({path:body.path,base64:Buffer.from(fileContent).toString('base64'),bytes:fileContent.length})
@@ -132,6 +147,16 @@ try{
  await page.getByRole('button',{name:'确认执行',exact:true}).click()
  await fileEditor.waitFor({state:'hidden'})
  assert.ok(writes.some(w=>w.path==='/v1/container/files'&&w.body.action==='write'&&w.body.confirmed&&Buffer.from(w.body.base64,'base64').toString()==='changed fixture'))
+ await files.locator('input[type=file]').setInputFiles({name:'upload-fixture.bin',mimeType:'application/octet-stream',buffer:Buffer.alloc(2*1024**2,0xa5)})
+ await page.getByRole('button',{name:'确认执行',exact:true}).click()
+ await files.getByText(/上传完成 · 2.00 MiB/).waitFor()
+ assert.ok(writes.some(w=>w.path==='/v1/container/files/upload'&&w.params.size===String(2*1024**2)&&w.params.confirmed==='true'))
+ holdUpload=true
+ await files.locator('input[type=file]').setInputFiles({name:'cancel-fixture.bin',mimeType:'application/octet-stream',buffer:Buffer.alloc(2*1024**2,0x5a)})
+ await page.getByRole('button',{name:'确认执行',exact:true}).click()
+ await files.getByRole('button',{name:'取消上传',exact:true}).click()
+ await files.getByText(/上传已取消/).waitFor()
+ releaseUpload?.();holdUpload=false
  await page.screenshot({path:'.local/frontend-qa/file-browser.png',fullPage:true,animations:'disabled'})
  await files.getByRole('button',{name:'关闭',exact:true}).click()
  await page.getByRole('dialog',{name:'选择文件浏览器容器',exact:true}).waitFor({state:'hidden'})
@@ -168,5 +193,5 @@ try{
  await page.screenshot({path:'.local/frontend-qa/restored-mobile.png',fullPage:true,animations:'disabled'})
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
  assert.deepEqual(errors,[])
- console.log('PASS: original resource/YAML UI restored, file browser download/edit/permissions, full draft/diff/preflight, cluster monitor context, terminal auto-connect/disconnect/retry, mobile; no live mutations')
+ console.log('PASS: original resource/YAML UI, native file download, 2MiB raw upload/progress/cancel/edit/permissions, full draft/diff/preflight, cluster monitor context, terminal auto-connect/disconnect/retry, mobile; no live mutations')
 }catch(e){console.error('Browser errors:',errors);console.error('URL:',page.url());console.error((await page.locator('body').innerText()).slice(0,4500));await page.screenshot({path:'.local/frontend-qa/failure.png',fullPage:true});throw e}finally{await browser.close();await vite.close()}

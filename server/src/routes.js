@@ -1,6 +1,7 @@
 import express from 'express'
 import { authMiddleware, login, logout, profile, changePassword, issueStreamTicket, activeStreamAccount } from './auth.js'
 import { containerTools } from './containerTools.js'
+import { createDownloadTickets, transferSize } from './fileTransfer.js'
 import {
   kubeRequest, resRequest, KUBE_HEADERS, KubeError,
   discoverResources, kubeContext, getCluster, getDefaultClusterId,
@@ -25,6 +26,7 @@ import { listRoles, createRole, updateRole, deleteRole } from './roleService.js'
 import { listUsers, createUser, updateUser, deleteUser, countUsersByRole } from './userService.js'
 
 const router = express.Router()
+const downloadTickets = createDownloadTickets()
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next)
 
 /** 越权拦截：账号缺少权限码时返回 403，前端按 message 提示 */
@@ -284,6 +286,53 @@ router.use((req, res, next) => {
 })
 
 // ---------------- 集群信息 ----------------
+const transferContext=(req,res)=>{
+  const controller=new AbortController(),initial={...req.account,sessionId:req.session?.id}
+  const close=()=>{if(!res.writableEnded)controller.abort()}
+  res.on('close',close)
+  res.setHeader('Cache-Control','no-store')
+  res.setHeader('Referrer-Policy','no-referrer')
+  return {signal:controller.signal,live:()=>{const account=activeStreamAccount(initial);if(!account)throw Object.assign(new Error('会话已失效'),{status:401});return account},cleanup:()=>res.off('close',close)}
+}
+router.post('/v1/container/files/upload',wrap(async(req,res)=>{
+  const options=transferContext(req,res)
+  try{
+    if(!req.is('application/octet-stream'))throw new KubeError(415,'上传文件必须使用二进制流')
+    const size=transferSize(req.query.size)
+    if(req.headers['content-length']!==undefined&&String(size)!==req.headers['content-length'])throw new KubeError(400,'上传文件大小与请求长度不一致')
+    res.json(await containerTools.upload(req.account,req.clusterId,{...req.query,size,confirmed:bool(req.query.confirmed),overwrite:bool(req.query.overwrite)}, {...options,input:req}))
+  }catch(e){
+    // Do not leave an unread multi-GiB request on a keep-alive connection.
+    if(!req.complete){res.setHeader('Connection','close');res.once('finish',()=>req.destroy())}
+    throw e
+  }finally{options.cleanup()}
+}))
+router.post('/v1/container/files/download-ticket',wrap(async(req,res)=>{
+  const options=transferContext(req,res)
+  try{
+    const target={...req.body,clusterId:req.clusterId},bytes=await containerTools.downloadInfo(req.account,req.clusterId,target,options)
+    const ticket=downloadTickets.issue(req.account,req.session?.id,{...target,bytes})
+    res.json({url:`/api/v1/container/files/download?clusterId=${encodeURIComponent(req.clusterId)}&ticket=${encodeURIComponent(ticket)}`,bytes})
+  }finally{options.cleanup()}
+}))
+router.get('/v1/container/files/download',wrap(async(req,res)=>{
+  const options=transferContext(req,res)
+  try{
+    const target=downloadTickets.consume(req.query.ticket,req.account,req.session?.id,req.clusterId)
+    await containerTools.download(req.account,req.clusterId,target,{...options,output:res,onReady:size=>{
+      const name=target.path.split('/').pop()||'download'
+      res.setHeader('Content-Type','application/octet-stream')
+      res.setHeader('Content-Length',String(size))
+      res.setHeader('Content-Disposition',`attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(name).replace(/[!'()*]/g,c=>'%'+c.charCodeAt(0).toString(16))}`)
+      res.setHeader('X-Content-Type-Options','nosniff')
+    }})
+    res.end()
+  }catch(e){
+    if(res.headersSent){res.destroy();return}
+    res.removeHeader('Content-Length');res.removeHeader('Content-Disposition');res.removeHeader('Content-Type')
+    throw e
+  }finally{options.cleanup()}
+}))
 router.post('/v1/container/files',wrap(async(req,res)=>{
   const controller=new AbortController()
   const close=()=>{if(!res.writableEnded)controller.abort()}

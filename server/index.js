@@ -88,6 +88,9 @@ app.use((err, req, res, next) => {
 })
 
 const server = http.createServer(app)
+// Large file requests have their own idle timeout and live authorization checks.
+// Keep the header timeout short while allowing a bounded two-hour upload body.
+server.requestTimeout = 2 * 60 * 60 * 1000 + 60000
 attachTerminal(server, {isSecureRequest:req => !!req.socket.encrypted ||
   (app.get('trust proxy fn')(req.socket.remoteAddress,0) && String(req.headers['x-forwarded-proto']||'').split(',')[0].trim()==='https')})
 

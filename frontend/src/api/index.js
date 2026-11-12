@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { uploadFile } from '../utils/container-transfer'
 
 // 后端同源托管，所有接口都在 /api 下
 const http = axios.create({ baseURL: '/api', timeout: 30000, withCredentials: true })
@@ -47,6 +48,8 @@ export function resPath(group, version, plural, namespace, name) {
 
 export const api = {
   containerFile: (body,config={}) => http.post('/v1/container/files',body,{timeout:20000,...config}),
+  containerUpload: (target,file,config={}) => uploadFile(http,target,file,config),
+  containerDownloadTicket: (body,config={}) => http.post('/v1/container/files/download-ticket',body,{timeout:20000,...config,params:{...config.params,clusterId:body.clusterId}}),
   streamTicket: body => http.post('/v1/auth/stream-ticket', body),
   audit: params => http.get('/v1/audit', { params }),
   history: (namespace,name,kind) => http.get(`/v1/workloads/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/history`, {params:{kind}}),

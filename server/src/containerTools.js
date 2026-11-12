@@ -4,6 +4,7 @@ import { getKubeConfig, resRequest } from './kube.js'
 import { assertResourceAccess } from './access.js'
 import { can } from './permissions.js'
 import { writeAudit } from './auditService.js'
+import { createTransferExecutor, transferCommand, transferSize } from './fileTransfer.js'
 
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status})}
 const FILE_LIMIT=1024*1024
@@ -52,23 +53,44 @@ export function createExecRunner(connect) { return function execute(target,comma
 }}
 export const executeContainer=createExecRunner((target,command,stdout,stderr,stdin,callback)=>new Exec(getKubeConfig(target.clusterId)).exec(target.namespace,target.pod,target.container,command,stdout,stderr,stdin,false,callback))
 const active=new Map()
-export function createContainerTools({readPod=async t=>(await resRequest('GET',{group:'',version:'v1',plural:'pods'},{clusterId:t.clusterId,namespace:t.namespace,name:t.pod,timeout:4000})).data,execute=executeContainer,audit=writeAudit}={}) {
+export function createContainerTools({readPod=async t=>(await resRequest('GET',{group:'',version:'v1',plural:'pods'},{clusterId:t.clusterId,namespace:t.namespace,name:t.pod,timeout:4000})).data,execute=executeContainer,transfer=createTransferExecutor(),audit=writeAudit}={}) {
  const authorize=(account,clusterId,t,permission)=>{
   if(!can(account,permission))fail(403,'缺少独立的容器操作权限')
   if(![t.namespace,t.pod,t.container].every(identity)||!identity(clusterId)||!identity(t.uid))fail(400,'缺少合法的 Pod / 容器身份')
   assertResourceAccess(account,{clusterId,namespace:t.namespace,group:'',plural:'pods',verb:'get'})
  }
- async function run(account,clusterId,t,permission,command,options,live=()=>account) {
+ async function run(account,clusterId,t,permission,command,options,live=()=>account,executor=execute) {
   const check=()=>authorize(live(),clusterId,t,permission)
   check();const target={...t,clusterId};const pod=await readPod(target);check()
   if(pod.metadata?.uid!==t.uid)fail(409,'Pod 已重新创建，请刷新后重新选择')
   if(![...(pod.spec?.containers||[]),...(pod.spec?.initContainers||[]),...(pod.spec?.ephemeralContainers||[])].some(c=>c.name===t.container))fail(400,'容器不存在')
   if(![...(pod.status?.containerStatuses||[]),...(pod.status?.initContainerStatuses||[]),...(pod.status?.ephemeralContainerStatuses||[])].some(c=>c.name===t.container&&c.state?.running))fail(409,'容器当前未运行')
   audit({username:account.username,action:permission,clusterId,namespace:t.namespace,resource:'pods/exec',name:t.pod,status:200})
-  const result=await execute(target,command,{...options,authorize:check});check();return result
+  const result=await executor(target,command,{...options,authorize:check});check();return result
  }
  async function limited(account,fn){const key=account.username;if((active.get(key)||0)>=2)fail(429,'容器操作过于频繁，请等待当前操作完成');active.set(key,(active.get(key)||0)+1);try{return await fn()}finally{active.set(key,Math.max(0,(active.get(key)||1)-1))}}
+ async function fileSize(account,clusterId,body,{signal,live}={}) {
+  const path=safeContainerPath(body.path)
+  const result=await run(account,clusterId,body,'pod:files:read',transferCommand('stat',path),{signal,maxBytes:2048},live)
+  if(result.exitCode!==0)fail(422,'无法读取文件，请检查路径及容器内的 wc 工具')
+  return transferSize(result.stdout.toString().trim())
+ }
  return {
+  upload:(account,clusterId,body,{input,signal,live}={})=>limited(account,async()=>{
+   authorize(account,clusterId,body,'pod:files:write')
+   const path=safeContainerPath(body.path),size=transferSize(body.size)
+   if(path==='/')fail(400,'不能覆盖容器根目录')
+   if(body.confirmed!==true)fail(400,'上传文件需要明确确认')
+   const result=await run(account,clusterId,body,'pod:files:write',transferCommand('upload',path,{size,overwrite:body.overwrite===true}),{input,size,signal},live,transfer)
+   return {ok:true,path,bytes:result.bytes}
+  }),
+  downloadInfo:(account,clusterId,body,options)=>limited(account,()=>fileSize(account,clusterId,body,options)),
+  download:(account,clusterId,body,{output,onReady,signal,live}={})=>limited(account,async()=>{
+   const path=safeContainerPath(body.path),size=await fileSize(account,clusterId,body,{signal,live})
+   if(body.bytes!==size)fail(409,'文件大小已变化，请重新下载')
+   onReady(size)
+   return run(account,clusterId,body,'pod:files:read',transferCommand('download',path,{size}),{output,size,signal},live,transfer)
+  }),
   file:(account,clusterId,body,{signal,live}={})=>limited(account,async()=>{
    const {action}=body,path=safeContainerPath(body.path),permission=['list','read'].includes(action)?'pod:files:read':'pod:files:write'
    authorize(account,clusterId,body,permission)
@@ -76,7 +98,7 @@ export function createContainerTools({readPod=async t=>(await resRequest('GET',{
    let input
    if(action==='write'){
     if(typeof body.base64!=='string'||body.base64.length>Math.ceil(FILE_LIMIT/3)*4+4||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(body.base64))fail(400,'文件内容不是合法 Base64 或超过 1 MiB')
-    input=Buffer.from(body.base64,'base64');if(input.length>FILE_LIMIT)fail(413,'文件不能超过 1 MiB')
+    input=Buffer.from(body.base64,'base64');if(input.length>FILE_LIMIT)fail(413,'在线编辑不能超过 1 MiB，请使用上传文件')
    }
    const command=containerCommand(action,path,{...body,bytes:input?.length||0})
    const result=await run(account,clusterId,body,permission,command,{input,signal,maxBytes:action==='read'?FILE_LIMIT+2048:128*1024},live)
