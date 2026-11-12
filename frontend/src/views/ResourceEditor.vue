@@ -108,7 +108,11 @@ async function check(){
 async function preview(){try{previewYaml.value=dump(currentBody(),{noRefs:true,lineWidth:120});previewOpen.value=true}catch(e){await showError(e.message)}}
 async function save(){
  if(!canSave.value)return
- const body=currentBody(),snapshot=signature.value,epoch=generation;saving.value=true;error.value=''
+ let body
+ try{body=currentBody()}catch(e){checked.value=null;await showError(e.message);return}
+ if(JSON.stringify(body)!==checked.value||target.value.key!==targetKey.value){checked.value=null;await showError('配置已发生变化，请重新执行服务端预检');return}
+ if(!canResource(meta.value,creating.value?'create':'update',body.metadata.namespace,store.currentClusterId)||!creating.value&&meta.value.kind==='Secret'&&!can('secret:read')){checked.value=null;await showError('当前账号没有此目标资源的编辑权限');return}
+ const epoch=generation;saving.value=true;error.value=''
  try{await submit(body,false);if(epoch!==generation)return;previewOpen.value=false;baseline.value=JSON.stringify(draft.value);touched.value=false;checked.value=null;ElMessage.success(creating.value?'创建成功':'保存成功');leavingAfterSave=true;await router.push(listPath())}
  catch(e){checked.value=null;previewOpen.value=false;await showError(e.status===409?'资源版本已变化，草稿已保留。请导出草稿，重新读取并核对修改。':e.message||'保存失败，草稿已保留','server')}
  finally{saving.value=false;leavingAfterSave=false}

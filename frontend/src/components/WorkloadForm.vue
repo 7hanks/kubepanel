@@ -48,7 +48,7 @@ const containerKeys=['name','image','imagePullPolicy','command','args','workingD
 const podKeys=['containers','initContainers','volumes','restartPolicy','serviceAccountName','imagePullSecrets']
 const omit=(object,keys)=>Object.fromEntries(Object.entries(object||{}).filter(([key])=>!keys.includes(key)))
 const containerExtra=computed(()=>omit(current.value,containerKeys)),podExtra=computed(()=>omit(pod.value,podKeys)),strategy=computed(()=>omit(props.modelValue.spec,['template','jobTemplate']))
-function replaceSubset(object,keys,next){const merged=mergeFormFields(object,keys,next);for(const key of Object.keys(object))if(!keys.includes(key))delete object[key];for(const [key,value] of Object.entries(merged))Object.defineProperty(object,key,{value,writable:true,enumerable:true,configurable:true})}
+function replaceSubset(object,keys,next){const merged=mergeFormFields(object,keys,next);for(const key of Object.keys(object))if(!keys.includes(key))delete object[key];for(const [key,value] of Object.entries(merged))object[key]=value}
 function setContainerExtra(value){replaceSubset(current.value,containerKeys,value)}
 function setPodExtra(value){replaceSubset(pod.value,podKeys,value)}
 function setStrategy(value){replaceSubset(props.modelValue.spec,['template','jobTemplate'],value)}

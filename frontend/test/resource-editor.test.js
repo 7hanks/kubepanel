@@ -80,3 +80,12 @@ test('a locally invalid preflight clears an earlier successful check even when t
   view.state.setValidity('标签','');assert.equal(view.state.canSave.value,false)
  }finally{view.destroy()}
 })
+test('saving rechecks the actual body even if a draft change bypassed reactive cache invalidation',async()=>{
+ const view=fixture();try{
+  await view.state.load();await view.state.check();assert.equal(view.state.canSave.value,true)
+  Object.defineProperty(view.state.draft.value.data,'added',{value:'untracked change',writable:true,enumerable:true,configurable:true})
+  await view.state.save()
+  assert.equal(view.calls.length,1)
+  assert.equal(view.state.canSave.value,false)
+ }finally{view.destroy()}
+})
