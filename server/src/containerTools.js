@@ -72,7 +72,7 @@ export function createContainerTools({readPod=async t=>(await resRequest('GET',{
  async function fileSize(account,clusterId,body,{signal,live}={}) {
   const path=safeContainerPath(body.path)
   const result=await run(account,clusterId,body,'pod:files:read',transferCommand('stat',path),{signal,maxBytes:2048},live)
-  if(result.exitCode!==0)fail(422,'无法读取文件，请检查路径及容器内的 wc 工具')
+  if(result.exitCode!==0)fail(422,'无法读取文件，请检查路径及容器内的 stat 工具')
   return transferSize(result.stdout.toString().trim())
  }
  return {

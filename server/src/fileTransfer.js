@@ -16,7 +16,7 @@ export function transferSize(value) {
 // marker sent only after the HTTP body has ended at exactly the declared size.
 export function transferCommand(action, path, { size = 0, overwrite = false } = {}) {
   const scripts = {
-    stat: '[ -f "$1" ] && [ ! -L "$1" ] || exit 2; wc -c < "$1"',
+    stat: '[ -f "$1" ] && [ ! -L "$1" ] || exit 2; stat -c %s "$1"',
     download: '[ -f "$1" ] && [ ! -L "$1" ] || exit 2; head -c "$2" "$1"',
     upload: `umask 077
 p=$1
@@ -28,7 +28,7 @@ g=
 trap 'rm -f "$t"; [ -z "$g" ] || rm -f "$g"' EXIT
 trap 'exit 4' HUP INT TERM
 head -c "$2" > "$t" || exit 5
-n=$(wc -c < "$t") || exit 5
+n=$(stat -c %s "$t") || exit 5
 [ "$n" -eq "$2" ] || exit 6
 printf R
 c=$(head -c 1) || exit 6
@@ -123,7 +123,7 @@ export function createTransferExecutor(connect = connectTransfer) {
         } else if (channel === 3) {
           if (data.length > 16384) throw error(502, '无效的容器执行结果')
           const status = JSON.parse(data.toString())
-          if (status.status !== 'Success') throw error(422, '容器文件传输失败，请检查路径、权限、剩余空间及 head / wc / mktemp / ln / mv 工具')
+          if (status.status !== 'Success') throw error(422, '容器文件传输失败，请检查路径、权限、剩余空间及 head / stat / mktemp / ln / mv 工具')
           if (!inputDone || (output && received !== size)) throw error(409, '文件传输不完整，请重试')
           authorize(); finish()
         } else if (channel === 2) {

@@ -28,6 +28,15 @@ test('5 GiB boundaries use safe integer byte counts, independent of the editor l
   for(const size of [TRANSFER_LIMIT+1,Number.MAX_SAFE_INTEGER])assert.throws(()=>transferSize(size),{status:413})
   for(const size of [-1,'1.2','1e5','',null,true])assert.throws(()=>transferSize(size),{status:400})
 })
+test('file size checks use metadata, avoiding old wc 32-bit counters and whole-file rereads',{skip:process.platform==='win32'},()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'kubepanel-size-')),file=path.join(root,'sparse')
+  try{
+    fs.writeFileSync(file,'');fs.truncateSync(file,TRANSFER_LIMIT)
+    const command=transferCommand('stat',file),result=spawnSync(command[0],command.slice(1),{timeout:3000,encoding:'utf8'})
+    assert.equal(result.status,0,result.stderr);assert.equal(transferSize(result.stdout.trim()),TRANSFER_LIMIT)
+    assert.doesNotMatch(transferCommand('upload',file,{size:TRANSFER_LIMIT})[2],/\bwc\b/)
+  }finally{fs.rmSync(root,{recursive:true,force:true})}
+})
 test('upload applies websocket backpressure, sends bytes unchanged and commits only after exact HTTP EOF',async()=>{
   const socket=new Socket(),frames=[],source=[Buffer.alloc(65537,255),Buffer.from('hello')];let pulled=0,receive,release
   socket.send=(frame,cb)=>{frames.push(Buffer.from(frame));release=()=>{cb();if(frames.length===3)receive(1,Buffer.from('R'),socket)}}
