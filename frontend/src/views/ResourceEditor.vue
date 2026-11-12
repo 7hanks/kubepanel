@@ -1,30 +1,86 @@
 <template>
   <div class="resource-editor" v-loading="loading">
-    <header class="editor-heading"><div><div class="editor-context">{{store.currentCluster?.name||store.currentClusterId}} <span>/</span> {{draft?.metadata?.namespace||'集群范围'}} <span>/</span> {{meta.kind}}</div><h1>{{creating?'新建':'编辑'}} {{meta.kind}}<span v-if="!creating"> · {{route.params.name}}</span></h1></div><div class="editor-heading-actions"><el-tag v-if="original?.metadata?.resourceVersion" type="info" effect="plain">RV {{original.metadata.resourceVersion}}</el-tag><el-button :disabled="busy" @click="cancel">取消</el-button><el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">{{creating?'创建':'保存'}}</el-button></div></header>
-    <div v-if="error" ref="errorRef" class="editor-error" role="alert" tabindex="-1"><strong>请检查以下问题</strong><p>{{error}}</p><el-button :disabled="busy" @click="reread">重新读取</el-button><el-button v-if="draft" :disabled="busy" @click="exportYaml">导出草稿</el-button></div>
+    <header class="editor-hero">
+      <span class="hero-grid" aria-hidden="true"></span>
+      <span class="hero-orb" aria-hidden="true"></span>
+      <div class="hero-body">
+        <nav class="editor-context" aria-label="当前位置">
+          <span>{{store.currentCluster?.name||store.currentClusterId}}</span>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
+          <span>{{draft?.metadata?.namespace||'集群范围'}}</span>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
+          <span>{{resourceTitle(meta)}}</span>
+        </nav>
+        <div class="hero-title-row">
+          <span class="hero-icon" aria-hidden="true"><el-icon><component :is="meta.icon||'Document'"/></el-icon></span>
+          <div class="hero-title-text">
+            <h1>{{creating?'新建':'编辑'}} {{resourceTitle(meta)}}<span v-if="!creating" class="hero-resource-name">{{route.params.name}}</span></h1>
+            <div class="hero-chips">
+              <span class="hchip"><i class="hchip-dot"></i>{{creating?'新草稿':'已纳管'}}</span>
+              <span class="hchip" v-if="meta.namespaced">{{draft?.metadata?.namespace||'—'}}</span>
+              <span class="hchip hchip--brand">{{meta.kind}}</span>
+              <span class="hchip" v-if="original?.metadata?.resourceVersion">RV {{original.metadata.resourceVersion}}</span>
+              <span class="hchip hchip--amber" v-if="draft?.immutable">不可变</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="editor-heading-actions">
+        <el-button :disabled="busy" @click="cancel">取消</el-button>
+        <el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">{{creating?'创建':'保存'}}</el-button>
+      </div>
+    </header>
+
+    <div v-if="error" ref="errorRef" class="editor-error" role="alert" tabindex="-1"><span class="editor-error-icon" aria-hidden="true">!</span><div><strong>请检查以下问题</strong><p>{{error}}</p></div><div class="editor-error-actions"><el-button :disabled="busy" @click="reread">重新读取</el-button><el-button v-if="draft" :disabled="busy" @click="exportYaml">导出草稿</el-button></div></div>
     <el-alert v-if="!authorized&&!loading" type="warning" :closable="false" show-icon :title="meta.kind==='Secret'&&!creating&&!can('secret:read')?'编辑 Secret 需要独立的读取 Secret 权限，避免覆盖未读取的密文。':'当前账号没有此目标资源的编辑权限。'"/>
+
+    <EditorInsights v-if="draft&&!loadFailed&&authorized" :items="insightItems"/>
+
     <template v-if="draft&&!loadFailed&&authorized">
       <div class="editor-card" :key="formKey">
         <el-tabs v-model="activeTab" :before-leave="changeTab" class="editor-tabs">
-          <el-tab-pane label="基本信息" name="basic"><el-form label-width="105px" :disabled="busy" class="editor-basic-form">
-            <el-form-item v-if="meta.namespaced" label="命名空间" required><el-select v-model="draft.metadata.namespace" :disabled="!creating||busy" filterable allow-create default-first-option aria-label="命名空间"><el-option v-for="ns in namespaces" :key="ns" :label="ns" :value="ns"/></el-select></el-form-item>
-            <el-form-item label="名称" required><el-input v-model="draft.metadata.name" :disabled="!creating||busy" aria-label="资源名称" placeholder="请输入资源名称"/></el-form-item>
-            <el-form-item label="注解"><KeyValueFields v-model="draft.metadata.annotations" label="注解" add-label="添加注解" :disabled="busy" @change="touch" @validity="value=>setValidity('注解',value)"/></el-form-item>
-            <el-form-item label="标签"><KeyValueFields v-model="draft.metadata.labels" label="标签" add-label="添加标签" :disabled="busy" @change="touch" @validity="value=>setValidity('标签',value)"/></el-form-item>
-            <el-form-item v-if="['ConfigMap','Secret'].includes(meta.kind)" label="不可变"><el-switch v-model="draft.immutable" :disabled="busy||(!creating&&original?.immutable===true)" aria-label="不可变配置"/></el-form-item>
-            <el-form-item v-if="meta.kind==='Secret'" label="Secret 类型"><el-select v-model="draft.type" :disabled="busy||!creating" filterable allow-create default-first-option aria-label="Secret 类型"><el-option v-for="type in ['Opaque','kubernetes.io/tls','kubernetes.io/dockerconfigjson','kubernetes.io/basic-auth']" :key="type" :label="type" :value="type"/></el-select></el-form-item>
-          </el-form></el-tab-pane>
-          <el-tab-pane v-if="workload&&meta.kind!=='Pod'" label="部署策略" name="strategy"><el-form label-width="105px" :disabled="busy"><WorkloadForm :model-value="draft" section="strategy" :creating="creating" :disabled="busy"/></el-form></el-tab-pane>
+          <el-tab-pane name="basic">
+            <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.basic"/></svg>基本信息</span></template>
+            <el-form label-width="105px" :disabled="busy" class="editor-basic-form">
+              <el-form-item v-if="meta.namespaced" label="命名空间" required><el-select v-model="draft.metadata.namespace" :disabled="!creating||busy" filterable allow-create default-first-option aria-label="命名空间" :class="{'editor-static-field':!creating}"><el-option v-for="ns in namespaces" :key="ns" :label="ns" :value="ns"/></el-select></el-form-item>
+              <el-form-item label="名称" required><el-input v-model="draft.metadata.name" :disabled="!creating||busy" aria-label="资源名称" :class="{'editor-static-field':!creating}" placeholder="请输入资源名称"/></el-form-item>
+              <el-form-item label="注解"><KeyValueFields v-model="draft.metadata.annotations" label="注解" add-label="添加注解" :disabled="busy" @change="touch" @validity="value=>setValidity('注解',value)"/></el-form-item>
+              <el-form-item label="标签"><KeyValueFields v-model="draft.metadata.labels" label="标签" add-label="添加标签" :disabled="busy" @change="touch" @validity="value=>setValidity('标签',value)"/></el-form-item>
+              <el-form-item v-if="['ConfigMap','Secret'].includes(meta.kind)" label="不可变"><el-switch v-model="draft.immutable" :disabled="busy||(!creating&&original?.immutable===true)" aria-label="不可变配置"/></el-form-item>
+              <el-form-item v-if="meta.kind==='Secret'" label="Secret 类型"><el-select v-model="draft.type" :disabled="busy||!creating" filterable allow-create default-first-option aria-label="Secret 类型"><el-option v-for="type in ['Opaque','kubernetes.io/tls','kubernetes.io/dockerconfigjson','kubernetes.io/basic-auth']" :key="type" :label="type" :value="type"/></el-select></el-form-item>
+            </el-form>
+            <el-form v-if="meta.kind==='Service'" label-width="110px" :disabled="busy"><ServiceForm :model-value="draft" mode="basic" :disabled="busy" @change="touch" @validity="value=>setValidity('选择器',value)"/></el-form>
+          </el-tab-pane>
+          <el-tab-pane v-if="workload&&meta.kind!=='Pod'" name="strategy">
+            <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.strategy"/></svg>部署策略</span></template>
+            <el-form label-width="105px" :disabled="busy"><WorkloadForm :model-value="draft" section="strategy" :creating="creating" :disabled="busy"/></el-form>
+          </el-tab-pane>
           <el-tab-pane v-if="workload" :label="meta.kind==='Pod'?'容器组配置':'容器组模板'" name="template"><div class="template-workspace"><nav class="template-nav" aria-label="容器组配置导航"><button v-for="item in templateSections" :key="item.key" type="button" :class="{active:templateSection===item.key}" @click="templateSection=item.key">{{item.label}}</button></nav><section class="template-content"><el-form label-width="100px" :disabled="busy"><template v-if="templateSection==='basic'"><el-form-item label="容器组标签"><KeyValueFields :model-value="templateMetadata.labels" label="容器组标签" :disabled="busy" @update:model-value="value=>setTemplateMetadata('labels',value)" @change="touch" @validity="value=>setValidity('容器组标签',value)"/></el-form-item><el-form-item label="容器组注解"><KeyValueFields :model-value="templateMetadata.annotations" label="容器组注解" :disabled="busy" @update:model-value="value=>setTemplateMetadata('annotations',value)" @change="touch" @validity="value=>setValidity('容器组注解',value)"/></el-form-item></template><WorkloadForm v-else :model-value="draft" :section="templateSection" :creating="creating" :disabled="busy"/></el-form></section></div></el-tab-pane>
-          <el-tab-pane v-if="meta.kind==='ConfigMap'" label="条目模式" name="entries"/>
-          <el-tab-pane v-if="meta.kind==='ConfigMap'" label="标签页模式" name="files"/>
+          <el-tab-pane v-if="['ConfigMap','Service'].includes(meta.kind)" name="entries">
+            <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.entries"/></svg>条目模式</span></template>
+          </el-tab-pane>
+          <el-tab-pane v-if="['ConfigMap','Service'].includes(meta.kind)" name="files">
+            <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.files"/></svg>标签页模式</span></template>
+          </el-tab-pane>
           <el-tab-pane v-if="meta.kind==='Secret'" label="数据条目" name="secret"><el-form label-width="125px" :disabled="busy"><el-form-item label="文本数据"><KeyValueFields v-model="draft.stringData" multiline label="文本数据" :disabled="busy" @change="touch" @validity="value=>setValidity('文本数据',value)"/></el-form-item><el-form-item v-if="!creating||draft.data" label="Base64 数据"><KeyValueFields v-model="draft.data" multiline label="Base64 数据" :disabled="busy" @change="touch" @validity="value=>setValidity('Base64 数据',value)"/></el-form-item></el-form></el-tab-pane>
-          <el-tab-pane v-if="!workload||Object.keys(extraFields).length" :label="workload||meta.kind==='ConfigMap'?'其他字段':'资源配置'" name="fields"><StructuredFields :model-value="extraFields" :reserved-keys="excluded" :disabled="busy" path="resource" @update:model-value="setExtraFields"/></el-tab-pane>
+          <el-tab-pane v-if="!workload&&meta.kind!=='Service'||Object.keys(extraFields).length" :label="workload||meta.kind==='ConfigMap'?'其他字段':'资源配置'" name="fields"><StructuredFields :model-value="extraFields" :reserved-keys="excluded" :disabled="busy" path="resource" @update:model-value="setExtraFields"/></el-tab-pane>
           <el-tab-pane label="YAML" name="yaml"><div class="editor-yaml-tools"><el-button :disabled="busy" @click="fileInput.click()">导入 YAML</el-button><el-button :disabled="busy" @click="exportYaml">导出 YAML</el-button><span class="kp-muted">与表单共用同一份配置</span><input ref="fileInput" type="file" accept=".yaml,.yml,.txt" hidden @change="importFile"/></div><textarea v-model="yamlText" class="kp-yaml editor-yaml" :disabled="busy" spellcheck="false" aria-label="资源 YAML 草稿" @input="touch"/></el-tab-pane>
         </el-tabs>
-        <div v-if="meta.kind==='ConfigMap'" v-show="['entries','files'].includes(activeTab)" class="configmap-editor"><div class="configmap-toolbar"><h2>配置条目</h2><span class="kp-muted">文件名作为键，配置内容作为值</span></div><KeyValueFields v-model="draft.data" label="配置条目" :mode="activeTab==='files'?'tabs':'rows'" multiline :disabled="busy||(!creating&&original?.immutable===true)" @change="touch" @validity="value=>setValidity('配置条目',value)"/></div>
+        <el-form v-if="meta.kind==='Service'" v-show="['entries','files'].includes(activeTab)" :disabled="busy"><ServiceForm :model-value="draft" :mode="activeTab==='files'?'tabs':'entries'" :disabled="busy"/></el-form>
+        <div v-if="meta.kind==='ConfigMap'" v-show="['entries','files'].includes(activeTab)" class="configmap-editor">
+          <div class="cm-toolbar">
+            <span class="cm-toolbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M14 3v5h5"/></svg></span>
+            <div class="cm-toolbar-copy"><h2>配置条目</h2><p>{{activeTab==='files'?'左侧切换文件，右侧编辑内容 · 适合多文件配置':'文件名作为键，配置内容作为值 · 支持多行文本'}}</p></div>
+            <div class="cm-toolbar-side"><span class="cm-pill"><i></i>{{entryCount}} 个文件</span><span class="cm-pill cm-pill--soft">{{formatBytes(contentBytes)}}</span></div>
+          </div>
+          <KeyValueFields v-model="draft.data" label="配置条目" :mode="activeTab==='files'?'tabs':'rows'" multiline :disabled="busy||(!creating&&original?.immutable===true)" @change="touch" @validity="value=>setValidity('配置条目',value)"/>
+        </div>
       </div>
-      <footer class="editor-footer"><span class="editor-check-state" :class="{checked:canSave}">{{canSave?'当前配置已通过预检，可保存':checked?'配置已更改，请重新预检':'填写完成后，先预检并核对变更'}}</span><div><el-button :disabled="busy" @click="preview">变更预览</el-button><el-button :loading="checking" :disabled="busy||!authorized" @click="check">服务端预检</el-button><el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">{{creating?'创建':'保存'}}</el-button></div></footer>
+      <footer class="editor-footer">
+        <div class="save-flow" aria-hidden="true"><span class="flow-step" :class="{done:dirty}"><i>1</i>编辑配置</span><span class="flow-line" :class="{done:!!checked}"></span><span class="flow-step" :class="{done:!!checked}"><i>2</i>服务端预检</span><span class="flow-line" :class="{done:canSave}"></span><span class="flow-step" :class="{done:canSave}"><i>3</i>保存</span></div>
+        <span class="editor-check-state" :class="{checked:canSave}">{{canSave?'当前配置已通过预检，可保存':checked?'配置已更改，请重新预检':'填写完成后，先预检并核对变更'}}</span>
+        <div class="editor-footer-actions"><el-button :disabled="busy" @click="preview">变更预览</el-button><el-button :loading="checking" :disabled="busy||!authorized" @click="check">服务端预检</el-button><el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">{{creating?'创建':'保存'}}</el-button></div>
+      </footer>
     </template>
     <el-dialog v-model="previewOpen" :title="creating?'创建预览':'变更预览'" width="min(1300px,96vw)" top="5vh"><YamlDiff :before="creating?'':originalYaml" :after="previewYaml"/><template #footer><el-button @click="previewOpen=false">返回表单</el-button><el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">确认{{creating?'创建':'保存'}}</el-button></template></el-dialog>
   </div>
@@ -46,6 +102,9 @@ import KeyValueFields from '../components/KeyValueFields.vue'
 import StructuredFields from '../components/StructuredFields.vue'
 import WorkloadForm from '../components/WorkloadForm.vue'
 import YamlDiff from '../components/YamlDiff.vue'
+import ServiceForm from '../components/ServiceForm.vue'
+import EditorInsights from '../components/EditorInsights.vue'
+import {resourceTitle} from '../utils/resource-ui'
 
 const route=useRoute(),router=useRouter(),meta=computed(()=>metaFromRoute(route.params,store.discovery))
 const creating=computed(()=>route.name==='resource-create'),workload=computed(()=>WORKLOAD_KINDS.includes(meta.value.kind))
@@ -57,8 +116,14 @@ const namespaces=computed(()=>store.namespaces||[])
 const authorized=computed(()=>canResource(meta.value,creating.value?'create':'update',draft.value?.metadata?.namespace,store.currentClusterId)&&(creating.value||meta.value.kind!=='Secret'||can('secret:read')))
 const templateMetadata=computed(()=>podTemplate(draft.value)?.metadata||{})
 const templateSections=[{key:'basic',label:'基本信息'},{key:'containers',label:'容器信息'},{key:'volumes',label:'数据卷'},{key:'pod',label:'容器组'}]
-const excluded=computed(()=>['apiVersion','kind','metadata','status',...(workload.value?['spec']:[]),...(['ConfigMap','Secret'].includes(meta.value.kind)?['data','stringData','type','immutable']:[])])
+const excluded=computed(()=>['apiVersion','kind','metadata','status',...(workload.value||meta.value.kind==='Service'?['spec']:[]),...(['ConfigMap','Secret'].includes(meta.value.kind)?['data','stringData','type','immutable']:[])])
 const extraFields=computed(()=>Object.fromEntries(Object.entries(draft.value||{}).filter(([key])=>!excluded.value.includes(key))))
+const tabIcons={
+  basic:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z M12 11v6 M12 7h.01',
+  strategy:'M4 19V9 M10 19V5 M16 19v-7 M22 19V7',
+  entries:'M4 6h16 M4 12h16 M4 18h10',
+  files:'M3 6a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z'
+}
 const originalYaml=computed(()=>original.value?dump(original.value,{noRefs:true,lineWidth:120}):'')
 const options=()=>({meta:meta.value,creating:creating.value,original:original.value})
 function currentBody(){const invalid=Object.entries(fieldErrors.value).find(([,value])=>value);if(invalid)throw new Error(`${invalid[0]}：${invalid[1]}`);return activeTab.value==='yaml'?resourceBody(parseResourceYaml(yamlText.value,options()),options()):resourceBody(draft.value,options())}
@@ -66,6 +131,31 @@ const signature=computed(()=>{try{return JSON.stringify(currentBody())}catch{ret
 const targetKey=computed(()=>JSON.stringify([route.fullPath,store.currentClusterId]))
 const canSave=computed(()=>!busy.value&&authorized.value&&!!signature.value&&checked.value===signature.value)
 const dirty=computed(()=>touched.value||!!draft.value&&(JSON.stringify(draft.value)!==baseline.value||activeTab.value==='yaml'&&yamlText.value!==dump(draft.value,{noRefs:true,lineWidth:120})))
+const entryMap=computed(()=>{const d=draft.value||{};return ['ConfigMap','Secret'].includes(meta.value.kind)?{...(d.data||{}),...(d.stringData||{})}:{}})
+const entryCount=computed(()=>Object.keys(entryMap.value).length)
+const contentBytes=computed(()=>Object.values(entryMap.value).reduce((sum,value)=>sum+new TextEncoder().encode(String(value??'')).length,0))
+function formatBytes(bytes){if(bytes<1024)return `${bytes} B`;if(bytes<1024*1024)return `${(bytes/1024).toFixed(1)} KB`;return `${(bytes/1024/1024).toFixed(2)} MB`}
+const insightItems=computed(()=>{
+ const d=draft.value;if(!d)return []
+ const labels=Object.keys(d.metadata?.labels||{}).length,annotations=Object.keys(d.metadata?.annotations||{}).length
+ const ports=meta.value.kind==='Service'?(d.spec?.ports||[]).length:0
+ const containers=workload.value?((meta.value.kind==='Pod'?d.spec?.containers:podTemplate(d)?.spec?.containers)||[]).length:0
+ const first=workload.value
+  ?{icon:'cube',label:'容器数量',value:containers,suffix:'个',hint:'容器组内定义的容器',tone:'blue'}
+  :meta.value.kind==='Service'
+   ?{icon:'link',label:'服务端口',value:ports,suffix:'个',hint:'已声明的 port 数量',tone:'blue'}
+   :{icon:'files',label:'配置条目',value:entryCount.value,suffix:'个',hint:'文件名作为键',tone:'blue'}
+ const second=meta.value.kind==='Service'
+  ?{icon:'link',label:'访问方式',value:d.spec?.type||'ClusterIP',text:true,hint:d.spec?.externalName||d.spec?.clusterIP||'集群 IP 自动分配',tone:'violet'}
+  :entryCount.value
+  ?{icon:'database',label:'内容体积',value:formatBytes(contentBytes.value),hint:'按 UTF-8 字节估算',tone:'violet'}
+  :{icon:'tags',label:'部署范围',value:d.metadata?.namespace||'集群',text:true,hint:resourceTitle(meta.value),tone:'violet'}
+ const status=canSave.value?{icon:'check',text:'已通过预检',hint:'可以保存',tone:'green'}
+  :checked.value?{icon:'warn',text:'需重新预检',hint:'配置已发生变更',tone:'amber'}
+  :dirty.value?{icon:'edit',text:'有未保存修改',hint:'改动尚未提交预检',tone:'blue'}
+  :{icon:'clock',text:'无改动',hint:'等待编辑',tone:'slate'}
+ return [first,second,{icon:'tags',label:'元数据',value:labels+annotations,suffix:'项',hint:`${labels} 标签 · ${annotations} 注解`,tone:'teal'},{icon:status.icon,label:'草稿状态',value:status.text,hint:status.hint,tone:status.tone,text:true}]
+})
 let generation=0,leavingAfterSave=false
 const removeGuard=registerUnsavedGuard(async()=>{if(leavingAfterSave)return true;if(busy.value)return false;if(!dirty.value)return true;try{await ElMessageBox.confirm('表单内容尚未保存，确定放弃修改？','未保存的修改',{type:'warning',confirmButtonText:'放弃修改'});draft.value=cloneResource(original.value);baseline.value=JSON.stringify(draft.value);yamlText.value=dump(draft.value,{noRefs:true,lineWidth:120});touched.value=false;fieldErrors.value={};checked.value=null;formKey.value++;return true}catch{return false}})
 function touch(){touched.value=true}
@@ -82,7 +172,7 @@ async function load(){
   if(!canResource(m,isCreate?'create':'update',isCreate?initialNamespace:route.params.namespace,clusterId)||!isCreate&&m.kind==='Secret'&&!can('secret:read'))return
   const value=isCreate?newResourceDraft(m,initialNamespace):await api.get(m.group,m.version,m.plural,target.value.namespace,target.value.name)
   if(epoch!==generation)return
-  value.metadata||={};if(WORKLOAD_KINDS.includes(m.kind)&&podTemplate(value))podTemplate(value).metadata||={}
+  value.metadata||={};if(m.kind==='Service')value.spec||={};if(WORKLOAD_KINDS.includes(m.kind)&&podTemplate(value))podTemplate(value).metadata||={}
   original.value=cloneResource(value);draft.value=cloneResource(value);baseline.value=JSON.stringify(draft.value);activeTab.value='basic';templateSection.value='containers';yamlText.value=dump(value,{noRefs:true,lineWidth:120});formKey.value++
  }catch(e){if(epoch===generation){loadFailed.value=true;await showError(e.message||'资源读取失败','server')}}finally{if(epoch===generation)loading.value=false}
 }
@@ -130,7 +220,104 @@ onMounted(()=>{load();window.addEventListener('beforeunload',beforeUnload)})
 onUnmounted(()=>{generation++;removeGuard();window.removeEventListener('beforeunload',beforeUnload)})
 </script>
 <style scoped>
-.resource-editor{min-width:0;padding-bottom:12px}.editor-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}.editor-context{display:flex;gap:10px;align-items:center;color:var(--kp-muted);font-size:13px;overflow-wrap:anywhere}.editor-heading h1{font-size:21px;font-weight:650;margin:10px 0 0}.editor-heading-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.editor-heading-actions>.el-button+.el-button{margin-left:0}.editor-card{background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:10px;min-height:510px;margin-top:16px;padding:0 24px 24px;min-width:0}.editor-tabs :deep(.el-tabs__header){margin:0 -24px 26px;padding:0 24px;background:var(--kp-surface-2);border-radius:10px 10px 0 0}.editor-tabs :deep(.el-tabs__item){height:52px;padding:0 24px}.editor-tabs :deep(.el-tab-pane){min-width:0}.editor-tabs :deep(.el-form-item){margin-bottom:22px}.editor-tabs :deep(.el-select){width:100%}.editor-basic-form{padding-top:8px;max-width:1350px}.editor-basic-form>.el-form-item:first-child :deep(.el-select){max-width:420px}.editor-basic-form>.el-form-item:nth-child(2) :deep(.el-input){max-width:680px}.template-workspace{display:grid;grid-template-columns:115px minmax(0,1fr);gap:24px}.template-nav{display:flex;flex-direction:column;gap:5px;border-right:1px solid var(--kp-border);padding-right:12px}.template-nav>button{border:0;background:transparent;color:var(--kp-text-2);font:inherit;text-align:left;padding:12px;border-radius:7px;cursor:pointer;white-space:nowrap}.template-nav>button.active{color:var(--kp-brand);background:var(--kp-side-active);font-weight:600}.template-content{min-width:0}.configmap-toolbar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:20px}.configmap-toolbar h2{margin:0;font-size:15px}.configmap-toolbar>span{font-size:13px}.editor-yaml-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.editor-yaml-tools span{font-size:12px}.editor-yaml{width:100%;min-height:55vh;resize:vertical}.editor-footer{position:sticky;bottom:0;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 20px;background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:10px;margin-top:16px;box-shadow:0 -4px 12px rgba(15,23,42,.03)}.editor-footer>div{display:flex;gap:8px;flex-wrap:wrap}.editor-footer .el-button+.el-button{margin-left:0}.editor-check-state{color:var(--kp-muted);font-size:13px}.editor-check-state.checked{color:var(--el-color-success)}.editor-error{background:var(--el-color-danger-light-9);border:1px solid var(--el-color-danger-light-5);color:var(--el-color-danger);border-radius:8px;padding:14px 18px;margin-bottom:16px;overflow-wrap:anywhere}.editor-error p{margin:8px 0 0;font-size:13px}
-@media(max-width:900px){.editor-card{padding:0 16px 20px}.editor-tabs :deep(.el-tabs__header){margin:0 -16px 20px;padding:0 16px}.template-workspace{grid-template-columns:95px minmax(0,1fr);gap:14px}.template-nav{padding-right:8px}.template-nav>button{padding:10px 6px}}
-@media(max-width:700px){.editor-heading h1{font-size:18px}.editor-heading-actions{width:100%}.editor-card{padding:0 12px 16px}.editor-tabs :deep(.el-tabs__header){margin:0 -12px 20px;padding:0 10px}.template-workspace{grid-template-columns:minmax(0,1fr)}.template-nav{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--kp-border);padding-bottom:10px}.editor-card :deep(.el-form-item){display:block}.editor-card :deep(.el-form-item__label){display:block;text-align:left;float:none;height:auto;line-height:1.6;margin-bottom:7px}.editor-card :deep(.el-form-item__content){margin-left:0!important;display:block}.editor-footer{padding:12px}.editor-footer>div{width:100%}.editor-card{min-height:440px}}
+.resource-editor{min-width:0;padding-bottom:12px;animation:page-in .35s ease both}
+@keyframes page-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ---------------------------------------------------------------- Hero */
+.editor-hero{
+  position:relative;overflow:hidden;display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;
+  padding:20px 24px 22px;border:1px solid #dbe7f8;border-radius:16px;
+  background:linear-gradient(115deg,#f4f9ff 0%,#ffffff 48%,#f7f5ff 100%);
+  box-shadow:0 2px 10px rgba(37,99,235,.05);
+}
+.hero-grid{position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(37,99,235,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(37,99,235,.05) 1px,transparent 1px);background-size:28px 28px;-webkit-mask-image:linear-gradient(90deg,#000 0%,transparent 68%);mask-image:linear-gradient(90deg,#000 0%,transparent 68%)}
+.hero-orb{position:absolute;right:-70px;top:-90px;width:260px;height:260px;border-radius:50%;pointer-events:none;background:radial-gradient(circle,rgba(124,92,214,.13),transparent 68%)}
+.hero-body{position:relative;z-index:1;min-width:0}
+.editor-context{display:flex;align-items:center;gap:7px;color:var(--kp-muted);font-size:12.5px;font-weight:500;overflow-wrap:anywhere}
+.editor-context svg{width:12px;height:12px;fill:none;stroke:#b8c5d8;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.hero-title-row{display:flex;align-items:center;gap:14px;margin-top:14px}
+.hero-icon{
+  width:52px;height:52px;flex-shrink:0;display:grid;place-items:center;font-size:26px;color:#fff;border-radius:15px;
+  background:linear-gradient(140deg,#4f8bf7,#2563eb);box-shadow:0 8px 20px rgba(37,99,235,.26);
+}
+.hero-title-text{min-width:0}
+.editor-heading h1,.hero-title-text h1{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:22px;font-weight:680;letter-spacing:-.02em;margin:0;color:#1c3559}
+.hero-resource-name{font-size:14px;font-weight:500;color:var(--kp-muted);border-left:1px solid #cdd9ea;padding-left:13px}
+.hero-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:11px}
+.hchip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:7px;background:#fff;border:1px solid #e2eaf6;color:var(--kp-text-2);font-size:11.5px;font-weight:600;white-space:nowrap}
+.hchip-dot{width:6px;height:6px;border-radius:50%;background:var(--kp-success);box-shadow:0 0 0 3px rgba(22,163,74,.13)}
+.hchip--brand{background:var(--kp-brand-soft);border-color:var(--kp-brand-border);color:var(--kp-brand)}
+.hchip--amber{background:var(--kp-warning-bg);border-color:#fde3b0;color:var(--kp-warning)}
+.editor-heading-actions{position:relative;z-index:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-bottom:2px}
+.editor-heading-actions>.el-button+.el-button{margin-left:0}
+
+/* ------------------------------------------------------------ 错误提示 */
+.editor-error{display:flex;align-items:center;gap:12px;margin-top:16px;padding:12px 14px;border:1px solid #fecaca;border-radius:12px;background:linear-gradient(90deg,#fff5f5,#fff)}
+.editor-error-icon{width:26px;height:26px;flex-shrink:0;border-radius:8px;background:var(--kp-danger);color:#fff;display:grid;place-items:center;font-weight:700;font-size:15px}
+.editor-error strong{font-size:13px;color:#b91c1c}.editor-error p{margin:3px 0 0;font-size:12.5px;color:#9f3434}
+.editor-error-actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.editor-static-field :deep(.el-input__wrapper),.editor-static-field :deep(.el-select__wrapper){background:transparent;box-shadow:none!important;padding-left:0}
+.editor-static-field :deep(.el-input__inner),.editor-static-field :deep(.el-select__selected-item){-webkit-text-fill-color:var(--kp-text)!important;color:var(--kp-text)!important}
+
+/* --------------------------------------------------------------- 卡片 */
+.editor-card{background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:14px;min-height:480px;margin-top:4px;padding:0 24px 24px;min-width:0;box-shadow:var(--kp-shadow)}
+.editor-tabs :deep(.el-tabs__header){margin:0 -24px 24px;padding:12px 24px;background:var(--kp-surface-2);border-bottom:1px solid var(--kp-border);border-radius:14px 14px 0 0}
+.editor-tabs :deep(.el-tabs__nav-wrap::after){display:none}
+.editor-tabs :deep(.el-tabs__active-bar){display:none}
+.editor-tabs :deep(.el-tabs__item){height:38px;padding:0 15px;margin-right:4px;border-radius:9px;color:var(--kp-muted);font-size:13px;font-weight:600;transition:background .18s,color .18s,box-shadow .18s,transform .18s}
+.editor-tabs :deep(.el-tabs__item:hover){background:#eef3fb;color:var(--kp-text)}
+.editor-tabs :deep(.el-tabs__item.is-active){background:#fff;color:var(--kp-brand);border:1px solid var(--kp-brand-border);box-shadow:0 2px 7px rgba(37,99,235,.08)}
+.tab-inner{display:inline-flex;align-items:center;gap:7px}
+.tab-inner svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;opacity:.85}
+.editor-tabs :deep(.el-tab-pane){min-width:0}
+.editor-tabs :deep(.el-form-item){margin-bottom:22px}
+.editor-tabs :deep(.el-select){width:100%}
+.editor-basic-form{padding:6px 4px 0;max-width:1350px}
+.editor-basic-form :deep(.el-form-item__content){min-width:0}
+.template-workspace{display:grid;grid-template-columns:150px minmax(0,1fr);gap:20px}
+.template-nav{display:flex;flex-direction:column;gap:5px;border-right:1px solid var(--kp-border);padding-right:12px}
+.template-nav>button{border:0;background:transparent;border-radius:8px;padding:9px 11px;text-align:left;color:var(--kp-text-2);font:inherit;font-size:13px;cursor:pointer;transition:background .15s,color .15s}
+.template-nav>button:hover{background:var(--kp-side-hover)}
+.template-nav>button.active{background:var(--kp-side-active);color:var(--kp-brand);font-weight:600;box-shadow:inset 3px 0 var(--kp-brand)}
+.template-content{min-width:0}
+
+/* ------------------------------------------------------ ConfigMap 工具条 */
+.configmap-editor{min-width:0;animation:section-in .3s ease both}
+@keyframes section-in{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.cm-toolbar{display:flex;align-items:center;gap:13px;margin-bottom:18px;padding:13px 15px;border:1px solid #e3ebf7;border-radius:12px;background:linear-gradient(100deg,#f6faff,#fbfcff)}
+.cm-toolbar-icon{width:36px;height:36px;flex-shrink:0;border-radius:10px;display:grid;place-items:center;background:var(--kp-brand-soft);color:var(--kp-brand)}
+.cm-toolbar-icon svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.cm-toolbar-copy{min-width:0}.cm-toolbar-copy h2{margin:0;font-size:14px;font-weight:650;color:var(--kp-text);letter-spacing:-.01em}
+.cm-toolbar-copy p{margin:4px 0 0;font-size:12px;color:var(--kp-muted)}
+.cm-toolbar-side{margin-left:auto;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.cm-pill{display:inline-flex;align-items:center;gap:6px;height:25px;padding:0 10px;border-radius:999px;background:#fff;border:1px solid #dbe6f6;color:var(--kp-brand);font-size:11.5px;font-weight:650;white-space:nowrap}
+.cm-pill i{width:6px;height:6px;border-radius:50%;background:var(--kp-brand);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+.cm-pill--soft{color:#7c5cd6;border-color:#e6dcf8;background:#faf7ff}.cm-pill--soft i{display:none}
+
+/* ------------------------------------------------------------ 底部操作条 */
+.editor-footer{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:14px;padding:13px 16px;border:1px solid var(--kp-border);border-radius:12px;background:var(--kp-surface);box-shadow:var(--kp-shadow)}
+.save-flow{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.flow-step{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:#9aa7ba;white-space:nowrap;transition:color .2s}
+.flow-step i{display:grid;place-items:center;width:19px;height:19px;border-radius:50%;background:#eef2f7;color:#9aa7ba;font-style:normal;font-size:10.5px;font-weight:700;transition:background .2s,color .2s,box-shadow .2s}
+.flow-step.done{color:var(--kp-brand)}.flow-step.done i{background:var(--kp-brand);color:#fff;box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+.flow-line{width:22px;height:2px;border-radius:2px;background:#e9edf2;transition:background .2s}.flow-line.done{background:var(--kp-brand-border)}
+.editor-check-state{font-size:12px;color:var(--kp-muted);margin-left:auto;display:inline-flex;align-items:center;gap:7px}
+.editor-check-state::before{content:"";width:7px;height:7px;border-radius:50%;background:#c4cede;flex-shrink:0}
+.editor-check-state.checked{color:var(--kp-success)}.editor-check-state.checked::before{background:var(--kp-success);box-shadow:0 0 0 3px rgba(22,163,74,.13)}
+.editor-footer-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.editor-footer-actions>.el-button+.el-button{margin-left:0}
+
+@media(max-width:1100px){.editor-check-state{display:none}.save-flow{margin-right:auto}}
+@media(max-width:900px){.editor-hero{padding:16px}.editor-card{padding:0 16px 20px}.editor-tabs :deep(.el-tabs__header){margin:0 -16px 20px;padding:10px 16px}.template-workspace{grid-template-columns:105px minmax(0,1fr);gap:14px}.template-nav{padding-right:8px}.template-nav>button{padding:9px 6px}.cm-toolbar{flex-wrap:wrap}.cm-toolbar-side{margin-left:0;width:100%}}
+@media(max-width:700px){
+ .editor-heading h1,.hero-title-text h1{font-size:18px}.hero-icon{width:44px;height:44px;font-size:22px}
+ .editor-heading-actions{width:100%}.editor-card{padding:0 12px 16px;min-height:420px}
+ .editor-tabs :deep(.el-tabs__header){margin:0 -12px 18px;padding:9px 10px}
+ .editor-tabs :deep(.el-tabs__item){padding:0 10px;font-size:12px}
+ .template-workspace{grid-template-columns:minmax(0,1fr)}.template-nav{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--kp-border);padding-bottom:10px}
+ .editor-card :deep(.el-form-item){display:block}.editor-card :deep(.el-form-item__label){display:block;text-align:left;float:none;height:auto;line-height:1.6;margin-bottom:7px}.editor-card :deep(.el-form-item__content){margin-left:0!important;display:block}
+ .editor-footer{padding:12px}.editor-footer-actions{width:100%}.save-flow{display:none}
+ .cm-toolbar-copy p{display:none}
+}
+@media(prefers-reduced-motion:reduce){.resource-editor,.configmap-editor{animation:none}}
 </style>

@@ -156,9 +156,9 @@ try{
  const updates=writes.filter(w=>w.method==='PUT'&&w.path.endsWith('/pods/app/api-broken'))
  assert.equal(updates.length,2);assert.equal(updates[0].params.dryRun,'true');assert.ok(updates.every(w=>w.body.metadata.resourceVersion==='1'))
  await page.getByRole('button',{name:'新建',exact:true}).click()
- await page.getByRole('heading',{name:'新建 Pod',exact:true}).waitFor()
+ await page.getByRole('heading',{name:'新建 容器组',exact:true}).waitFor()
  await page.getByRole('textbox',{name:'资源名称',exact:true}).waitFor()
- await page.locator('.editor-heading').getByRole('button',{name:'取消',exact:true}).click()
+ await page.locator('.editor-hero').getByRole('button',{name:'取消',exact:true}).click()
  await page.getByRole('button',{name:'新建',exact:true}).waitFor()
  containerMode=true
  await page.getByRole('button',{name:'更多操作',exact:true}).first().click()

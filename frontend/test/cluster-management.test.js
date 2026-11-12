@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import { reactive, ref, computed, effectScope, watch, nextTick } from 'vue'
 import { parse, compileScript } from '@vue/compiler-sfc'
 import { createRouter, createMemoryHistory } from 'vue-router'
+import {resourceTitle} from '../src/utils/resource-ui.js'
 import { navGroups, metaFromRoute } from '../src/config/resources.js'
 import { parseNavigationExpansion, visibleNavigationGroups, revealActiveNavigationGroup } from '../src/utils/navigation-groups.js'
 
@@ -113,9 +114,13 @@ test('first successful import enters overview and management search matches name
 test('creation time displays known dates and an honest placeholder for legacy metadata', async () => {
   const view = clusterView()
   try {
-    assert.equal(view.state.createdTime({}), '—')
-    assert.equal(view.state.createdTime({createdAt:'invalid'}), '—')
-    assert.notEqual(view.state.createdTime({createdAt:'2026-11-12T01:00:00Z'}), '—')
+    assert.equal(view.state.createdTime({}), '未记录')
+    assert.equal(view.state.createdTime({createdAt:'invalid'}), '未记录')
+    assert.equal(view.state.createdTime({createdAt:'2026-11-12T01:00:00Z'}), new Date('2026-11-12T01:00:00Z').toLocaleString('zh-CN', {hour12:false}))
+    assert.equal(view.state.createdTime({clusterCreatedAt:'2023-04-05T06:07:08Z',createdAt:'2026-11-12T01:00:00Z'}), new Date('2023-04-05T06:07:08Z').toLocaleString('zh-CN', {hour12:false}))
+    assert.equal(view.state.createdTime({clusterCreatedAt:'invalid',createdAt:'2026-11-12T01:00:00Z'}), new Date('2026-11-12T01:00:00Z').toLocaleString('zh-CN', {hour12:false}))
+    assert.match(view.state.createdTimeSource({clusterCreatedAt:'2023-04-05T06:07:08Z'}), /kube-system/)
+    assert.match(view.state.createdTimeSource({createdAt:'2026-11-12T01:00:00Z'}), /平台导入/)
   } finally { view.destroy() }
 })
 
@@ -127,7 +132,7 @@ test('returning from management to an unreachable same-cluster overview or resou
     const mounted = [], unmounted = [], scope = effectScope()
     const { descriptor } = parse(fs.readFileSync(new URL('../src/layout/Layout.vue', import.meta.url), 'utf8'))
     const source = stripImports(compileScript(descriptor, { id: 'layout-recovery' }).content).replace('export default', 'return')
-    const bindings = { ref, computed, watch, onMounted: fn => mounted.push(fn), onUnmounted: fn => unmounted.push(fn), useRoute: () => route, useRouter: () => ({}), ElMessage: {}, ElMessageBox: {}, Search: {}, OfficeBuilding: {}, Refresh: {}, Timer: {}, QuestionFilled: {}, UserFilled: {}, ArrowDown: {}, store, navGroups, metaFromRoute, parseNavigationExpansion, visibleNavigationGroups, revealActiveNavigationGroup, confirmContextChange: async () => true, cpath: (path, id = store.currentClusterId) => '/c/' + id + path, api: {}, ChangePasswordDialog: {}, permitCluster: () => true, permitUsers: () => false, permitRegistry: () => false, permitMonitor: () => false, refreshSession: async () => ({}), clearSession() {}, roleName: () => '', can: () => true, canResource: () => true, localStorage }
+    const bindings = { ref, computed, watch, onMounted: fn => mounted.push(fn), onUnmounted: fn => unmounted.push(fn), useRoute: () => route, useRouter: () => ({}), ElMessage: {}, ElMessageBox: {}, Search: {}, OfficeBuilding: {}, Refresh: {}, Timer: {}, QuestionFilled: {}, UserFilled: {}, ArrowDown: {}, store, navGroups, metaFromRoute, resourceTitle, parseNavigationExpansion, visibleNavigationGroups, revealActiveNavigationGroup, confirmContextChange: async () => true, cpath: (path, id = store.currentClusterId) => '/c/' + id + path, api: {}, ChangePasswordDialog: {}, permitCluster: () => true, permitUsers: () => false, permitRegistry: () => false, permitMonitor: () => false, refreshSession: async () => ({}), clearSession() {}, roleName: () => '', can: () => true, canResource: () => true, localStorage }
     const definition = Function(...Object.keys(bindings), source)(...Object.values(bindings))
     scope.run(() => definition.setup({}, { expose() {} }))
     try {

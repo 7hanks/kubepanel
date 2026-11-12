@@ -54,3 +54,31 @@ test('advanced fields cannot replace settings owned by dedicated form controls',
  const root={kind:'Deployment',metadata:{name:'original'},spec:{template:{spec:{containers:[{name:'app',image:'image'}]}}}}
  assert.deepEqual(form.mergeFormFields(root,['kind','metadata','spec'],{spec:{},metadata:{name:'wrong'}}),root)
 })
+test('service forms preserve assigned addresses and appProtocol while validating port entries',()=>{
+ const m=meta('Service'),draft=form.newResourceDraft(m,'team');draft.metadata.name='web'
+ draft.spec.clusterIP='10.0.0.9';draft.spec.clusterIPs=['10.0.0.9'];draft.spec.ipFamilies=['IPv4'];draft.spec.ports=[{name:'web',port:80,targetPort:'http',protocol:'TCP',appProtocol:'http'}]
+ const body=form.resourceBody(draft,{meta:m,creating:true})
+ assert.deepEqual(body.spec.clusterIPs,['10.0.0.9']);assert.equal(body.spec.ports[0].appProtocol,'http')
+ draft.spec.ports[0].port=70000;assert.throws(()=>form.resourceBody(draft,{meta:m,creating:true}),/端口/)
+ draft.spec.ports=[{name:'same',port:80},{name:'same',port:81}];assert.throws(()=>form.resourceBody(draft,{meta:m,creating:true}),/重复/)
+})
+
+test('Service edits allow headless services without ports and digit-prefixed named target ports',()=>{
+ const m=meta('Service'),draft=form.newResourceDraft(m,'team');draft.metadata.name='web'
+ draft.spec={type:'ClusterIP',clusterIP:'None',clusterIPs:['None']}
+ assert.equal(form.resourceBody(draft,{meta:m,creating:true}).spec.clusterIP,'None')
+ draft.spec.ports=[{port:80,targetPort:'8080-http'}]
+ assert.equal(form.resourceBody(draft,{meta:m,creating:true}).spec.ports[0].targetPort,'8080-http')
+})
+test('Service type and affinity transitions remove incompatible server defaults and reject invalid node ports',()=>{
+ const m=meta('Service'),draft=form.newResourceDraft(m,'team');draft.metadata.name='web'
+ draft.spec={type:'ClusterIP',ports:[{port:80,nodePort:30080}],sessionAffinity:'None',sessionAffinityConfig:{clientIP:{timeoutSeconds:10800}},externalTrafficPolicy:'Local'}
+ const body=form.resourceBody(draft,{meta:m,creating:true})
+ assert.equal(body.spec.sessionAffinityConfig,undefined);assert.equal(body.spec.externalTrafficPolicy,undefined);assert.equal(body.spec.ports[0].nodePort,undefined)
+ draft.spec.externalIPs=['192.0.2.10']
+ assert.equal(form.resourceBody(draft,{meta:m,creating:true}).spec.externalTrafficPolicy,'Local')
+ draft.spec.loadBalancerSourceRanges=['10.0.0.0/8']
+ assert.equal(form.resourceBody(draft,{meta:m,creating:true}).spec.loadBalancerSourceRanges,undefined)
+ draft.spec.type='NodePort';draft.spec.ports[0].nodePort=NaN
+ assert.throws(()=>form.resourceBody(draft,{meta:m,creating:true}),/节点端口/)
+})

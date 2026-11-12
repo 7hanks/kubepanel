@@ -194,6 +194,7 @@ const AGE = { key: 'age', label: '运行时间', width: 105 }
 
 const KIND_COLS = {
   Pod: [
+    { key: 'images', label: '镜像', minWidth: 230 },
     { key: 'ready', label: '就绪', width: 85 },
     { key: 'status', label: '状态', width: 145, tag: true },
     { key: 'restarts', label: '重启', width: 75 },
@@ -258,7 +259,7 @@ const KIND_COLS = {
 
 export function columnsFor(kind, namespaced) {
   const mid = KIND_COLS[kind] || [{ key: 'status', label: '状态', width: 130, tag: true }]
-  return [NAME, ...(namespaced ? [NS] : []), ...mid, AGE]
+  return [NAME, ...(namespaced&&kind!=='Pod' ? [NS] : []), ...mid, AGE]
 }
 
 // ---------- 新建资源 YAML 模板 ----------

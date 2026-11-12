@@ -1,0 +1,103 @@
+// All API requests are intercepted. This script never mutates a real cluster.
+import {createRequire} from 'node:module'
+import assert from 'node:assert/strict'
+import {createServer} from '../node_modules/vite/dist/node/index.js'
+const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright')
+const vite=await createServer({root:new URL('../',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),server:{host:'127.0.0.1',port:5189,strictPort:true}})
+await vite.listen()
+const browser=await chromium.launch({headless:true,channel:'msedge'}),page=await browser.newPage({viewport:{width:1651,height:1000}})
+page.setDefaultTimeout(10000)
+const errors=[],writes=[]
+page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept())
+page.on('console',m=>{if(m.type()==='error')console.error('Browser console:',m.text())})
+page.on('requestfailed',r=>console.error('Failed request:',r.url(),r.failure()?.errorText))
+const metadata=name=>({name,namespace:'default',uid:name+'-uid',resourceVersion:'18',creationTimestamp:'2026-11-11T08:00:00Z'})
+const svc={apiVersion:'v1',kind:'Service',metadata:{...metadata('fluent-bit'),labels:{app:'fluent-bit'},annotations:{}},spec:{type:'ClusterIP',clusterIP:'10.100.240.193',clusterIPs:['10.100.240.193'],ipFamilies:['IPv4'],selector:{app:'fluent-bit'},ports:[{name:'http',port:2020,targetPort:'http',protocol:'TCP',appProtocol:'http'}],sessionAffinity:'ClientIP',sessionAffinityConfig:{clientIP:{timeoutSeconds:600}}}}
+const resources={services:[svc,{...structuredClone(svc),metadata:metadata('gitlab'),spec:{...svc.spec,type:'NodePort',ports:[{name:'http',port:80,targetPort:8080,nodePort:30180,protocol:'TCP'}]}}],configmaps:[{apiVersion:'v1',kind:'ConfigMap',metadata:metadata('settings'),data:{'custom_parsers.conf':'[PARSER]\n    Name docker_no_time\n    Format json\n    Time_Keep Off\n','fluent-bit.conf':'[SERVICE]\n    Daemon Off\n    Flush 1\n    Log_Level info\n'}}],pods:[{apiVersion:'v1',kind:'Pod',metadata:{...metadata('web-pod'),ownerReferences:[{apiVersion:'apps/v1',kind:'ReplicaSet',name:'web-rs',uid:'rs-uid',controller:true}]},spec:{containers:[{name:'web',image:'nginx:1.25-alpine'}],nodeName:'dev'},status:{phase:'Running',containerStatuses:[{ready:true,name:'web',restartCount:0,state:{running:{}}}]}},{apiVersion:'v1',kind:'Pod',metadata:metadata('standalone'),spec:{containers:[{name:'app',image:'busybox:1.36'}]},status:{phase:'Running'}}]}
+const discovery=[['services','Service'],['pods','Pod'],['configmaps','ConfigMap']].map(([plural,kind])=>({group:'',version:'v1',plural,kind,namespaced:true,verbs:['get','list','create','update','delete']}))
+let replicas=3
+await page.route('**/api/**',async route=>{
+ const req=route.request(),url=new URL(req.url()),path=url.pathname.replace(/^\/api/,'')
+ if(!url.pathname.startsWith('/api/'))return route.continue()
+ const send=(data,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)})
+ if(path==='/v1/auth/profile')return send({username:'admin',role:'admin',permissions:['*'],csrfToken:'fixture',scope:{clusters:['*'],namespaces:['*'],resources:['*']}})
+ if(path==='/v1/clusters')return send([{id:'test',name:'dev',healthy:true,createdAt:null,clusterCreatedAt:'2025-12-23T06:54:10Z',createdAtSource:'kube-system'}])
+ if(path==='/v1/cluster')return send({name:'dev',version:'v1.33.7',namespaces:['default']})
+ if(path==='/v1/resources')return send(discovery)
+ if(path==='/v1/users')return send({users:[]})
+ if(path==='/v1/roles')return send({roles:[],permissions:[]})
+ if(path==='/v1/registries')return send([])
+ if(path==='/v1/audit')return send({items:[]})
+ if(path==='/v1/pods/default/web-pod/scale-target'){
+  assert.equal(url.searchParams.get('uid'),'web-pod-uid');assert.equal(url.searchParams.get('clusterId'),'test')
+  return send({kind:'Deployment',group:'apps',version:'v1',plural:'deployments',namespace:'default',name:'web',uid:'deployment-uid',replicas,resourceVersion:'18'})
+ }
+ if(path==='/v1/pods/default/web-pod/scale'){
+  const body=req.postDataJSON();writes.push({path,body});assert.equal(body.uid,'web-pod-uid');assert.equal(body.controllerUid,'deployment-uid');assert.equal(body.expectedReplicas,replicas);replicas=body.replicas;return send({ok:true})
+ }
+ if(path.startsWith('/v1/resources/')){
+  const parts=path.split('/'),plural=parts[5],name=parts[7]
+  if(req.method()==='GET')return send(name?resources[plural]?.find(r=>r.metadata.name===decodeURIComponent(name))||{}:{items:resources[plural]||[]})
+  const body=req.postDataJSON();writes.push({path,body,params:Object.fromEntries(url.searchParams)})
+  return send(body)
+ }
+ return send({})
+})
+const go=path=>page.goto('http://127.0.0.1:5189/c/test'+path)
+const shot=name=>page.screenshot({path:'.local/frontend-qa/console-'+name+'.png',fullPage:true,animations:'disabled',style:'.el-message{visibility:hidden}'})
+try{
+ await go('/r/_core/v1/services')
+ await page.getByRole('heading',{name:'服务',exact:true}).waitFor()
+ await page.getByRole('link',{name:'fluent-bit',exact:true}).waitFor()
+ assert.equal(await page.locator('.resource-port-chips').first().innerText(),'2020 → http / TCP')
+ await page.getByRole('button',{name:'NodePort 1',exact:true}).click()
+ assert.equal(await page.getByRole('link',{name:'fluent-bit',exact:true}).count(),0)
+ await page.getByRole('button',{name:'全部服务 2',exact:true}).click()
+ await page.getByRole('button',{name:'切换列表密度',exact:true}).click()
+ await shot('services')
+ await page.locator('.el-table__body-wrapper tr').filter({hasText:'fluent-bit'}).getByRole('button',{name:'编辑',exact:true}).click()
+ await page.getByRole('heading',{name:/编辑 服务/}).waitFor()
+ assert.equal(await page.locator('.service-type-option').count(),4)
+ await shot('service-basic')
+ await page.getByRole('tab',{name:'条目模式',exact:true}).click()
+ await page.getByRole('textbox',{name:'服务目标端口 1',exact:true}).fill('8080-http')
+ await page.getByRole('tab',{name:'标签页模式',exact:true}).click()
+ assert.equal(await page.getByRole('textbox',{name:'服务目标端口 1',exact:true}).inputValue(),'8080-http')
+ await shot('service-ports')
+ await page.locator('.editor-footer').getByRole('button',{name:'服务端预检',exact:true}).click()
+ await page.getByRole('dialog',{name:'变更预览',exact:true}).waitFor()
+ assert.equal(writes.at(-1).body.spec.ports[0].targetPort,'8080-http')
+ assert.equal(writes.at(-1).body.spec.ports[0].appProtocol,'http')
+ assert.equal(writes.at(-1).body.spec.sessionAffinityConfig.clientIP.timeoutSeconds,600)
+ assert.deepEqual(writes.at(-1).body.spec.clusterIPs,['10.100.240.193'])
+ await page.getByRole('button',{name:'返回表单',exact:true}).click()
+ await page.setViewportSize({width:430,height:932})
+ await shot('service-mobile');assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
+ await page.setViewportSize({width:1651,height:1000})
+ await go('/r/_core/v1/configmaps/default/settings/edit')
+ await page.getByRole('tab',{name:'条目模式',exact:true}).click()
+ assert.equal(await page.locator('.kv-field-row.multiline').count(),2)
+ await shot('configmap-entries')
+ await go('/r/_core/v1/pods')
+ await page.getByRole('link',{name:'web-pod',exact:true}).waitFor()
+ assert.equal(await page.getByRole('columnheader',{name:'命名空间',exact:true}).count(),0)
+ assert.equal(await page.getByRole('columnheader',{name:/^镜像/}).count(),1)
+ assert.ok(await page.locator('tr').filter({hasText:'web-pod'}).locator('.resource-image-cell').innerText().then(t=>t.includes('nginx:1.25-alpine')))
+ assert.equal(await page.locator('tr').filter({hasText:'standalone'}).getByRole('button',{name:'扩缩容',exact:true}).isDisabled(),true)
+ await page.locator('tr').filter({hasText:'web-pod'}).getByRole('button',{name:'扩缩容',exact:true}).click()
+ const dialog=page.getByRole('dialog',{name:'扩缩容 · Deployment/web',exact:true});await dialog.waitFor()
+ assert.equal(await dialog.getByText(/调整 spec.replicas/).count(),0)
+ await dialog.getByRole('button',{name:'5',exact:true}).click();await shot('pod-scale')
+ await dialog.getByRole('button',{name:'确定（3 → 5）',exact:true}).click();await dialog.waitFor({state:'hidden'})
+ assert.equal(replicas,5);await shot('pods')
+ for(const [link,title,path] of [['操作审计','操作审计','audit'],['用户管理','用户','users'],['平台角色','角色','roles'],['镜像仓库','镜像仓库','registries']]){
+  if(!await page.locator('.kp-side').getByRole('link',{name:link,exact:true}).isVisible())await page.getByRole('button',{name:'平台',exact:true}).click()
+  const nav=page.locator('.kp-side').getByRole('link',{name:link,exact:true});await nav.scrollIntoViewIfNeeded();await nav.click()
+  await page.waitForURL('**/c/test/'+path);await page.getByRole('heading',{name:title,exact:true}).waitFor()
+  assert.equal(await page.locator('.kp-layout').count(),1);assert.equal(await page.locator('.platform-embedded-main').count(),1)
+ }
+ await shot('platform-embedded')
+ await go('/clusters');await page.getByText(/2025[-/]12[-/]23/).waitFor();await shot('cluster-created-time')
+ assert.deepEqual(errors,[])
+ console.log('PASS: Service type filters and dedicated forms, named ports/preservation, ConfigMap reference rows, mobile layout, Pod image column and bound scaling, embedded platform navigation, recovered creation time. Fixture-only mutations.')
+}catch(e){await shot('failure');console.error('Runtime errors:',errors);console.error((await page.locator('body').innerText()).slice(-4500));throw e}finally{await browser.close();await vite.close()}

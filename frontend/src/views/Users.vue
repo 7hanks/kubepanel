@@ -1,10 +1,10 @@
 <template>
-  <PlatformLayout active="users">
-    <template #actions>
+  <component :is="embedded ? 'div' : PlatformLayout" active="users">
+    <template v-if="!embedded" #actions>
       <el-button size="small" :loading="loading" circle @click="load"><el-icon><Refresh /></el-icon></el-button>
     </template>
 
-    <main class="plat-main">
+    <main class="plat-main" :class="{ 'platform-embedded-main': embedded }">
       <div class="page-head">
         <div>
           <h1>用户</h1>
@@ -14,6 +14,7 @@
           </p>
         </div>
         <div style="display:flex;gap:8px">
+          <el-button v-if="embedded" :loading="loading" :icon="Refresh" @click="load">刷新</el-button>
           <el-button v-if="canCreateUser" type="primary" :icon="Plus" @click="openCreate">创建用户</el-button>
         </div>
       </div>
@@ -153,7 +154,7 @@
         </template>
       </el-dialog>
     </main>
-  </PlatformLayout>
+  </component>
 </template>
 
 <script setup>
@@ -163,6 +164,8 @@ import { Plus, Refresh, Search, User, CircleCheck, CircleClose } from '@element-
 import PlatformLayout from '../layout/PlatformLayout.vue'
 import api from '../api'
 import { canCreate, canUpdate, canDelete } from '../utils/perm'
+
+defineProps({ embedded: { type: Boolean, default: false } })
 
 const loading = ref(false)
 const saving = ref(false)
@@ -337,6 +340,7 @@ onMounted(load)
 
 <style scoped>
 .plat-main { max-width: 1280px; margin: 0 auto; padding: 24px 22px 48px; }
+.plat-main.platform-embedded-main { max-width: none; margin: 0; padding: 0; }
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
 .page-head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
 .page-head p { margin: 6px 0 0; font-size: 12px; max-width: 760px; line-height: 1.6; }

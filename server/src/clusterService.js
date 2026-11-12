@@ -177,6 +177,8 @@ export async function clusterSummaries(force = false, account) {
       id: c.id, name: c.name, server: c.server, context: c.context,
       authMode: c.authMode, source: c.source, mode: c.mode, removable: c.removable,
       createdAt: c.createdAt || null,
+      clusterCreatedAt: null,
+      createdAtSource: c.createdAt && Number.isFinite(Date.parse(c.createdAt)) ? 'platform-import' : null,
       credentialExpiry: certificateExpiry(c.kc.getCurrentUser()),
       healthy: false, version: 'unknown', nodes: null, namespaces: null, error: '',
     }
@@ -190,6 +192,13 @@ export async function clusterSummaries(force = false, account) {
       base.version = v.data?.gitVersion || 'unknown'
       base.nodes = n?.data?.items?.length ?? null
       base.namespaces = ns?.data?.items?.length ?? null
+      // Use only namespace metadata already returned by scopedList for this account.
+      // Keep platform registration time separate; never backfill unknown dates from file times or now.
+      const initializedAt = ns?.data?.items?.find(item => item.metadata?.name === 'kube-system')?.metadata?.creationTimestamp
+      if (typeof initializedAt === 'string' && Number.isFinite(Date.parse(initializedAt))) {
+        base.clusterCreatedAt = initializedAt
+        base.createdAtSource = 'kube-system'
+      }
       base.platform = v.data?.platform || '-'
     } catch (e) { base.error = e.message }
     return base

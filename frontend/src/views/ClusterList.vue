@@ -29,7 +29,7 @@
           <el-table-column label="状态" width="90"><template #default="{ row: c }"><el-tag :type="c.healthy ? 'success' : 'danger'" size="small">{{ c.healthy ? '正常' : '异常' }}</el-tag></template></el-table-column>
           <el-table-column prop="version" label="版本" min-width="115" />
           <el-table-column prop="server" label="API Server" min-width="210" show-overflow-tooltip />
-          <el-table-column label="创建时间" min-width="180"><template #default="{ row: c }">{{ createdTime(c) }}</template></el-table-column>
+          <el-table-column label="创建时间" min-width="180"><template #default="{ row: c }"><el-tooltip :content="createdTimeSource(c)" placement="top"><span>{{ createdTime(c) }}</span></el-tooltip></template></el-table-column>
           <el-table-column label="操作" width="135" fixed="right">
             <template #default="{ row: c }">
               <el-button link type="primary" @click="openDetail(c)">详情</el-button>
@@ -65,7 +65,8 @@
 
           <div class="kp-section-title">基本信息</div>
           <table class="kp-kv"><tbody>
-            <tr><td>创建时间</td><td>{{ createdTime(detail) }}</td></tr>
+            <tr><td>创建时间</td><td><el-tooltip :content="createdTimeSource(detail)" placement="top"><span>{{ createdTime(detail) }}</span></el-tooltip></td></tr>
+            <tr v-if="detail.clusterCreatedAt && detail.createdAt"><td>平台导入时间</td><td>{{ createdTime({ createdAt: detail.createdAt }) }}</td></tr>
             <tr><td>API Server</td><td class="kp-mono">{{ detail.server }}</td></tr>
             <tr><td>K8s 版本</td><td>{{ detail.version }}</td></tr>
             <tr><td>平台</td><td>{{ detail.platform }}</td></tr>
@@ -229,8 +230,13 @@ function clock(ts) {
 }
 
 function createdTime(c) {
-  const date = c.createdAt ? new Date(c.createdAt) : null
-  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('zh-CN', { hour12: false }) : '—'
+  const timestamp = [c.clusterCreatedAt, c.createdAt].find(value => value && Number.isFinite(Date.parse(value)))
+  return timestamp ? new Date(timestamp).toLocaleString('zh-CN', { hour12: false }) : '未记录'
+}
+function createdTimeSource(c) {
+  if (c.clusterCreatedAt && Number.isFinite(Date.parse(c.clusterCreatedAt))) return 'kube-system 命名空间创建时间（集群初始化参考）'
+  if (c.createdAt && Number.isFinite(Date.parse(c.createdAt))) return '平台导入时间'
+  return '未记录平台导入时间，且当前授权范围内无可用的集群初始化时间'
 }
 function openEdit(c) { editTarget.value = { ...c }; editForm.name = c.name; editForm.kubeconfig = ''; editVisible.value = true }
 async function submitEdit() {

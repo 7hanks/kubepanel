@@ -20,10 +20,10 @@
           </button>
           <div v-show="g.id === 'overview' || g.open" :id="'nav-' + g.id">
             <router-link v-for="it in g.items" :key="it.path"
-              class="kp-nav-item" :class="{ active: isActive(it.path, it.platform) }"
-              :aria-label="it.label" :aria-current="isActive(it.path, it.platform) ? 'page' : undefined"
+              class="kp-nav-item" :class="{ active: isActive(it.path) }"
+              :aria-label="it.label" :aria-current="isActive(it.path) ? 'page' : undefined"
               :title="[it.label, it.kind, it.aliases].filter(Boolean).join(' · ')"
-              :to="it.platform ? it.path : cpath(it.path)">
+              :to="cpath(it.path)">
               <el-icon><component :is="it.icon || 'Document'" /></el-icon>
               <span>{{ it.label }}</span>
             </router-link>
@@ -112,7 +112,7 @@
             <el-button v-if="!route.meta.clusterManagement" link type="primary" @click="goClusterList">集群管理</el-button>
           </template>
         </el-alert>
-        <router-view v-if="store.ready || route.meta.clusterManagement" v-slot="{ Component }">
+        <router-view v-if="store.ready || route.meta.clusterManagement || route.meta.platformPage" v-slot="{ Component }">
           <component :is="Component" :key="route.path" />
         </router-view>
       </main>
@@ -130,6 +130,7 @@ import {
   Search, OfficeBuilding, Refresh, Timer, QuestionFilled, UserFilled, ArrowDown,
 } from '@element-plus/icons-vue'
 import { store } from '../store'
+import {resourceTitle} from '../utils/resource-ui'
 import { navGroups, metaFromRoute } from '../config/resources'
 import { parseNavigationExpansion, visibleNavigationGroups, revealActiveNavigationGroup } from '../utils/navigation-groups'
 import { confirmContextChange } from '../utils/navigation'
@@ -175,7 +176,7 @@ const baseGroups = computed(() => {
     { label: '平台角色', icon: 'UserFilled', path: '/roles', allowed: allow.value.users },
     { label: '镜像仓库', icon: 'Box', path: '/registries', allowed: allow.value.registry },
     { label: '监控', icon: 'TrendCharts', path: '/monitor', allowed: allow.value.monitor },
-  ].filter(item => item.allowed).map(item => ({ ...item, platform: item.path !== '/monitor' }))
+  ].filter(item => item.allowed)
   return [...navGroups, { id: 'platform', title: '平台', icon: 'OfficeBuilding', items: platform }]
 })
 const permittedGroups = computed(() => visibleNavigationGroups(baseGroups.value, '', groupExpansion.value,
@@ -192,14 +193,14 @@ function toggleGroup(group) {
 }
 watch([() => route.path, baseGroups], () => {
   const next = revealActiveNavigationGroup(permittedGroups.value, groupExpansion.value,
-    item => isActive(item.path, item.platform))
+    item => isActive(item.path))
   if (next !== groupExpansion.value) saveGroupExpansion(next)
 }, { immediate: true })
 
 const title = computed(() => {
   if (route.meta.title) return route.meta.title
   if (['resource-list','resource-detail','resource-create','resource-edit'].includes(route.name)) {
-    return metaFromRoute(route.params, store.discovery).label
+    return resourceTitle(metaFromRoute(route.params, store.discovery))
   }
   if (route.name === 'pod-logs') return 'Pod 日志'
   if (route.name === 'pod-terminal') return 'Web 终端'
@@ -223,15 +224,15 @@ function applyAutoRefresh() {
   }
 }
 
-function isActive(path, platform = false) {
-  const full = platform ? path : cpath(path, route.params.clusterId)
+function isActive(path) {
+  const full = cpath(path, route.params.clusterId)
   if (path === '/overview') return route.path === full
   return route.path === full || route.path.startsWith(full + '/')
 }
 function go(path) { if (route.path !== cpath(path)) router.push(cpath(path)) }
 function goClusterList() { router.push(cpath('/clusters')) }
 function switchCluster(id) {
-  router.push(cpath(route.name==='cluster-monitor' ? '/monitor' : '/overview', id))
+  router.push(cpath(route.meta.platformPage ? '/' + route.meta.platformPage : route.name==='cluster-monitor' ? '/monitor' : '/overview', id))
 }
 async function changeNs(ns) { if (await confirmContextChange()) store.setNamespace(ns) }
 

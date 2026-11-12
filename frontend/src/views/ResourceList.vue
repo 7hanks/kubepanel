@@ -1,7 +1,10 @@
 <template>
-  <div>
+  <div class="resource-list-page">
+    <header class="resource-page-heading"><div class="resource-heading-title"><span class="resource-heading-icon"><el-icon><component :is="meta.icon||'Document'"/></el-icon></span><h1>{{resourceTitle(meta)}}</h1><el-tag size="small" effect="plain" type="info">{{filtered.length}} 项</el-tag></div><div class="resource-scope"><el-icon><component :is="'OfficeBuilding'"/></el-icon><span>{{store.currentCluster?.name||store.currentClusterId}}</span><span class="resource-scope-divider">/</span><el-icon><component :is="'Collection'"/></el-icon><span>{{store.namespace==='all'?'全部命名空间':store.namespace}}</span></div></header>
+    <div class="resource-query-card"><div class="resource-query-field"><label>名称</label><el-input v-model="keyword" placeholder="按名称搜索" aria-label="资源名称筛选" clearable :prefix-icon="Search" @keyup.enter="load"/></div><div class="resource-query-field resource-query-date"><label>创建时间</label><el-date-picker v-model="createdRange" type="daterange" unlink-panels start-placeholder="开始日期" end-placeholder="结束日期" range-separator="至" aria-label="创建时间范围" clearable/></div><div class="resource-query-actions"><el-button type="primary" :icon="Search" :loading="loading" @click="load">查询</el-button><el-button @click="clearQuery">清空条件</el-button></div></div>
+    <div class="resource-table-panel">
+    <div v-if="meta.kind==='Service'" class="resource-type-tabs"><button type="button" :class="{active:!serviceType}" @click="serviceType=''">全部服务 <span>{{rows.length}}</span></button><button v-for="type in serviceTypes" :key="type" type="button" :class="{active:serviceType===type}" @click="serviceType=serviceType===type?'':type">{{type}} <span>{{rows.filter(row=>row.type===type).length}}</span></button></div>
     <div class="kp-toolbar resource-toolbar">
-      <el-input v-model="keyword" placeholder="按名称搜索" clearable class="resource-search" :prefix-icon="Search" />
       <el-popover v-model:visible="filterOpen" trigger="click" placement="bottom-start" popper-class="resource-filter-popover" :width="560" :popper-style="{maxWidth:'calc(100vw - 32px)'}" @show="beginFilters">
         <template #reference><el-button :icon="Filter" :type="activeCount ? 'primary' : 'default'" :plain="!!activeCount" aria-label="筛选">筛选<span v-if="activeCount" class="filter-count">{{ activeCount }}</span></el-button></template>
         <el-form ref="filterFormRef" aria-label="资源筛选" label-position="top" @submit.prevent="applyFilters">
@@ -33,8 +36,10 @@
         </el-form>
       </el-popover>
       <el-button @click="load" :loading="loading"><el-icon><Refresh /></el-icon><span style="margin-left:5px">刷新</span></el-button>
+      <div v-if="meta.kind==='Pod'" class="pod-list-summary"><span><i class="summary-dot running"/>运行中 <strong>{{rows.filter(row=>row.status==='Running').length}}</strong></span><span><i class="summary-dot warning"/>异常 <strong>{{rows.filter(row=>isAbnormal(row.status)&&!['Succeeded','Failed'].includes(row._raw?.status?.phase)).length}}</strong></span></div>
       <span class="spacer" />
       <el-tooltip :content="nextContinue ? `已加载 ${items.length} 项；当前筛选仅覆盖已加载资源，可继续加载。标签选择器由 Kubernetes 服务端执行。` : `已加载 ${items.length} 项；标签选择器由 Kubernetes 服务端执行，其他条件筛选已加载资源。`"><span class="resource-count">{{ filtered.length }} 项<span v-if="nextContinue"> · 已加载 {{ items.length }}</span></span></el-tooltip>
+      <el-tooltip content="切换列表密度"><el-button aria-label="切换列表密度" @click="compactRows=!compactRows"><el-icon><component :is="'Operation'"/></el-icon></el-button></el-tooltip>
       <el-button v-if="canCreateRes" type="primary" :icon="Plus" @click="openCreate">新建</el-button>
       <el-button v-if="canBulkRestart" type="warning" plain :disabled="!selected.length" @click="openBulkRestart">批量重启 ({{ selected.length }})</el-button>
       <el-button v-if="canDeleteRes" type="danger" plain :disabled="!selected.length" @click="batchDelete">删除 ({{ selected.length }})</el-button>
@@ -43,7 +48,7 @@
     <el-alert v-if="loadError" type="error" :closable="false" show-icon style="margin-bottom:12px"><template #title>{{ loadError }}</template><el-button @click="load">重试</el-button></el-alert>
     <div class="kp-card" style="padding:0">
       <el-table
-        ref="tableRef" v-loading="loading" :data="paged" border stripe size="small" row-key="uid"
+        ref="tableRef" v-loading="loading" :data="paged" border stripe :size="compactRows?'small':'default'" row-key="uid"
         style="width:100%" @sort-change="v => sort = v" @selection-change="v => selected = v" @row-dblclick="openDetail"
       >
         <el-table-column type="selection" width="42" />
@@ -52,7 +57,10 @@
           :width="col.width" :min-width="col.minWidth" sortable="custom" show-overflow-tooltip
         >
           <template #default="{ row }">
-            <router-link v-if="col.link" :to="detailPath(row)">{{ row[col.key] }}</router-link>
+            <div v-if="col.link" class="resource-name-cell"><router-link :to="detailPath(row)">{{ row[col.key] }}</router-link><span v-if="meta.kind==='Pod'&&store.namespace==='all'" class="resource-namespace-pill">{{row.namespace}}</span></div>
+            <el-tag v-else-if="meta.kind==='Service'&&col.key==='type'" :type="row.type==='NodePort'?'success':row.type==='LoadBalancer'?'warning':row.type==='ExternalName'?'info':'primary'" effect="light" size="small" class="service-type-tag">{{row.type}}</el-tag>
+            <div v-else-if="meta.kind==='Service'&&col.key==='ports'" class="resource-port-chips"><span v-for="(port,index) in row._raw?.spec?.ports||[]" :key="index">{{servicePortLabel(port)}}</span></div>
+            <div v-else-if="col.key==='images'" class="resource-image-cell"><el-icon><component :is="'Box'"/></el-icon><span>{{row.images||'—'}}</span></div>
             <el-tag disable-transitions v-else-if="col.tag" :type="statusTag(row[col.key])" size="small" effect="light">{{ row[col.key] }}</el-tag>
             <span v-else>{{ display(row[col.key]) }}</span>
           </template>
@@ -62,6 +70,7 @@
             <div class="kp-list-actions">
               <ResourceActionButton @click="viewYaml(row)">YAML</ResourceActionButton>
               <ResourceActionButton v-if="canUpdateRes" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm(row)">编辑</ResourceActionButton>
+              <el-tooltip v-if="meta.kind==='Pod'&&can('cluster:update')" :content="podScaleAvailability(row)||'调整所属工作负载的副本数'" :disabled="!podScaleAvailability(row)"><span><ResourceActionButton class="resource-scale-button" :disabled="!!podScaleAvailability(row)" @click="openPodScale(row)">扩缩容</ResourceActionButton></span></el-tooltip>
               <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
               <el-dropdown
                 trigger="click" placement="bottom-end" :teleported="true" popper-class="kp-row-actions"
@@ -103,8 +112,10 @@
       </div>
     </div>
 
+    <PodScaleDialog v-model="podScaleVisible" :target="podScaleTarget" :context-key="bulkContextKey" @saved="load"/>
     <ContainerFilePicker v-model="filesVisible" :resource="filesResource" />
     <BulkPodRestartDialog v-model="bulkRestartVisible" :targets="bulkRestartTargets" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :context-key="bulkContextKey" :can-restart="canRestartTarget" @submitted="load" />
+    </div>
     <YamlDialog
       v-model="yamlVisible" :title="yamlTitle" :content="yamlText" :saving="saving"
       :readonly="!canUpdateRes && yamlMode !== 'create'" :creating="yamlMode === 'create'" :preflight="preflightYaml" :target="yamlTarget" :mode="yamlDialogMode" :submit-label="yamlMode === 'create' ? '创建' : '保存'" @save="saveYaml"
@@ -133,12 +144,14 @@ import { cpath, nsPath } from '../utils/path'
 import { can, canResource, canCreate, canUpdate, canDelete } from '../utils/perm'
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
-import { filterRows, sortRows, createRequestGate, targetDescription } from '../utils/resource'
+import { filterRows, sortRows, createRequestGate, targetDescription, isAbnormal } from '../utils/resource'
 import { normalizeFilters, filterCapabilities, activeFilterCount, filterQuery, filterQueryKeys } from '../utils/resource-filters'
 import ResourceActionButton from '../components/ResourceActionButton.vue'
 import ContainerFilePicker from '../components/ContainerFilePicker.vue'
 import BulkPodRestartDialog from '../components/BulkPodRestartDialog.vue'
 import {MAX_BULK_POD_RESTART} from '../utils/bulk-pod-restart'
+import PodScaleDialog from '../components/PodScaleDialog.vue'
+import {resourceTitle,filterResourceRows,servicePortLabel,podScaleAvailability} from '../utils/resource-ui'
 
 const route = useRoute()
 const router = useRouter()
@@ -149,7 +162,11 @@ const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].in
 const fileSupported=computed(()=>['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.value.kind))
 const filesVisible=ref(false),filesResource=shallowRef(null)
 function openFiles(row){if(!can('pod:files:read'))return;const m=meta.value;filesResource.value={...row._raw,kind:m.kind,apiVersion:m.group?`${m.group}/${m.version}`:m.version};filesVisible.value=true}
-const actionWidth = computed(() => canUpdateRes.value ? 195 : 135)
+const actionWidth = computed(() => meta.value.kind==='Pod'&&can('cluster:update')?280:canUpdateRes.value?200:135)
+const createdRange=ref([]),serviceType=ref(''),compactRows=ref(true),podScaleVisible=ref(false),podScaleTarget=shallowRef(null)
+const serviceTypes=['ClusterIP','NodePort','LoadBalancer','ExternalName']
+function openPodScale(row){if(!can('cluster:update')||podScaleAvailability(row))return;const md=row._raw?.metadata;if(!md?.uid)return ElMessage.warning('缺少 Pod UID，请刷新后重试');podScaleTarget.value={clusterId:store.currentClusterId,namespace:md.namespace,name:md.name,uid:md.uid};podScaleVisible.value=true}
+function clearQuery(){keyword.value='';createdRange.value=[];serviceType.value='';resetFilters()}
 
 const loading = ref(false)
 const saving = ref(false)
@@ -203,7 +220,7 @@ const yamlDialogMode = ref('edit')
 const editingRow = shallowRef(null)
 
 const rows = computed(() => items.value.map(i => normalizeRow(meta.value.kind, i)))
-const filtered = computed(() => sortRows(filterRows(rows.value, {...filters,keyword:keyword.value}),sort.value.prop,sort.value.order))
+const filtered = computed(() => sortRows(filterResourceRows(filterRows(rows.value, {...filters,keyword:keyword.value}),{type:serviceType.value,createdRange:createdRange.value}),sort.value.prop,sort.value.order))
 const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
 
 function display(v) {
@@ -423,6 +440,7 @@ async function batchDelete() {
 
 let queryTimer
 let listPath=route.path
+watch([createdRange,serviceType],()=>{page.value=1;clearSelection()},{deep:true})
 watch(keyword, () => {
   page.value=1; clearSelection()
   clearTimeout(queryTimer)
@@ -437,7 +455,7 @@ watch(() => route.query, () => {
 watch([() => route.path, () => store.currentClusterId, () => store.namespace], () => {
   listPath=route.path
   clearTimeout(queryTimer)
-  filterOpen.value=false
+  filterOpen.value=false;createdRange.value=[];serviceType.value=''
   Object.assign(filters,normalizeFilters(meta.value.kind,route.query))
   keyword.value=filters.keyword
   Object.assign(draft,filters)
@@ -463,4 +481,8 @@ onUnmounted(() => { clearTimeout(queryTimer); removeContextGuard(); gate.invalid
 .resource-filter-grid .filter-wide { grid-column:1/-1; }
 .resource-filter-grid :deep(.el-select),.resource-filter-grid :deep(.el-input-number) { width:100%; }
 @media (max-width:700px) { .resource-toolbar { flex-wrap:wrap; } .resource-search { flex:1; } .resource-filter-grid { grid-template-columns:minmax(0,1fr); } }
+
+.resource-page-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}.resource-heading-title{display:flex;align-items:center;gap:12px}.resource-heading-title h1{font-size:22px;color:#304d73;letter-spacing:.01em;margin:0;font-weight:650}.resource-heading-icon{width:40px;height:40px;display:grid;place-items:center;border:1px solid #d6e1ef;background:#eaf0f9;color:#476d9b;border-radius:12px;font-size:23px}.resource-scope{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--kp-muted)}.resource-scope>.el-icon{font-size:15px}.resource-scope-divider{padding:0 8px;color:var(--kp-faint)}.resource-query-card{display:flex;align-items:center;gap:28px;flex-wrap:wrap;padding:18px 22px;background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;box-shadow:0 2px 5px rgba(22,40,70,.025);margin-bottom:18px}.resource-query-field{display:flex;align-items:center;gap:14px;min-width:250px;flex:1}.resource-query-field>label{font-size:13px;color:var(--kp-text-2);white-space:nowrap}.resource-query-field>.el-input{flex:1}.resource-query-date{flex:1.2;min-width:330px}.resource-query-date :deep(.el-date-editor){width:100%;min-width:0}.resource-query-actions{display:flex;gap:8px;margin-left:auto}.resource-query-actions .el-button+.el-button{margin:0}.resource-table-panel{background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;padding:18px 18px 2px;box-shadow:0 2px 5px rgba(22,40,70,.025)}.resource-type-tabs{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--kp-border)}.resource-type-tabs>button{display:flex;align-items:center;gap:9px;background:transparent;border:1px solid transparent;color:var(--kp-text-2);font:inherit;font-size:13px;padding:8px 13px;border-radius:8px;cursor:pointer}.resource-type-tabs>button>span{font-size:12px;background:var(--kp-surface-2);padding:1px 7px;border-radius:5px}.resource-type-tabs>button.active{background:var(--kp-side-active);border-color:#dce7f6;color:var(--kp-brand);font-weight:600}.resource-type-tabs>button.active>span{background:var(--kp-surface)}.resource-table-panel>.kp-card{border-radius:8px;box-shadow:none;border:0}.pod-list-summary{display:flex;gap:16px;font-size:12px;color:var(--kp-muted);white-space:nowrap}.pod-list-summary>span{display:flex;align-items:center;gap:6px}.pod-list-summary strong{color:var(--kp-text);font-weight:600}.summary-dot{display:inline-block;width:6px;height:6px;border-radius:50%}.summary-dot.running{background:#16a36b}.summary-dot.warning{background:#d68b24}.resource-name-cell{display:flex;align-items:flex-start;flex-direction:column;gap:4px}.resource-namespace-pill{font-size:11px;color:var(--kp-muted);background:var(--kp-surface-2);padding:0 6px;border-radius:4px;line-height:18px}.resource-port-chips{display:flex;gap:5px;flex-wrap:wrap;max-height:58px;overflow:hidden}.resource-port-chips>span{display:inline-block;background:#f0f3f7;color:#5d6d83;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;padding:2px 6px;border-radius:5px;white-space:nowrap}.service-type-tag{font-weight:600;letter-spacing:.01em}.resource-image-cell{display:flex;align-items:center;gap:7px;min-width:0;color:#63738b;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}.resource-image-cell>.el-icon{flex:none;color:#6b88ae;font-size:15px}.resource-image-cell>span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.resource-scale-button{inline-size:5.5em!important}.resource-toolbar{gap:9px;margin-bottom:16px}.resource-toolbar>.el-button+.el-button{margin:0}.resource-table-panel :deep(.el-table th.el-table__cell){background:#f7f9fc}.resource-table-panel :deep(.el-table--small td.el-table__cell){padding:8px 0}.resource-table-panel :deep(.el-table:not(.el-table--small) td.el-table__cell){padding:14px 0}
+@media(max-width:1000px){.resource-query-card{gap:16px}.resource-query-field{min-width:220px}.resource-query-date{min-width:280px}.resource-query-actions{margin-left:0}.pod-list-summary{display:none}}
+@media(max-width:700px){.resource-page-heading{margin-bottom:14px;gap:10px}.resource-heading-title h1{font-size:19px}.resource-heading-icon{width:34px;height:34px;font-size:20px}.resource-scope{font-size:12px}.resource-query-card{padding:14px;gap:12px}.resource-query-field,.resource-query-date{min-width:0;flex:1 1 100%}.resource-query-field>label{width:56px;flex:none}.resource-query-actions{justify-content:flex-end;width:100%}.resource-table-panel{padding:12px 10px 2px}.resource-toolbar{flex-wrap:wrap}.resource-type-tabs{gap:3px}.resource-type-tabs>button{font-size:11px;padding:7px 8px}.resource-type-tabs>button>span{padding:0 5px}.resource-count{display:none}}
 </style>

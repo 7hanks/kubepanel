@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import {parse,compileScript} from '@vue/compiler-sfc'
 import {ref,computed,watch,effectScope,nextTick,reactive} from 'vue'
 import {dump} from 'js-yaml'
+import {resourceTitle} from '../src/utils/resource-ui.js'
 import * as forms from '../src/utils/resource-form.js'
 import {MAX_YAML_IMPORT_BYTES} from '../src/utils/yaml-import.js'
 const meta={kind:'ConfigMap',group:'',version:'v1',plural:'configmaps',namespaced:true,path:'/r/_core/v1/configmaps'}
@@ -16,7 +17,7 @@ function fixture({creating=false,request,permission=true,original,resourceMeta=m
  const api={get:async()=>structuredClone(resource),create:(...args)=>invoke('create',args),update:(...args)=>invoke('update',args)}
  const {descriptor}=parse(fs.readFileSync(new URL('../src/views/ResourceEditor.vue',import.meta.url),'utf8'))
  const source=compileScript(descriptor,{id:'resource-editor-test'}).content.replace(/^import[\s\S]*?from\s+['"][^'"]+['"]\s*\r?\n/gm,'').replace('export default','return')
- const bindings={ref,computed,watch,nextTick,onMounted(){},onUnmounted:fn=>cleanups.push(fn),useRoute:()=>route,useRouter:()=>({push:path=>routes.push(path)}),ElMessage:{success(){}},ElMessageBox:{confirm:async()=>{}},dump,api,store,metaFromRoute:()=>resourceMeta,can:()=>permission,canResource:()=>permission,cpath:path=>'/c/dev'+path,nsPath:ns=>ns||'_all',registerUnsavedGuard:fn=>{guards.push(fn);return()=>{}},...forms,MAX_YAML_IMPORT_BYTES,KeyValueFields:{},StructuredFields:{},WorkloadForm:{},YamlDiff:{},window:{removeEventListener(){},addEventListener(){}}}
+ const bindings={ref,computed,watch,nextTick,onMounted(){},onUnmounted:fn=>cleanups.push(fn),useRoute:()=>route,useRouter:()=>({push:path=>routes.push(path)}),ElMessage:{success(){}},ElMessageBox:{confirm:async()=>{}},dump,api,store,metaFromRoute:()=>resourceMeta,can:()=>permission,canResource:()=>permission,cpath:path=>'/c/dev'+path,nsPath:ns=>ns||'_all',registerUnsavedGuard:fn=>{guards.push(fn);return()=>{}},...forms,resourceTitle,ServiceForm:{},EditorInsights:{},MAX_YAML_IMPORT_BYTES,KeyValueFields:{},StructuredFields:{},WorkloadForm:{},YamlDiff:{},window:{removeEventListener(){},addEventListener(){}}}
  const definition=Function(...Object.keys(bindings),source)(...Object.values(bindings))
  const state=scope.run(()=>definition.setup({}, {expose(){}}))
  return {state,calls,routes,guards,route,store,destroy(){cleanups.forEach(fn=>fn());scope.stop()}}

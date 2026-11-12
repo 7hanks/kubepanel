@@ -50,7 +50,7 @@ async function preflight(){await footer().getByRole('button',{name:'服务端预
 try{
  await page.goto('http://127.0.0.1:5188/c/test/r/apps/v1/deployments')
  await page.getByRole('button',{name:'新建',exact:true}).click()
- await page.getByRole('heading',{name:'新建 Deployment',exact:true}).waitFor()
+ await page.getByRole('heading',{name:'新建 部署',exact:true}).waitFor()
  await page.getByRole('textbox',{name:'资源名称',exact:true}).fill('created-app')
  await page.getByRole('tab',{name:'容器组模板',exact:true}).click()
  await page.getByRole('textbox',{name:'容器镜像',exact:true}).fill('nginx:1.25-alpine')

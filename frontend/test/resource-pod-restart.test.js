@@ -18,7 +18,7 @@ function fixture(confirm=async()=>{}) {
   ElMessage:{warning:m=>warnings.push(m),error:m=>warnings.push(m),success(){}},ElMessageBox:{confirm},api:{restartPod:async(...args)=>{calls.push(args);return {ok:true}},list:async()=>({items:[]})},registerUnsavedGuard:()=>()=>{},
   metaFromRoute:()=>({kind:'Pod',group:'',version:'v1',plural:'pods',namespaced:true}),statusTag:()=>'',cpath:path=>path,nsPath:ns=>ns,
   can:()=>true,canResource:()=>true,canCreate:()=>true,canUpdate:()=>true,canDelete:()=>true,...resource,...filters,...columns,MAX_BULK_POD_RESTART,
-  Search:{},Filter:{},Plus:{},Refresh:{},MoreFilled:{},YamlDialog:{},ScaleDialog:{},ResourceActionButton:{},ContainerFilePicker:{},BulkPodRestartDialog:{},window:{removeEventListener(){}}}
+  Search:{},Filter:{},Plus:{},Refresh:{},MoreFilled:{},YamlDialog:{},ScaleDialog:{},PodScaleDialog:{},ResourceActionButton:{},ContainerFilePicker:{},BulkPodRestartDialog:{},window:{removeEventListener(){}}}
  const definition=Function(...Object.keys(bindings),source)(...Object.values(bindings))
  const state=scope.run(()=>definition.setup({}, {expose(){}}))
  return {state,store,calls,warnings,destroy(){cleanups.forEach(fn=>fn());scope.stop()}}

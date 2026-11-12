@@ -114,6 +114,8 @@ export const api = {
   cordon: (name, unschedulable) => http.post(`/v1/nodes/${encodeURIComponent(name)}/cordon`, { unschedulable }),
   podEvents: (namespace, name) => http.get(`/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/events`),
   restartPod: (namespace, name, {dryRun=false,uid,clusterId,signal,silent=false}={}) => http.post(`/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/restart`, {dryRun,...(uid===undefined?{}:{uid})},{params:clusterId?{clusterId}:{},signal,silent}),
+  podScaleTarget: (namespace,name,{uid,clusterId,signal}={})=>http.get(`/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/scale-target`,{params:{uid,clusterId},signal,silent:true}),
+  scalePod: (namespace,name,body,{clusterId}={})=>http.post(`/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/scale`,body,{params:{clusterId},silent:true}),
   nodeMetrics: () => http.get('/v1/metrics/nodes'),
   podMetrics: (namespace) => http.get('/v1/metrics/pods', { params: { namespace } }),
 

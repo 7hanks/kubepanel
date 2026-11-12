@@ -21,6 +21,7 @@ import { can, canAny, OBJECTS, ACTIONS, PERMISSIONS, PERMISSION_LABEL, SENSITIVE
 import { assertResourceAccess, assertClusterAccess, resourceAllowed } from './access.js'
 import { scopedList } from './resourceScope.js'
 import { operations } from './operations.js'
+import { podScaling } from './podScaling.js'
 import { listAudit } from './auditService.js'
 import { listRoles, createRole, updateRole, deleteRole } from './roleService.js'
 import { listUsers, createUser, updateUser, deleteUser, countUsersByRole } from './userService.js'
@@ -461,6 +462,16 @@ router.get('/v1/pods/:namespace/:name/logs', requirePerm('pod:logs'), wrap(async
  */
 router.post('/v1/pods/:namespace/:name/restart', requireAll('cluster:update', 'cluster:delete'), wrap(async (req, res) => {
   res.json(await operations.restartPod(req.params.namespace, req.params.name, req.clusterId, {...opOptions(req),uid:req.body?.uid}))
+}))
+
+router.get('/v1/pods/:namespace/:name/scale-target', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {
+  res.json(await podScaling.resolveTarget(req.params.namespace, req.params.name, req.clusterId, { ...opOptions(req), uid: req.query.uid }))
+}))
+router.post('/v1/pods/:namespace/:name/scale', requirePerm('cluster:update'), wrap(async (req, res) => {
+  res.json(await podScaling.scalePod(req.params.namespace, req.params.name, req.clusterId, {
+    ...opOptions(req), uid: req.body?.uid, controllerUid: req.body?.controllerUid,
+    replicas: req.body?.replicas, expectedReplicas: req.body?.expectedReplicas,
+  }))
 }))
 
 router.get('/v1/pods/:namespace/:name/events', requirePerm('cluster:detail', 'cluster:list'), wrap(async (req, res) => {

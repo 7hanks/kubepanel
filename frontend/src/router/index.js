@@ -21,6 +21,10 @@ const routes = [
       { path: 'overview', name: 'overview', component: () => import('../views/Overview.vue'), meta: { title: '集群概览' } },
       { path: 'clusters', name: 'cluster-management', component: () => import('../views/ClusterList.vue'), props: { embedded: true }, meta: { title: 'Kubernetes 集群', clusterManagement: true } },
       { path: 'monitor', name: 'cluster-monitor', component: () => import('../views/Monitor.vue'), meta: { title: '监控', perm: ['monitor:list','monitor:detail'], clusterMonitor: true } },
+      { path: 'audit', name: 'cluster-audit', component: () => import('../views/Audit.vue'), props: { embedded: true }, meta: { title: '操作审计', perm: ['audit:list'], platformPage: 'audit' } },
+      { path: 'users', name: 'cluster-users', component: () => import('../views/Users.vue'), props: { embedded: true }, meta: { title: '用户', perm: ['user:list', 'user:detail'], platformPage: 'users' } },
+      { path: 'roles', name: 'cluster-roles', component: () => import('../views/Roles.vue'), props: { embedded: true }, meta: { title: '角色', perm: ['user:list', 'user:detail'], platformPage: 'roles' } },
+      { path: 'registries', name: 'cluster-registries', component: () => import('../views/Registries.vue'), props: { embedded: true }, meta: { title: '镜像仓库', perm: ['registry:list', 'registry:detail'], platformPage: 'registries' } },
       { path: 'r/:group/:version/:plural', name: 'resource-list', component: () => import('../views/ResourceList.vue') },
       { path: 'r/:group/:version/:plural/new', name: 'resource-create', component: () => import('../views/ResourceEditor.vue') },
       { path: 'r/:group/:version/:plural/:namespace/:name/edit', name: 'resource-edit', component: () => import('../views/ResourceEditor.vue') },
@@ -45,7 +49,7 @@ router.beforeEach(async (to) => {
     clearSession()
     return {path:'/login',query:{redirect:to.fullPath}}
   }
-  if ((to.meta.perm && !canAny(to.meta.perm)) || (to.meta.clusterMonitor && !canAny(['cluster:list','cluster:detail']))) {
+  if ((to.meta.perm && !canAny(to.meta.perm)) || ((to.meta.clusterMonitor || to.meta.platformPage) && !canAny(['cluster:list','cluster:detail']))) {
     const target = landingPath()
     if (target !== to.path) return target
   }
@@ -56,8 +60,10 @@ router.beforeEach(async (to) => {
       const current = clusters.find(c => c.id === store.currentClusterId) || clusters[0]
       if (!current) {
         store.setCluster('')
+        if (to.meta.platformPage) return { path: '/' + to.meta.platformPage, query: to.query, hash: to.hash }
         if (to.name !== 'clusters') return '/clusters'
       } else if (to.name === 'clusters' || !clusters.some(c => c.id === to.params.clusterId)) {
+        if (to.meta.platformPage) return { path: `/c/${encodeURIComponent(current.id)}/${to.meta.platformPage}`, query: to.query, hash: to.hash }
         return `/c/${encodeURIComponent(current.id)}/overview`
       }
     } catch (e) {
