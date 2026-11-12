@@ -11,7 +11,7 @@
       <el-button v-if="['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.kind) && can('pod:files:read')" @click="filesVisible=true">文件浏览器</el-button>
       <el-button v-if="scalable && canUpdateRes" @click="doScale">扩缩容</el-button>
       <el-button v-if="restartable && canUpdateRes" @click="doRestart">重启</el-button>
-      <el-button v-if="canUpdateRes" @click="editYaml">编辑 YAML</el-button>
+      <el-button v-if="canUpdateRes" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm">编辑</el-button>
       <el-button v-if="canDeleteRes" type="danger" plain @click="doDelete">删除</el-button>
     </div>
 
@@ -279,6 +279,8 @@ async function preflightYaml(text) {
   if (parsed?.metadata?.name!==name.value || (parsed.metadata.namespace || '_all')!==apiNs() || parsed.kind!==obj.value.kind || parsed.apiVersion!==obj.value.apiVersion) throw new Error('不能在编辑中更改目标资源身份')
   return api.update(meta.value.group,meta.value.version,meta.value.plural,apiNs(),name.value,parsed,{dryRun:true})
 }
+
+function editForm() { router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/${encodeURIComponent(apiNs())}/${encodeURIComponent(name.value)}/edit`)) }
 
 /** 顶部「编辑 YAML」按钮：打开带导入/下载/全屏的编辑弹窗 */
 function editYaml() {

@@ -198,7 +198,7 @@ watch([() => route.path, baseGroups], () => {
 
 const title = computed(() => {
   if (route.meta.title) return route.meta.title
-  if (route.name === 'resource-list' || route.name === 'resource-detail') {
+  if (['resource-list','resource-detail','resource-create','resource-edit'].includes(route.name)) {
     return metaFromRoute(route.params, store.discovery).label
   }
   if (route.name === 'pod-logs') return 'Pod 日志'

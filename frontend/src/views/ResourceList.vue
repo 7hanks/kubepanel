@@ -61,9 +61,7 @@
           <template #default="{ row }">
             <div class="kp-list-actions">
               <ResourceActionButton @click="viewYaml(row)">YAML</ResourceActionButton>
-              <ResourceActionButton v-if="meta.kind === 'Pod' && can('pod:logs')" @click="goLogs(row)">日志</ResourceActionButton>
-              <ResourceActionButton v-if="meta.kind === 'Pod' && can('pod:exec')" @click="goTerminal(row)">终端</ResourceActionButton>
-              <ResourceActionButton v-if="meta.kind === 'Pod' && can('pod:files:read')" aria-label="文件浏览器" @click="openFiles(row)">文件</ResourceActionButton>
+              <ResourceActionButton v-if="canUpdateRes" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm(row)">编辑</ResourceActionButton>
               <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
               <el-dropdown
                 trigger="click" placement="bottom-end" :teleported="true" popper-class="kp-row-actions"
@@ -73,9 +71,10 @@
                 <ResourceActionButton aria-label="更多操作" title="更多操作"><el-icon aria-hidden="true"><MoreFilled /></el-icon></ResourceActionButton>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <!-- 普通操作：低频、非破坏性（行内四入口已覆盖的高频动作不在此重复） -->
-                    <el-dropdown-item command="editYaml" :disabled="!canUpdateRes">编辑 YAML</el-dropdown-item>
-                    <el-dropdown-item v-if="fileSupported && meta.kind!=='Pod' && can('pod:files:read')" command="files">文件浏览器</el-dropdown-item>
+                    <!-- 更多操作按独立权限展示；YAML 与表单编辑保留在行内 -->
+                    <el-dropdown-item v-if="meta.kind==='Pod'&&can('pod:logs')" command="logs">日志</el-dropdown-item>
+                    <el-dropdown-item v-if="meta.kind==='Pod'&&can('pod:exec')" command="terminal">终端</el-dropdown-item>
+                    <el-dropdown-item v-if="fileSupported&&can('pod:files:read')" command="files">文件浏览器</el-dropdown-item>
                     <el-dropdown-item v-if="scalable" command="scale" :disabled="!canUpdateRes">扩缩容</el-dropdown-item>
                     <el-dropdown-item v-if="restartable" command="restart" :disabled="!canUpdateRes">重启工作负载</el-dropdown-item>
                     <el-dropdown-item v-if="meta.kind === 'Node'" command="cordon" :disabled="!can('node:maintain') || !canUpdateRes">
@@ -150,11 +149,7 @@ const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].in
 const fileSupported=computed(()=>['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.value.kind))
 const filesVisible=ref(false),filesResource=shallowRef(null)
 function openFiles(row){if(!can('pod:files:read'))return;const m=meta.value;filesResource.value={...row._raw,kind:m.kind,apiVersion:m.group?`${m.group}/${m.version}`:m.version};filesVisible.value=true}
-const actionWidth = computed(() => {
-  if (meta.value.kind === 'Pod') return can('pod:files:read') ? 340 : 280
-  if (scalable.value || restartable.value || meta.value.kind === 'Node') return 180
-  return 160
-})
+const actionWidth = computed(() => canUpdateRes.value ? 195 : 135)
 
 const loading = ref(false)
 const saving = ref(false)
@@ -278,14 +273,8 @@ function openDetail(row) { router.push(detailPath(row)) }
 function goLogs(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/logs`)) }
 function goTerminal(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/terminal`)) }
 
-function openCreate() {
-  yamlMode.value = 'create'
-  yamlDialogMode.value = 'edit'
-  editingRow.value = null
-  yamlTitle.value = `新建 ${meta.value.kind}`
-  yamlText.value = yamlTemplate(meta.value, store.namespace)
-  yamlVisible.value = true
-}
+function openCreate() { router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/new`)) }
+function editForm(row) { router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/${encodeURIComponent(row.namespace==='-'?'_all':row.namespace)}/${encodeURIComponent(row.name)}/edit`)) }
 
 /** 点「YAML」默认只读查看；要改必须再点弹窗里的「编辑」 */
 async function openYaml(row, mode) {
@@ -303,7 +292,6 @@ async function openYaml(row, mode) {
   yamlVisible.value = true
 }
 function viewYaml(row) { return openYaml(row, 'view') }
-function editYaml(row) { return openYaml(row, 'edit') }
 
 async function preflightYaml(text) {
   const obj=yaml.load(text); const m=meta.value
@@ -351,11 +339,12 @@ async function saveScale(replicas) {
 
 async function onCommand(cmd, row) {
   if(cmd==='files')return openFiles(row)
+  if(cmd==='logs'&&can('pod:logs'))return goLogs(row)
+  if(cmd==='terminal'&&can('pod:exec'))return goTerminal(row)
   const m = meta.value
   const ns = nsPath(row.namespace)
   if (cmd==='cordon' ? !can('node:maintain') || !canUpdateRes.value : !writable.value) return ElMessage.warning('当前账号只有查看权限，不能执行该操作')
   try {
-    if (cmd === 'editYaml') return editYaml(row)
     if (cmd === 'restartPod') {
       const clusterId=store.currentClusterId,context=bulkContextKey.value
       const target={clusterId,namespace:row._raw?.metadata?.namespace,name:row._raw?.metadata?.name,uid:row._raw?.metadata?.uid}
