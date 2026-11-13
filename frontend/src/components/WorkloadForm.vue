@@ -10,7 +10,7 @@
           <div class="form-section-title">{{currentInit?'初始化容器':'工作容器'}}</div>
           <el-form-item label="名称" required><el-input v-model="current.name" :disabled="disabled||podLocked" aria-label="容器名称"/></el-form-item>
           <el-form-item label="容器镜像" required><el-input v-model="current.image" :disabled="disabled" aria-label="容器镜像" placeholder="例如 nginx:1.25-alpine"/></el-form-item>
-          <el-form-item label="拉取策略"><el-radio-group :model-value="current.imagePullPolicy||''" :disabled="disabled||podLocked" @update:model-value="value=>current.imagePullPolicy=value"><el-radio value="">使用默认</el-radio><el-radio value="Always">Always</el-radio><el-radio value="IfNotPresent">IfNotPresent</el-radio><el-radio value="Never">Never</el-radio></el-radio-group></el-form-item>
+          <el-form-item label="拉取策略"><el-radio-group :model-value="current.imagePullPolicy||''" :disabled="disabled||podLocked" @update:model-value="value=>{if(value)current.imagePullPolicy=value;else delete current.imagePullPolicy}"><el-radio value="">使用默认</el-radio><el-radio value="Always">Always</el-radio><el-radio value="IfNotPresent">IfNotPresent</el-radio><el-radio value="Never">Never</el-radio></el-radio-group></el-form-item>
           <el-collapse>
             <el-collapse-item title="命令 / 参数 / 工作目录" name="command"><div class="container-grid"><el-form-item label="命令"><el-input :model-value="(current.command||[]).join('\n')" :disabled="disabled||podLocked" type="textarea" :rows="3" aria-label="容器命令" placeholder="每行一个命令项" @update:model-value="value=>setLines('command',value)"/></el-form-item><el-form-item label="参数"><el-input :model-value="(current.args||[]).join('\n')" :disabled="disabled||podLocked" type="textarea" :rows="3" aria-label="容器参数" placeholder="每行一个参数" @update:model-value="value=>setLines('args',value)"/></el-form-item></div><el-form-item label="工作目录"><el-input v-model="current.workingDir" :disabled="disabled||podLocked" aria-label="工作目录"/></el-form-item></el-collapse-item>
             <el-collapse-item title="环境变量" name="env">
@@ -26,8 +26,8 @@
       </div>
     </template>
     <template v-else-if="section==='volumes'"><div class="form-section-title">数据卷</div><div class="volume-add"><el-select v-model="volumeType" :disabled="disabled||podLocked" aria-label="数据卷类型"><el-option label="临时目录 emptyDir" value="emptyDir"/><el-option label="ConfigMap" value="configMap"/><el-option label="Secret" value="secret"/><el-option label="持久卷 PVC" value="persistentVolumeClaim"/><el-option label="宿主机目录 hostPath" value="hostPath"/></el-select><el-button :disabled="disabled||podLocked" :icon="Plus" @click="addVolume">添加数据卷</el-button></div><StructuredFields :model-value="pod.volumes||[]" :disabled="disabled||podLocked" path="volumes" @update:model-value="value=>pod.volumes=value"/></template>
-    <template v-else-if="section==='pod'"><div class="form-section-title">容器组设置</div><el-form-item label="重启策略"><el-select :model-value="pod.restartPolicy||'Always'" :disabled="disabled||podLocked" aria-label="重启策略" @update:model-value="value=>pod.restartPolicy=value"><el-option v-for="value in restartPolicies" :key="value" :label="value" :value="value"/></el-select></el-form-item><el-form-item label="服务账号"><el-input v-model="pod.serviceAccountName" :disabled="disabled||podLocked" aria-label="服务账号" placeholder="使用命名空间默认账号"/></el-form-item><el-form-item label="镜像仓库密文"><el-select :model-value="(pod.imagePullSecrets||[]).map(item=>item.name)" multiple filterable allow-create default-first-option :disabled="disabled||podLocked" aria-label="镜像仓库密文" @update:model-value="value=>pod.imagePullSecrets=value.map(name=>({name}))"/></el-form-item><StructuredFields :model-value="podExtra" :reserved-keys="podKeys" :disabled="disabled||podLocked" path="podSpec" @update:model-value="setPodExtra"/></template>
-    <template v-else-if="section==='strategy'"><div class="form-section-title">{{modelValue.kind==='CronJob'?'定时与执行策略':'部署与执行策略'}}</div><StructuredFields :model-value="strategy" :reserved-keys="['template','jobTemplate']" :disabled="disabled" path="strategy" @update:model-value="setStrategy"/></template>
+    <WorkloadPodSettings v-else-if="section==='pod'" :model-value="modelValue" :creating="creating" :disabled="disabled" @change="emit('change')" @validity="value=>emit('validity',value)"/>
+    <WorkloadStrategyForm v-else-if="section==='strategy'" :model-value="modelValue" :creating="creating" :disabled="disabled" @change="emit('change')" @validity="value=>emit('validity',value)"/>
   </div>
   <el-alert v-else type="warning" :closable="false" title="当前资源缺少容器模板，请在 YAML 中检查配置。"/>
 </template>
@@ -36,7 +36,10 @@ import {ref,computed,watch} from 'vue'
 import {Plus,Delete} from '@element-plus/icons-vue'
 import {podSpec,mergeFormFields} from '../utils/resource-form'
 import StructuredFields from './StructuredFields.vue'
+import WorkloadStrategyForm from './WorkloadStrategyForm.vue'
+import WorkloadPodSettings from './WorkloadPodSettings.vue'
 const props=defineProps({modelValue:Object,section:{type:String,default:'containers'},creating:Boolean,disabled:Boolean})
+const emit=defineEmits(['change','validity'])
 const pod=computed(()=>podSpec(props.modelValue)),podLocked=computed(()=>props.modelValue.kind==='Pod'&&!props.creating)
 const selected=ref('containers:0'),volumeType=ref('emptyDir')
 const containers=computed(()=>['containers','initContainers'].flatMap(type=>(pod.value?.[type]||[]).map((container,index)=>({container,type,index,key:`${type}:${index}`,init:type==='initContainers'}))))

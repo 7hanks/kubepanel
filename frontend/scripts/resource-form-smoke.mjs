@@ -4,8 +4,9 @@ import assert from 'node:assert/strict'
 import {load,dump} from 'js-yaml'
 import {createServer} from '../node_modules/vite/dist/node/index.js'
 const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright')
-const vite=await createServer({root:new URL('../',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),server:{host:'127.0.0.1',port:5188,strictPort:true}})
-await vite.listen()
+const baseURL=process.env.SMOKE_BASE_URL||'http://127.0.0.1:5188'
+const vite=process.env.SMOKE_BASE_URL?null:await createServer({root:new URL('../',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),server:{host:'127.0.0.1',port:5188,strictPort:true}})
+await vite?.listen()
 const browser=await chromium.launch({headless:true,channel:'msedge'}),context=await browser.newContext({viewport:{width:1651,height:871}}),page=await context.newPage()
 page.setDefaultTimeout(12000)
 const errors=[],writes=[];let conflict=false,permissions=['*']
@@ -16,6 +17,7 @@ const deployment={
  spec:{
   replicas:2,selector:{matchLabels:{app:'web'}},strategy:{type:'RollingUpdate',rollingUpdate:{maxSurge:'40%',maxUnavailable:0}},
   template:{metadata:{labels:{app:'web'}},spec:{
+   securityContext:{supplementalGroups:[2000],seccompProfile:{type:'RuntimeDefault'}},
    containers:[{name:'nginx',image:'nginx:1.25-alpine',ports:[{name:'http',containerPort:80,protocol:'TCP'}],livenessProbe:{httpGet:{path:'/health',port:80}},env:[{name:'TOKEN',valueFrom:{secretKeyRef:{name:'credentials',key:'token'}}}],securityContext:{runAsNonRoot:true},resources:{requests:{cpu:'100m',memory:'128Mi','example.com/device':'1'}}}],
    volumes:[{name:'settings',configMap:{name:'settings'}}],
    affinity:{nodeAffinity:{requiredDuringSchedulingIgnoredDuringExecution:{nodeSelectorTerms:[{matchExpressions:[{key:'zone',operator:'In',values:['east']}]}]}}}
@@ -54,7 +56,7 @@ async function assertPreviewFits(){
 
 async function preflight(){await footer().getByRole('button',{name:'服务端预检',exact:true}).click();await page.getByRole('dialog',{name:/预览/}).waitFor();await assertPreviewFits()}
 try{
- await page.goto('http://127.0.0.1:5188/c/test/r/apps/v1/deployments')
+ await page.goto(baseURL+'/c/test/r/apps/v1/deployments')
  await page.getByRole('button',{name:'新建',exact:true}).click()
  await page.getByRole('heading',{name:'新建部署',exact:true}).waitFor()
  await page.getByRole('textbox',{name:'资源名称',exact:true}).fill('created-app')
@@ -83,7 +85,28 @@ try{
  const row=page.locator('.el-table__body-wrapper tbody tr').filter({hasText:'complex-web'})
  await row.getByRole('button',{name:'编辑',exact:true}).click()
  await page.getByRole('textbox',{name:'资源名称',exact:true}).waitFor();assert.equal(await page.getByRole('textbox',{name:'资源名称',exact:true}).isDisabled(),true)
+ assert.equal(await page.locator('.editor-version').count(),0)
+ assert.ok(await page.locator('.resource-editor').evaluate(el=>getComputedStyle(el).fontFamily.includes('Microsoft YaHei')))
+ await page.getByRole('tab',{name:'部署策略',exact:true}).click()
  await page.getByRole('tab',{name:'容器组模板',exact:true}).click()
+ await page.getByRole('button',{name:'容器组',exact:true}).click()
+ await preflight()
+ assert.deepEqual(writes.at(-1).body.spec,deployment.spec,'mounting strategy and Pod settings must preserve existing spec exactly')
+ await page.getByRole('dialog',{name:'变更预览',exact:true}).getByRole('button',{name:'关闭预览',exact:true}).click()
+ await page.getByRole('dialog',{name:'变更预览',exact:true}).waitFor({state:'hidden'})
+ await page.getByRole('tab',{name:'部署策略',exact:true}).click()
+ await page.getByRole('spinbutton',{name:'副本数量',exact:true}).fill('3')
+ await page.getByRole('spinbutton',{name:'最大超出副本',exact:true}).fill('30')
+ if(!await page.getByRole('checkbox',{name:'自定义保留版本数',exact:true}).isChecked())await page.locator('.el-checkbox').filter({has:page.getByRole('checkbox',{name:'自定义保留版本数',exact:true})}).click()
+ await page.getByRole('spinbutton',{name:'保留版本数',exact:true}).fill('8')
+ await page.screenshot({path:'.local/frontend-qa/workload-reference-strategy.png',fullPage:true,animations:'disabled'})
+ await page.getByRole('tab',{name:'容器组模板',exact:true}).click()
+ await page.getByRole('button',{name:'容器组',exact:true}).click()
+ await page.getByRole('spinbutton',{name:'优雅终止时长（秒）',exact:true}).fill('45')
+ await page.locator('.el-switch').filter({has:page.getByRole('switch',{name:'自定义运行用户 ID',exact:true})}).click()
+ await page.getByRole('spinbutton',{name:'运行用户 ID',exact:true}).fill('1001')
+ await page.screenshot({path:'.local/frontend-qa/workload-reference-pod.png',fullPage:true,animations:'disabled'})
+ await page.getByRole('button',{name:'容器信息',exact:true}).click()
  await page.getByRole('textbox',{name:'容器镜像',exact:true}).fill('nginx:1.26-alpine')
  await page.getByText('资源请求与限制',{exact:true}).click()
  await page.getByRole('textbox',{name:'CPU 请求',exact:true}).fill('200m')
@@ -99,8 +122,13 @@ try{
  assert.deepEqual(edited.body.spec.template.spec.containers[0].livenessProbe,deployment.spec.template.spec.containers[0].livenessProbe)
  assert.deepEqual(edited.body.spec.template.spec.volumes,deployment.spec.template.spec.volumes)
  assert.equal(edited.body.spec.template.spec.containers[0].resources.requests['example.com/device'],'1')
+ assert.equal(edited.body.spec.replicas,3);assert.equal(edited.body.spec.strategy.rollingUpdate.maxSurge,'30%');assert.equal(edited.body.spec.revisionHistoryLimit,8)
+ assert.equal(edited.body.spec.template.spec.terminationGracePeriodSeconds,45)
+ assert.equal(edited.body.spec.template.spec.securityContext.runAsUser,1001)
+ assert.deepEqual(edited.body.spec.template.spec.securityContext.supplementalGroups,[2000]);assert.deepEqual(edited.body.spec.template.spec.securityContext.seccompProfile,{type:'RuntimeDefault'})
+ assert.deepEqual(edited.body.spec.template.spec.affinity,deployment.spec.template.spec.affinity)
  assert.equal(edited.body.metadata.resourceVersion,'18');assert.equal(edited.body.status,undefined)
- await page.goto('http://127.0.0.1:5188/c/test/r/_core/v1/configmaps')
+ await page.goto(baseURL+'/c/test/r/_core/v1/configmaps')
  await page.getByRole('button',{name:'编辑',exact:true}).click()
  await page.getByRole('button',{name:'添加标签',exact:true}).click()
  await page.getByRole('textbox',{name:'标签键 1',exact:true}).fill('app')
@@ -137,7 +165,7 @@ try{
  const configCall=writes.filter(item=>item.method==='PUT'&&item.path.includes('/configmaps/')&&item.params.dryRun==='false').at(-1)
  assert.equal(configCall.body.metadata.resourceVersion,'21');assert.equal(configCall.body.data['extra.conf'],'enabled=true');assert.equal(configCall.body.binaryData.image,'AAEC')
  await page.setViewportSize({width:1651,height:871})
- await page.goto('http://127.0.0.1:5188/c/test/r/_core/v1/pods')
+ await page.goto(baseURL+'/c/test/r/_core/v1/pods')
  assert.equal(await page.getByRole('button',{name:'日志',exact:true}).count(),0)
  await page.getByRole('button',{name:'更多操作',exact:true}).click()
  for(const label of ['日志','终端','文件浏览器'])await page.getByRole('menuitem',{name:label,exact:true}).waitFor()
@@ -145,4 +173,4 @@ try{
  await page.screenshot({path:'.local/frontend-qa/resource-form-actions.png',fullPage:true,animations:'disabled',style:'.el-message{visibility:hidden}'})
  assert.deepEqual(errors,[])
  console.log('PASS: form create/edit, complex field preservation, exact preflight, ConfigMap entries/files sync and no YAML tab, duplicate validation, 409 draft retention, mobile and action menu; fixture-only writes.')
-}catch(e){console.error('Browser errors',errors);console.error('URL',page.url());console.error((await page.locator('body').innerText()).slice(0,5000));await page.screenshot({path:'.local/frontend-qa/resource-form-failure.png',fullPage:true});throw e}finally{await browser.close();await vite.close()}
+}catch(e){await page.screenshot({path:'.local/frontend-qa/workload-reference-failure.png',fullPage:true,animations:'disabled'});console.error('Browser errors',errors);console.error('URL',page.url());console.error((await page.locator('body').innerText()).slice(0,5000));await page.screenshot({path:'.local/frontend-qa/resource-form-failure.png',fullPage:true});throw e}finally{await browser.close();await vite?.close()}

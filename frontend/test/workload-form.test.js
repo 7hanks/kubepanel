@@ -9,7 +9,7 @@ test('new advanced container fields update reactive form signatures immediately'
  const draft=reactive(newResourceDraft(meta,'team'));draft.metadata.name='app';podSpec(draft).containers[0].image='nginx:1.25'
  const {descriptor}=parse(fs.readFileSync(new URL('../src/components/WorkloadForm.vue',import.meta.url),'utf8'))
  const source=compileScript(descriptor,{id:'workload-form-test'}).content.replace(/^import[\s\S]*?from\s+['"][^'"]+['"]\s*\r?\n/gm,'').replace('export default','return')
- const bindings={ref,computed,watch,podSpec,mergeFormFields,Plus:{},Delete:{},StructuredFields:{}}
+ const bindings={ref,computed,watch,podSpec,mergeFormFields,Plus:{},Delete:{},StructuredFields:{},WorkloadStrategyForm:{},WorkloadPodSettings:{}}
  const definition=Function(...Object.keys(bindings),source)(...Object.values(bindings))
  try{
   const state=scope.run(()=>definition.setup(reactive({modelValue:draft,creating:true,disabled:false,section:'containers'}),{expose(){}}))
