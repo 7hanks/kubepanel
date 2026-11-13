@@ -35,7 +35,7 @@ exec 9>"$base/.release.lock"
 flock -n 9 || { echo 'Another release is running' >&2; exit 2; }
 manifest_sha=$(python3 "$source_dir/deploy/manifest.py" verify "$source_dir")
 revision=$(cat "$source_dir/RELEASE")
-release_minute=$(TZ=Asia/Shanghai date +%Y%m%d-%H%M)
+release_minute=$(TZ=Asia/Shanghai date +%Y%m%d%H%M)
 image="$IMAGE_REPOSITORY:$release_minute"
 existing_revision=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image" 2>/dev/null || true)
 if [[ -n "$existing_revision" && "$existing_revision" != "$revision" ]]; then

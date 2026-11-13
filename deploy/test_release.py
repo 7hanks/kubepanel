@@ -131,7 +131,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual(process.returncode, 0, process.stderr)
                 self.assertEqual((state / 'kubepanel').read_text(), 'true')
                 self.assertFalse(list(state.glob('kubepanel-rollback-*')), 'successful deployment removes its old container')
-                self.assertRegex(production_image := next(event[-1] for event in events if event[0]=='run' and event[event.index('--name')+1]=='kubepanel'), r'^kubepanel:[0-9]{8}-[0-9]{4}$')
+                self.assertRegex(production_image := next(event[-1] for event in events if event[0]=='run' and event[event.index('--name')+1]=='kubepanel'), r'^kubepanel:[0-9]{12}$')
                 candidate = next(event for event in events if event[0] == 'run' and 'kubepanel-candidate-' in ' '.join(event))
                 self.assertIn('127.0.0.1::8080', candidate)
                 self.assertNotIn(str(base / 'data') + ':/app/data', candidate)
