@@ -5,7 +5,6 @@
    <el-tooltip :content="scopeDescription" placement="bottom"><span class="scope-label" tabindex="0">{{scopeLabel}}</span></el-tooltip>
    <span class="spacer"/>
    <span class="kp-muted update-time">更新 {{updatedAt || '—'}}</span>
-   <el-button @click="load" :loading="loading">刷新</el-button>
   </div>
   <el-alert v-if="error" type="error" :title="error" :closable="false" class="overview-alert"/>
   <el-alert v-if="componentErrors.length || data.partial" type="warning" :closable="false" :title="`部分数据不可用${componentErrors.length ? `（${componentErrors.length}）`:''}，未知值显示 —`" class="overview-alert">

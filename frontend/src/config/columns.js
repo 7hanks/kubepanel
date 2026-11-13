@@ -213,7 +213,7 @@ const KIND_COLS = {
   Service: [
     { key: 'type', label: '类型', width: 120 },
     { key: 'clusterIP', label: 'ClusterIP', width: 140 },
-    { key: 'ports', label: '端口', minWidth: 170 },
+    { key: 'ports', label: '端口', minWidth: 240 },
     { key: 'externalIP', label: '外部地址', width: 140 },
   ],
   Ingress: [{ key: 'hosts', label: '域名', minWidth: 200 }, { key: 'address', label: '地址', width: 150 }, { key: 'className', label: 'IngressClass', width: 140 }],

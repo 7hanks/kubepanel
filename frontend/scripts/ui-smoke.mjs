@@ -236,6 +236,8 @@ try{
  const overviewMetrics=page.getByLabel('当前集群关键指标',{exact:true})
  await overviewMetrics.getByText('65%',{exact:true}).waitFor()
  assert.equal(await overviewMetrics.getByText('51.6%',{exact:true}).count(),1)
+ assert.equal(await page.getByRole('button',{name:'刷新',exact:true}).count(),0)
+ assert.equal(await page.getByRole('button',{name:'刷新当前数据',exact:true}).count(),1)
  assert.equal(await page.locator('.plat-layout').count(),0)
  await page.screenshot({path:'.local/frontend-qa/overview-metrics.png',fullPage:true,animations:'disabled'})
  const clusterGroup=page.getByRole('navigation',{name:'控制台导航'}).getByRole('button',{name:'集群管理',exact:true})

@@ -1,5 +1,5 @@
 <template>
-  <div class="resource-editor" v-loading="loading">
+  <div class="resource-editor" :class="{'service-editor':meta.kind==='Service'}" v-loading="loading">
     <header class="editor-hero">
       <span class="hero-grid" aria-hidden="true"></span>
       <span class="hero-orb" aria-hidden="true"></span>
@@ -34,7 +34,7 @@
     <div v-if="error" ref="errorRef" class="editor-error" role="alert" tabindex="-1"><span class="editor-error-icon" aria-hidden="true">!</span><div><strong>请检查以下问题</strong><p>{{error}}</p></div><div class="editor-error-actions"><el-button :disabled="busy" @click="reread">重新读取</el-button><el-button v-if="draft" :disabled="busy" @click="exportYaml">导出草稿</el-button></div></div>
     <el-alert v-if="!authorized&&!loading" type="warning" :closable="false" show-icon :title="meta.kind==='Secret'&&!creating&&!can('secret:read')?'编辑 Secret 需要独立的读取 Secret 权限，避免覆盖未读取的密文。':'当前账号没有此目标资源的编辑权限。'"/>
 
-    <EditorInsights v-if="draft&&!loadFailed&&authorized" :items="insightItems"/>
+    <EditorInsights v-if="draft&&!loadFailed&&authorized&&meta.kind!=='Service'" :items="insightItems"/>
 
     <template v-if="draft&&!loadFailed&&authorized">
       <div class="editor-card" :key="formKey">
@@ -49,24 +49,28 @@
               <el-form-item v-if="['ConfigMap','Secret'].includes(meta.kind)" label="不可变"><el-switch v-model="draft.immutable" :disabled="busy||(!creating&&original?.immutable===true)" aria-label="不可变配置"/></el-form-item>
               <el-form-item v-if="meta.kind==='Secret'" label="Secret 类型"><el-select v-model="draft.type" :disabled="busy||!creating" filterable allow-create default-first-option aria-label="Secret 类型"><el-option v-for="type in ['Opaque','kubernetes.io/tls','kubernetes.io/dockerconfigjson','kubernetes.io/basic-auth']" :key="type" :label="type" :value="type"/></el-select></el-form-item>
             </el-form>
-            <el-form v-if="meta.kind==='Service'" label-width="110px" :disabled="busy"><ServiceForm :model-value="draft" mode="basic" :disabled="busy" @change="touch" @validity="value=>setValidity('选择器',value)"/></el-form>
           </el-tab-pane>
+          <el-tab-pane v-if="meta.kind==='Service'" label="基本配置" name="service-config"/>
+          <el-tab-pane v-if="meta.kind==='Service'" label="高级配置" name="service-advanced"/>
           <el-tab-pane v-if="workload&&meta.kind!=='Pod'" name="strategy">
             <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.strategy"/></svg>部署策略</span></template>
             <el-form label-width="105px" :disabled="busy"><WorkloadForm :model-value="draft" section="strategy" :creating="creating" :disabled="busy"/></el-form>
           </el-tab-pane>
           <el-tab-pane v-if="workload" :label="meta.kind==='Pod'?'容器组配置':'容器组模板'" name="template"><div class="template-workspace"><nav class="template-nav" aria-label="容器组配置导航"><button v-for="item in templateSections" :key="item.key" type="button" :class="{active:templateSection===item.key}" @click="templateSection=item.key">{{item.label}}</button></nav><section class="template-content"><el-form label-width="100px" :disabled="busy"><template v-if="templateSection==='basic'"><el-form-item label="容器组标签"><KeyValueFields :model-value="templateMetadata.labels" label="容器组标签" :disabled="busy" @update:model-value="value=>setTemplateMetadata('labels',value)" @change="touch" @validity="value=>setValidity('容器组标签',value)"/></el-form-item><el-form-item label="容器组注解"><KeyValueFields :model-value="templateMetadata.annotations" label="容器组注解" :disabled="busy" @update:model-value="value=>setTemplateMetadata('annotations',value)" @change="touch" @validity="value=>setValidity('容器组注解',value)"/></el-form-item></template><WorkloadForm v-else :model-value="draft" :section="templateSection" :creating="creating" :disabled="busy"/></el-form></section></div></el-tab-pane>
-          <el-tab-pane v-if="['ConfigMap','Service'].includes(meta.kind)" name="entries">
+          <el-tab-pane v-if="['ConfigMap','Secret'].includes(meta.kind)" name="entries">
             <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.entries"/></svg>条目模式</span></template>
           </el-tab-pane>
-          <el-tab-pane v-if="['ConfigMap','Service'].includes(meta.kind)" name="files">
+          <el-tab-pane v-if="['ConfigMap','Secret'].includes(meta.kind)" name="files">
             <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.files"/></svg>标签页模式</span></template>
           </el-tab-pane>
-          <el-tab-pane v-if="meta.kind==='Secret'" label="数据条目" name="secret"><el-form label-width="125px" :disabled="busy"><el-form-item label="文本数据"><KeyValueFields v-model="draft.stringData" multiline label="文本数据" :disabled="busy" @change="touch" @validity="value=>setValidity('文本数据',value)"/></el-form-item><el-form-item v-if="!creating||draft.data" label="Base64 数据"><KeyValueFields v-model="draft.data" multiline label="Base64 数据" :disabled="busy" @change="touch" @validity="value=>setValidity('Base64 数据',value)"/></el-form-item></el-form></el-tab-pane>
-          <el-tab-pane v-if="!workload&&meta.kind!=='Service'||Object.keys(extraFields).length" :label="workload||meta.kind==='ConfigMap'?'其他字段':'资源配置'" name="fields"><StructuredFields :model-value="extraFields" :reserved-keys="excluded" :disabled="busy" path="resource" @update:model-value="setExtraFields"/></el-tab-pane>
-          <el-tab-pane label="YAML" name="yaml"><div class="editor-yaml-tools"><el-button :disabled="busy" @click="fileInput.click()">导入 YAML</el-button><el-button :disabled="busy" @click="exportYaml">导出 YAML</el-button><span class="kp-muted">与表单共用同一份配置</span><input ref="fileInput" type="file" accept=".yaml,.yml,.txt" hidden @change="importFile"/></div><textarea v-model="yamlText" class="kp-yaml editor-yaml" :disabled="busy" spellcheck="false" aria-label="资源 YAML 草稿" @input="touch"/></el-tab-pane>
+          <el-tab-pane v-if="meta.kind!=='Service'&&(!['ConfigMap','Secret'].includes(meta.kind)&&!workload||Object.keys(extraFields).length)" :label="workload||['ConfigMap','Secret'].includes(meta.kind)?'其他字段':'资源配置'" name="fields"><StructuredFields :model-value="extraFields" :reserved-keys="excluded" :disabled="busy" path="resource" @update:model-value="setExtraFields"/></el-tab-pane>
         </el-tabs>
-        <el-form v-if="meta.kind==='Service'" v-show="['entries','files'].includes(activeTab)" :disabled="busy"><ServiceForm :model-value="draft" :mode="activeTab==='files'?'tabs':'entries'" :disabled="busy"/></el-form>
+        <ServiceForm v-if="meta.kind==='Service'" v-show="['service-config','service-advanced'].includes(activeTab)" :model-value="draft" :section="activeTab==='service-advanced'?'advanced':'config'" :namespace="draft.metadata.namespace" :cluster-id="target.clusterId" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('选择器',value)"/>
+        <details v-if="meta.kind==='Service'&&Object.keys(extraFields).length" v-show="activeTab==='service-advanced'" class="service-root-fields"><summary>其他资源字段</summary><StructuredFields :model-value="extraFields" :reserved-keys="excluded" :disabled="busy" path="resource" @update:model-value="setExtraFields"/></details>
+        <el-form v-if="meta.kind==='Secret'" v-show="['entries','files'].includes(activeTab)" label-position="top" class="secret-entry-editor" :disabled="busy||(!creating&&original?.immutable===true)">
+          <el-form-item label="文本数据（stringData）"><KeyValueFields v-model="draft.stringData" :mode="activeTab==='files'?'tabs':'rows'" multiline label="文本数据" :disabled="busy||(!creating&&original?.immutable===true)" @change="touch" @validity="value=>setValidity('文本数据',value)"/></el-form-item>
+          <el-form-item label="Base64 数据（data）"><KeyValueFields v-model="draft.data" :mode="activeTab==='files'?'tabs':'rows'" multiline label="Base64 数据" :disabled="busy||(!creating&&original?.immutable===true)" @change="touch" @validity="value=>setValidity('Base64 数据',value)"/></el-form-item>
+        </el-form>
         <div v-if="meta.kind==='ConfigMap'" v-show="['entries','files'].includes(activeTab)" class="configmap-editor">
           <div class="cm-toolbar">
             <span class="cm-toolbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M14 3v5h5"/></svg></span>
@@ -96,8 +100,7 @@ import {metaFromRoute} from '../config/resources'
 import {can,canResource} from '../utils/perm'
 import {cpath,nsPath} from '../utils/path'
 import {registerUnsavedGuard} from '../utils/navigation'
-import {WORKLOAD_KINDS,newResourceDraft,resourceBody,parseResourceYaml,cloneResource,podTemplate,mergeFormFields} from '../utils/resource-form'
-import {MAX_YAML_IMPORT_BYTES} from '../utils/yaml-import'
+import {WORKLOAD_KINDS,newResourceDraft,resourceBody,cloneResource,podTemplate,mergeFormFields} from '../utils/resource-form'
 import KeyValueFields from '../components/KeyValueFields.vue'
 import StructuredFields from '../components/StructuredFields.vue'
 import WorkloadForm from '../components/WorkloadForm.vue'
@@ -109,9 +112,9 @@ import {resourceTitle} from '../utils/resource-ui'
 const route=useRoute(),router=useRouter(),meta=computed(()=>metaFromRoute(route.params,store.discovery))
 const creating=computed(()=>route.name==='resource-create'),workload=computed(()=>WORKLOAD_KINDS.includes(meta.value.kind))
 const draft=ref(null),original=ref(null),baseline=ref(''),target=ref(null),loading=ref(false),loadFailed=ref(false),error=ref(''),errorRef=ref(null)
-const activeTab=ref('basic'),templateSection=ref('containers'),yamlText=ref(''),fileInput=ref(null),fieldErrors=ref({}),touched=ref(false),formKey=ref(0)
-const saving=ref(false),checking=ref(false),importing=ref(false),checked=ref(null),previewOpen=ref(false),previewYaml=ref(''),errorSource=ref('local')
-const busy=computed(()=>saving.value||checking.value||importing.value||loading.value)
+const activeTab=ref('basic'),templateSection=ref('containers'),fieldErrors=ref({}),touched=ref(false),formKey=ref(0)
+const saving=ref(false),checking=ref(false),checked=ref(null),previewOpen=ref(false),previewYaml=ref(''),errorSource=ref('local')
+const busy=computed(()=>saving.value||checking.value||loading.value)
 const namespaces=computed(()=>store.namespaces||[])
 const authorized=computed(()=>canResource(meta.value,creating.value?'create':'update',draft.value?.metadata?.namespace,store.currentClusterId)&&(creating.value||meta.value.kind!=='Secret'||can('secret:read')))
 const templateMetadata=computed(()=>podTemplate(draft.value)?.metadata||{})
@@ -126,11 +129,11 @@ const tabIcons={
 }
 const originalYaml=computed(()=>original.value?dump(original.value,{noRefs:true,lineWidth:120}):'')
 const options=()=>({meta:meta.value,creating:creating.value,original:original.value})
-function currentBody(){const invalid=Object.entries(fieldErrors.value).find(([,value])=>value);if(invalid)throw new Error(`${invalid[0]}：${invalid[1]}`);return activeTab.value==='yaml'?resourceBody(parseResourceYaml(yamlText.value,options()),options()):resourceBody(draft.value,options())}
+function currentBody(){const invalid=Object.entries(fieldErrors.value).find(([,value])=>value);if(invalid)throw new Error(`${invalid[0]}：${invalid[1]}`);return resourceBody(draft.value,options())}
 const signature=computed(()=>{try{return JSON.stringify(currentBody())}catch{return ''}})
 const targetKey=computed(()=>JSON.stringify([route.fullPath,store.currentClusterId]))
 const canSave=computed(()=>!busy.value&&authorized.value&&!!signature.value&&checked.value===signature.value)
-const dirty=computed(()=>touched.value||!!draft.value&&(JSON.stringify(draft.value)!==baseline.value||activeTab.value==='yaml'&&yamlText.value!==dump(draft.value,{noRefs:true,lineWidth:120})))
+const dirty=computed(()=>touched.value||!!draft.value&&JSON.stringify(draft.value)!==baseline.value)
 const entryMap=computed(()=>{const d=draft.value||{};return ['ConfigMap','Secret'].includes(meta.value.kind)?{...(d.data||{}),...(d.stringData||{})}:{}})
 const entryCount=computed(()=>Object.keys(entryMap.value).length)
 const contentBytes=computed(()=>Object.values(entryMap.value).reduce((sum,value)=>sum+new TextEncoder().encode(String(value??'')).length,0))
@@ -157,7 +160,7 @@ const insightItems=computed(()=>{
  return [first,second,{icon:'tags',label:'元数据',value:labels+annotations,suffix:'项',hint:`${labels} 标签 · ${annotations} 注解`,tone:'teal'},{icon:status.icon,label:'草稿状态',value:status.text,hint:status.hint,tone:status.tone,text:true}]
 })
 let generation=0,leavingAfterSave=false
-const removeGuard=registerUnsavedGuard(async()=>{if(leavingAfterSave)return true;if(busy.value)return false;if(!dirty.value)return true;try{await ElMessageBox.confirm('表单内容尚未保存，确定放弃修改？','未保存的修改',{type:'warning',confirmButtonText:'放弃修改'});draft.value=cloneResource(original.value);baseline.value=JSON.stringify(draft.value);yamlText.value=dump(draft.value,{noRefs:true,lineWidth:120});touched.value=false;fieldErrors.value={};checked.value=null;formKey.value++;return true}catch{return false}})
+const removeGuard=registerUnsavedGuard(async()=>{if(leavingAfterSave)return true;if(busy.value)return false;if(!dirty.value)return true;try{await ElMessageBox.confirm('表单内容尚未保存，确定放弃修改？','未保存的修改',{type:'warning',confirmButtonText:'放弃修改'});draft.value=cloneResource(original.value);baseline.value=JSON.stringify(draft.value);touched.value=false;fieldErrors.value={};checked.value=null;formKey.value++;return true}catch{return false}})
 function touch(){touched.value=true}
 function setValidity(key,value){fieldErrors.value={...fieldErrors.value,[key]:value}}
 function setTemplateMetadata(key,value){const template=podTemplate(draft.value);if(template){template.metadata||={};template.metadata[key]=value}}
@@ -173,15 +176,13 @@ async function load(){
   const value=isCreate?newResourceDraft(m,initialNamespace):await api.get(m.group,m.version,m.plural,target.value.namespace,target.value.name)
   if(epoch!==generation)return
   value.metadata||={};if(m.kind==='Service')value.spec||={};if(WORKLOAD_KINDS.includes(m.kind)&&podTemplate(value))podTemplate(value).metadata||={}
-  original.value=cloneResource(value);draft.value=cloneResource(value);baseline.value=JSON.stringify(draft.value);activeTab.value='basic';templateSection.value='containers';yamlText.value=dump(value,{noRefs:true,lineWidth:120});formKey.value++
+  original.value=cloneResource(value);draft.value=cloneResource(value);baseline.value=JSON.stringify(draft.value);activeTab.value=m.kind==='Service'&&!isCreate?'service-config':'basic';templateSection.value='containers';formKey.value++
  }catch(e){if(epoch===generation){loadFailed.value=true;await showError(e.message||'资源读取失败','server')}}finally{if(epoch===generation)loading.value=false}
 }
-async function changeTab(next,previous){
+async function changeTab(){
  if(busy.value)return false
  try{
   const invalid=Object.values(fieldErrors.value).find(Boolean);if(invalid)throw new Error('请先修正表单条目：'+invalid)
-  if(previous==='yaml'&&yamlText.value!==dump(draft.value,{noRefs:true,lineWidth:120})){draft.value=parseResourceYaml(yamlText.value,options());fieldErrors.value={}}
-  if(next==='yaml')yamlText.value=dump(draft.value,{noRefs:true,lineWidth:120})
   return true
  }catch(e){await showError(e.message);return false}
 }
@@ -211,8 +212,7 @@ function listPath(){return cpath(`/r/${route.params.group}/${route.params.versio
 function cancel(){if(!busy.value)router.push(listPath())}
 async function reread(){if(busy.value)return;if(dirty.value){try{await ElMessageBox.confirm('重新读取会丢弃当前未保存的草稿，请先导出需要保留的内容。','重新读取',{type:'warning',confirmButtonText:'丢弃并重新读取'})}catch{return}}await load()}
 function beforeUnload(event){if(dirty.value){event.preventDefault();event.returnValue=''}}
-async function importFile(event){const file=event.target.files?.[0];event.target.value='';if(!file||busy.value)return;const epoch=generation;importing.value=true;try{if(file.size>MAX_YAML_IMPORT_BYTES)throw new Error('YAML 文件不能超过 2 MiB');const text=await file.text(),value=parseResourceYaml(text,options());if(epoch!==generation)return;draft.value=value;yamlText.value=dump(value,{noRefs:true,lineWidth:120});fieldErrors.value={};touch();checked.value=null}catch(e){await showError(e.message)}finally{if(epoch===generation)importing.value=false}}
-function exportYaml(){const content=activeTab.value==='yaml'?yamlText.value:dump(draft.value,{noRefs:true,lineWidth:120});const url=URL.createObjectURL(new Blob([content],{type:'application/yaml;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=`${draft.value.metadata?.name||meta.value.kind}.yaml`;a.click();URL.revokeObjectURL(url)}
+function exportYaml(){const content=dump(draft.value,{noRefs:true,lineWidth:120});const url=URL.createObjectURL(new Blob([content],{type:'application/yaml;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=`${draft.value.metadata?.name||meta.value.kind}.yaml`;a.click();URL.revokeObjectURL(url)}
 watch(()=>[route.fullPath,store.currentClusterId],load)
 watch(()=>store.namespace,()=>{if(!dirty.value&&!busy.value)load()})
 watch([()=>JSON.stringify(draft.value),fieldErrors],()=>{if(errorSource.value==='local')error.value=''}, {deep:true})
@@ -320,4 +320,5 @@ onUnmounted(()=>{generation++;removeGuard();window.removeEventListener('beforeun
  .cm-toolbar-copy p{display:none}
 }
 @media(prefers-reduced-motion:reduce){.resource-editor,.configmap-editor{animation:none}}
+.service-editor .editor-hero{background:transparent;border:0;box-shadow:none;border-radius:0;padding:0 0 18px}.service-editor .hero-grid,.service-editor .hero-orb{display:none}.service-editor .hero-icon{width:32px;height:32px;border-radius:0;background:transparent;box-shadow:none;color:#426597;font-size:24px}.service-editor .hero-chips{margin-top:7px}.service-editor .hero-title-text h1{font-size:21px}.service-editor .editor-context{margin-bottom:12px}.service-editor .editor-card{margin-top:0}.service-root-fields{margin-top:18px;padding-top:16px;border-top:1px solid var(--kp-border)}.service-root-fields summary{font-size:13px;cursor:pointer;margin-bottom:14px}.secret-entry-editor :deep(.el-form-item__label){font-weight:600;margin:6px 0 12px}.secret-entry-editor :deep(.kv-file-editor){min-height:280px}
 </style>
