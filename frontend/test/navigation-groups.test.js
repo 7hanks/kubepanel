@@ -3,13 +3,13 @@ import assert from 'node:assert/strict'
 import { navGroups, resourceMap, metaFromRoute } from '../src/config/resources.js'
 import * as navigation from '../src/utils/navigation-groups.js'
 
-test('built-in resource labels preserve Kubernetes casing and route identities', () => {
-  assert.equal(resourceMap['_core/v1/pods'].label, 'Pods')
-  assert.equal(resourceMap['_core/v1/limitranges'].label, 'LimitRanges')
-  assert.equal(resourceMap['_core/v1/persistentvolumeclaims'].label, 'PVCs')
+test('built-in resource labels use Chinese while preserving API identities and English search aliases', () => {
+  assert.equal(resourceMap['_core/v1/pods'].label, '容器组')
+  assert.equal(resourceMap['_core/v1/limitranges'].label, '限制范围')
+  assert.equal(resourceMap['_core/v1/persistentvolumeclaims'].label, '持久卷声明')
   assert.equal(metaFromRoute({ group: '_core', version: 'v1', plural: 'configmaps' }, [
     { group: '', version: 'v1', plural: 'configmaps', kind: 'ConfigMap', namespaced: true },
-  ]).label, 'ConfigMaps')
+  ]).label, '配置字典')
 })
 
 test('only workload and overview start open; secondary resources stay reachable in closed groups', () => {
@@ -27,8 +27,8 @@ test('search reveals Chinese aliases and kinds in saved closed groups without ch
   assert.equal(quota[0].open, true)
   assert.equal(quota[0].items[0].kind, 'LimitRange')
   const pvc = navigation.visibleNavigationGroups(navGroups, 'PersistentVolumeClaim', saved, () => true)
-  assert.equal(pvc[0].items[0].label, 'PVCs')
-  assert.equal(navigation.visibleNavigationGroups(navGroups, 'configmaps', saved, () => true)[0].items[0].label, 'ConfigMaps')
+  assert.equal(pvc[0].items[0].label, '持久卷声明')
+  assert.equal(navigation.visibleNavigationGroups(navGroups, 'configmaps', saved, () => true)[0].items[0].label, '配置字典')
   assert.deepEqual(saved, before)
   assert.equal(navigation.visibleNavigationGroups(navGroups, '', saved, () => true).find(g => g.id === 'advanced').open, false)
 })

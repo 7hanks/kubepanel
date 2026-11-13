@@ -1,10 +1,11 @@
+import {resourceTitle} from '../utils/resource-ui.js'
 // 资源导航与元数据定义
 // group 为空字符串表示 core API 组；URL 中用 '_core' 占位，避免路径出现双斜杠
 export const CORE = '_core'
 export const ALL_NS = '_all' // 集群级资源 / 全部命名空间
 
 const R = (label, kind, plural, group = '', version = 'v1', namespaced = true, icon = 'Document', aliases = '') => ({
-  label, kind, plural, group, version, namespaced, icon, aliases,
+  label: resourceTitle({kind,label}), kind, plural, group, version, namespaced, icon, aliases: `${aliases} ${label}`,
   key: `${group || CORE}/${version}/${plural}`,
   path: `/r/${group || CORE}/${version}/${plural}`,
 })

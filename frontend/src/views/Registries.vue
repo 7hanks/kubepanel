@@ -162,19 +162,19 @@
               <div class="repository-filter"><el-input v-model="repoFilter" placeholder="筛选当前页仓库名" aria-label="筛选当前页仓库名" clearable /><span v-if="repoFilter" class="kp-muted">筛选只覆盖当前页</span></div>
               <el-table :data="filteredRepos" size="small" row-key="name" :row-class-name="repositoryRowClass">
                 <el-table-column label="仓库名称" min-width="210">
-                  <template #default="{ row }"><el-button link type="primary" class="repository-name" @click="selectRepository(row)">{{ row.name }}</el-button></template>
+                  <template #default="{ row }"><el-button link type="primary" class="repository-name" @click="selectRepository(row,{reveal:true,refresh:true})">{{ row.name }}</el-button></template>
                 </el-table-column>
                 <el-table-column prop="artifactCount" label="镜像 / 制品" width="110" align="center" />
                 <el-table-column prop="pullCount" label="拉取次数" width="90" align="center" />
                 <el-table-column label="更新时间" min-width="165"><template #default="{ row }">{{ fmtTime(row.updatedAt) }}</template></el-table-column>
-                <el-table-column label="操作" width="160" align="right"><template #default="{ row }"><el-button link type="primary" @click="selectRepository(row)">查看标签</el-button><el-button link type="primary" @click="copy(row.pullRef)">复制地址</el-button></template></el-table-column>
+                <el-table-column label="操作" width="160" align="right"><template #default="{ row }"><el-button link type="primary"  :loading="!!artifactsLoading[row.name]" @click="selectRepository(row,{reveal:true,refresh:true})">查看标签</el-button><el-button link type="primary" @click="copy(row.pullRef)">复制地址</el-button></template></el-table-column>
                 <template #empty><div class="kp-empty">{{ reposLoading ? '正在加载镜像仓库…' : repoFilter ? '当前页没有匹配的仓库，请修改筛选。' : '该项目下没有镜像仓库。' }}</div></template>
               </el-table>
               <el-pagination v-if="repoPage.total" v-model:current-page="repoPage.page" :page-size="repoPage.pageSize" :total="repoPage.total" layout="total, prev, pager, next" size="small" aria-label="仓库分页" @current-change="loadRepos" />
             </template>
           </section>
 
-          <section v-if="selectedRepository" class="browser-section artifact-section" aria-labelledby="registry-artifacts-heading" v-loading="!!artifactsLoading[selectedRepository.name]">
+          <section v-if="selectedRepository" ref="artifactSection" tabindex="-1" class="browser-section artifact-section" aria-labelledby="registry-artifacts-heading" v-loading="!!artifactsLoading[selectedRepository.name]">
             <div class="browser-heading"><h2 id="registry-artifacts-heading">镜像与标签</h2><span v-if="currentArtifactPage" class="kp-muted">共 {{ currentArtifactPage.total }} 个镜像 / 制品</span><el-button link type="primary" :disabled="artifactsLoading[selectedRepository.name]" @click="loadArtifacts(selectedRepository, currentArtifactPage?.page || 1)">刷新标签</el-button></div>
             <div class="repository-path">{{ selectedRepository.name }}</div>
             <el-alert v-if="artifactErrors[selectedRepository.name]" type="error" :title="artifactErrors[selectedRepository.name]" :closable="false" class="registry-alert"><el-button link type="primary" @click="loadArtifacts(selectedRepository, currentArtifactPage?.page || 1)">重试</el-button></el-alert>
@@ -195,7 +195,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Box, CircleCheck, Warning, MagicStick } from '@element-plus/icons-vue'
 import { canCreate, canUpdate, canDelete } from '../utils/perm'
@@ -234,6 +234,7 @@ const project = ref('')
 const repos = ref([])
 const repoFilter = ref('')
 const selectedRepository = ref(null)
+const artifactSection = ref(null)
 const artifacts = reactive({})
 const artifactsLoading = reactive({})
 const artifactErrors=reactive({})
@@ -430,9 +431,10 @@ async function loadRepos() {
     if (repoGate.current(request)) reposLoading.value = false
   }
 }
-async function selectRepository(row) {
+async function selectRepository(row,{reveal=false,refresh=false}={}) {
   selectedRepository.value = row
-  if (!artifacts[row.name] && !artifactsLoading[row.name]) await loadArtifacts(row, 1)
+  if ((refresh || !artifacts[row.name]) && !artifactsLoading[row.name]) await loadArtifacts(row, 1)
+  if(reveal){await nextTick();artifactSection.value?.scrollIntoView({block:'start',behavior:'smooth'});artifactSection.value?.focus({preventScroll:true})}
 }
 function repositoryRowClass({ row }) {
   return selectedRepository.value?.name === row.name ? 'selected-repository' : ''

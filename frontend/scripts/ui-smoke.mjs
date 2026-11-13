@@ -283,7 +283,7 @@ try{
  await page.locator('.kp-header .el-select').nth(1).click()
  await page.getByRole('option',{name:'app',exact:true}).click()
  await page.screenshot({path:'.local/frontend-qa/cluster-monitor.png',fullPage:true,animations:'disabled'})
- await page.getByRole('link',{name:'Pods',exact:true}).click()
+ await page.getByRole('link',{name:'容器组',exact:true}).click()
  await page.getByRole('link',{name:'api-broken',exact:true}).waitFor()
  assert.ok(reads.some(r=>r.path==='/v1/resources/_core/v1/pods'&&r.params.namespace==='app'))
  await page.getByRole('button',{name:'更多操作',exact:true}).first().click()

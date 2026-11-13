@@ -28,7 +28,7 @@ function fixture(overrides = {}) {
     .replace(/^import[\s\S]*?from\s+['"][^'"]+['"]\s*\r?\n/gm, '')
     .replace('export default', 'return')
   const bindings = {
-    ref, reactive, computed, watch, normalizePage, createRequestGate, copyText,
+    ref, reactive, computed, watch, nextTick, normalizePage, createRequestGate, copyText,
     onMounted() {}, onUnmounted: fn => cleanup.push(fn), api,
     canCreate: () => true, canUpdate: () => true, canDelete: () => true,
     ElMessage: { success() {}, error() {}, warning() {} }, ElMessageBox: {},
@@ -146,4 +146,10 @@ test('pull commands can be copied from an HTTP page without navigator.clipboard'
     await view.state.copy('docker pull harbor.test/library/app:v1')
     assert.equal(copied, 'docker pull harbor.test/library/app:v1')
   } finally { view.destroy() }
+})
+
+test('explicit tag action refreshes an already selected cached repository',async()=>{
+ let reads=0
+ const view=fixture({registryArtifacts:async()=>{reads++;return page([artifact])}})
+ try{await view.state.browse(registry);assert.equal(reads,1);await view.state.selectRepository(repository,{reveal:true,refresh:true});assert.equal(reads,2)}finally{view.destroy()}
 })

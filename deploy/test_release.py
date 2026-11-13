@@ -22,7 +22,7 @@ state=pathlib.Path(os.environ['FAKE_STATE'])
 with (state/'events').open('a') as f: f.write(json.dumps(a)+'\n')
 def file(name): return state/name
 if a[:2]==['image','inspect']:
-    print(os.environ['FAKE_REVISION']); sys.exit(0)
+    print(os.environ.get('FAKE_IMAGE_REVISION',os.environ['FAKE_REVISION'])); sys.exit(0)
 if a[0]=='inspect':
     name=a[-1]
     if not file(name).exists(): sys.exit(1)
@@ -52,12 +52,12 @@ print(json.dumps({'revision':os.environ['FAKE_REVISION'],'sourceManifestSha256':
 
 @unittest.skipUnless(os.name == 'posix' and shutil.which('bash'), 'Linux deployment behavior test')
 class ReleaseTests(unittest.TestCase):
-    def run_release(self, fail=False, existing=True, rename_fail=False, hook_fail=False, external_env=False, source_link=False, publish_fail=False, direct_env=False, missing_password=False):
+    def run_release(self, fail=False, existing=True, rename_fail=False, hook_fail=False, external_env=False, source_link=False, publish_fail=False, direct_env=False, missing_password=False, tag_conflict=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             source, base, commands, state = [root / name for name in ['source', 'base', 'bin', 'state']]
             (source / 'deploy').mkdir(parents=True)
-            for name in ['manifest.py', 'backup.sh', 'release.sh', 'verify.sh']:
+            for name in ['manifest.py', 'backup.sh', 'release.sh', 'verify.sh', 'prune_containers.py']:
                 shutil.copy2(DEPLOY / name, source / 'deploy' / name)
             for directory in [base / 'data', base / 'clusters', commands, state]:
                 directory.mkdir(parents=True)
@@ -89,6 +89,7 @@ class ReleaseTests(unittest.TestCase):
                 mover.write_text('#!/bin/sh\ncase "$*" in *".app-next-"*) exit 1;; esac\nexec /bin/mv "$@"\n')
                 mover.chmod(0o700)
             env = {**os.environ, 'PATH': str(commands) + os.pathsep + os.environ['PATH'], 'BASE_DIR': str(base), 'BACKUP_ROOT': str(root / 'backups'), 'ENV_FILE': str(selected_env), 'CANDIDATE_CHECK': str(hook), 'FAKE_STATE': str(state), 'FAKE_REVISION': sha, 'FAKE_MANIFEST': checksum, 'FAIL_PRODUCTION': str(int(fail)), 'FAIL_RENAME': str(int(rename_fail))}
+            if tag_conflict:env['FAKE_IMAGE_REVISION']='b'*40
             if direct_env:
                 env.pop('ENV_FILE', None)
                 env['DASHBOARD_PASSWORD']='' if missing_password else 'never-log-this'
@@ -107,6 +108,11 @@ class ReleaseTests(unittest.TestCase):
             if direct_env:
                 self.assertEqual(process.returncode, 0, process.stderr)
             events = [json.loads(line) for line in (state / 'events').read_text().splitlines()]
+            if tag_conflict:
+                self.assertNotEqual(process.returncode,0)
+                self.assertIn('another release',process.stderr)
+                self.assertFalse(any(event[0] in ['run','stop','rename','rm'] for event in events))
+                return
             if external_env:
                 saved = list((root / 'backups').glob('*/deployment.env'))
                 self.assertTrue(saved, 'Selected external environment must be backed up')
@@ -124,7 +130,8 @@ class ReleaseTests(unittest.TestCase):
             else:
                 self.assertEqual(process.returncode, 0, process.stderr)
                 self.assertEqual((state / 'kubepanel').read_text(), 'true')
-                self.assertTrue(list(state.glob('kubepanel-rollback-*')))
+                self.assertFalse(list(state.glob('kubepanel-rollback-*')), 'successful deployment removes its old container')
+                self.assertRegex(production_image := next(event[-1] for event in events if event[0]=='run' and event[event.index('--name')+1]=='kubepanel'), r'^kubepanel:[0-9]{8}-[0-9]{4}$')
                 candidate = next(event for event in events if event[0] == 'run' and 'kubepanel-candidate-' in ' '.join(event))
                 self.assertIn('127.0.0.1::8080', candidate)
                 self.assertNotIn(str(base / 'data') + ':/app/data', candidate)
@@ -149,8 +156,11 @@ class ReleaseTests(unittest.TestCase):
                 self.assertEqual((state / 'hook-url').read_text(), 'http://127.0.0.1:18080')
                 self.assertFalse(any(event[0] == 'rename' for event in events))
 
-    def test_success_retains_old_container_and_isolates_candidate_data(self):
+    def test_success_cleans_old_container_and_isolates_candidate_data(self):
         self.run_release()
+
+    def test_same_minute_image_collision_does_not_touch_containers(self):
+        self.run_release(tag_conflict=True)
 
     def test_failed_production_check_restarts_original_container(self):
         self.run_release(fail=True)

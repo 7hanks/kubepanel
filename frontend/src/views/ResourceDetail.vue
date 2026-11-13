@@ -2,7 +2,7 @@
   <div v-loading="loading">
     <div class="kp-toolbar">
       <el-button :icon="ArrowLeft" @click="$router.back()">返回</el-button>
-      <span style="font-size: 15px;font-weight:600">{{ meta.kind }} / {{ name }}</span>
+      <span style="font-size: 15px;font-weight:600">{{ resourceTitle(meta) }} / {{ name }}</span>
       <el-tag disable-transitions :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
       <span class="spacer" />
       <el-button v-if="meta.kind === 'Pod' && canUpdateRes && canDeleteRes" type="warning" plain :loading="restarting" @click="doRestartPod">重启 Pod</el-button>
@@ -16,7 +16,7 @@
     </div>
 
     <el-alert v-if="loadError" type="error" show-icon :closable="false" style="margin-bottom:14px">
-      <template #title>加载资源失败：{{ meta.kind }} / {{ name }}</template>
+      <template #title>加载资源失败：{{ resourceTitle(meta) }} / {{ name }}</template>
       <template #default>
         {{ loadError }}
         <el-button link type="primary" @click="load">重试</el-button>
@@ -28,7 +28,8 @@
     <el-tabs v-if="!loadError" v-model="tab" type="border-card">
       <!-- 概览 -->
       <el-tab-pane label="概览" name="overview">
-        <div class="kp-card" style="border:0">
+        <StorageDetails v-if="isStorage&&obj.metadata" :resource="obj" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :events="events" :events-loading="eventsLoading" :events-error="eventsError"/>
+        <div v-else class="kp-card" style="border:0">
           <div class="kp-section-title">基本信息</div>
           <table class="kp-kv"><tbody>
             <tr><td>名称</td><td class="kp-mono">{{ obj.metadata?.name }}</td></tr>
@@ -161,6 +162,8 @@ import SimpleResourceDialog from '../components/SimpleResourceDialog.vue'
 import {resourceUiPolicy} from '../utils/resource-policy'
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
+import StorageDetails from '../components/StorageDetails.vue'
+import {resourceTitle} from '../utils/resource-ui'
 
 const route = useRoute()
 const filesVisible=ref(false)
@@ -173,6 +176,8 @@ const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].in
 const isDataResource = computed(() => ['Secret', 'ConfigMap'].includes(meta.value.kind))
 const hasSelector = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job', 'Service'].includes(meta.value.kind))
 
+const isStorage=computed(()=>['PersistentVolumeClaim','PersistentVolume','StorageClass'].includes(meta.value.kind))
+const eventsError=ref('')
 const loading = ref(false)
 const policy=computed(()=>resourceUiPolicy(meta.value)),simpleVisible=ref(false)
 const canUpdateRes = computed(() => canResource(meta.value,'update',ns.value))
@@ -232,7 +237,7 @@ function openPod(p) { router.push(cpath(`/r/${CORE}/v1/pods/${encodeURIComponent
 async function load() {
   const request=gate.next()
   loading.value = true
-  loadError.value = ''; secretRevealed.value=false; childPods.value=[]; events.value=[]
+  loadError.value = ''; obj.value={}; secretRevealed.value=false; childPods.value=[]; events.value=[]
   try {
     const data = await api.get(meta.value.group, meta.value.version, meta.value.plural, apiNs(), name.value)
     if (!gate.current(request)) return
@@ -249,7 +254,7 @@ async function load() {
 }
 
 async function loadEvents(request) {
-  eventsLoading.value = true
+  eventsLoading.value = true;eventsError.value=''
   try {
     const params = { fieldSelector: `involvedObject.uid=${obj.value.metadata?.uid}` }
     const targetNs = obj.value.metadata?.namespace
@@ -257,7 +262,7 @@ async function loadEvents(request) {
     const data = await api.list('', 'v1', 'events', params)
     if (!gate.current(request)) return
     events.value = (data.items || []).sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0))
-  } catch (e) { if (gate.current(request)) events.value = [] }
+  } catch (e) { if (gate.current(request)) {events.value = [];eventsError.value=e.message||'事件加载失败'} }
   finally { eventsLoading.value = false }
 }
 

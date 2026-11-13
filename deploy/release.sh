@@ -35,7 +35,13 @@ exec 9>"$base/.release.lock"
 flock -n 9 || { echo 'Another release is running' >&2; exit 2; }
 manifest_sha=$(python3 "$source_dir/deploy/manifest.py" verify "$source_dir")
 revision=$(cat "$source_dir/RELEASE")
-image="$IMAGE_REPOSITORY:$revision"
+release_minute=$(TZ=Asia/Shanghai date +%Y%m%d-%H%M)
+image="$IMAGE_REPOSITORY:$release_minute"
+existing_revision=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image" 2>/dev/null || true)
+if [[ -n "$existing_revision" && "$existing_revision" != "$revision" ]]; then
+  echo "Image tag $image already belongs to another release; retry in the next minute" >&2
+  exit 2
+fi
 destination="$base/releases/$revision"
 [[ ! -e "$destination" ]] || { echo 'Immutable release already exists; use a new revision' >&2; exit 2; }
 [[ -d "$base/data" && -d "$base/clusters" ]] || { echo 'Missing runtime directories' >&2; exit 2; }
@@ -147,4 +153,9 @@ fi
 source_published=1
 mv -Tf -- "$base/.app-next-$$" "$base/app"
 success=1
-printf 'Released %s\nSource: %s\nBackup: %s\nRollback container: %s\n' "$revision" "$destination" "$backup" "$previous"
+# Keep the old container only until promotion is healthy; persistent data and
+# recovery backups remain on disk, so successful upgrades leave no exited copy.
+if ((old_renamed)); then docker rm "$previous" >/dev/null; fi
+python3 "$destination/deploy/prune_containers.py" "$CONTAINER"
+docker image rm "$image-verification" >/dev/null 2>&1 || true
+printf 'Released %s\nImage: %s\nContainer: %s\nSource: %s\nBackup: %s\n' "$revision" "$image" "$CONTAINER" "$destination" "$backup"

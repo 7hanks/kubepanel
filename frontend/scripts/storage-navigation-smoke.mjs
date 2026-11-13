@@ -9,8 +9,8 @@ await vite?.listen()
 const browser=await chromium.launch({headless:true,channel:'msedge'}),page=await browser.newPage({viewport:{width:1651,height:871}})
 page.setDefaultTimeout(12000)
 const errors=[],writes=[];page.on('pageerror',e=>errors.push(e.message))
-const pvc={apiVersion:'v1',kind:'PersistentVolumeClaim',metadata:{name:'data',namespace:'team',uid:'pvc1',resourceVersion:'10',annotations:{custom:'keep'}},spec:{accessModes:['ReadWriteOnce'],resources:{requests:{storage:'10Gi'}},storageClassName:'manual',volumeName:'data-pv',selector:{matchLabels:{disk:'data'}}},status:{phase:'Bound'}}
-const pv={apiVersion:'v1',kind:'PersistentVolume',metadata:{name:'data-pv',uid:'pv1',resourceVersion:'20'},spec:{capacity:{storage:'10Gi'},accessModes:['ReadWriteOnce'],storageClassName:'manual',persistentVolumeReclaimPolicy:'Retain',nfs:{server:'nfs.internal',path:'/exports/data',readOnly:false},mountOptions:['hard','nfsvers=4.1']},status:{phase:'Bound'}}
+const pvc={apiVersion:'v1',kind:'PersistentVolumeClaim',metadata:{name:'data',namespace:'team',uid:'pvc1',resourceVersion:'10',annotations:{custom:'keep'}},spec:{accessModes:['ReadWriteOnce'],resources:{requests:{storage:'10Gi'}},storageClassName:'manual',volumeName:'data-pv',selector:{matchLabels:{disk:'data'}}},status:{phase:'Bound',capacity:{storage:'8Gi'},accessModes:['ReadWriteOnce']}}
+const pv={apiVersion:'v1',kind:'PersistentVolume',metadata:{name:'data-pv',uid:'pv1',resourceVersion:'20'},spec:{capacity:{storage:'10Gi'},accessModes:['ReadWriteOnce'],storageClassName:'manual',persistentVolumeReclaimPolicy:'Retain',claimRef:{name:'data',namespace:'team',uid:'pvc1'},nfs:{server:'nfs.internal',path:'/exports/data',readOnly:false},mountOptions:['hard','nfsvers=4.1']},status:{phase:'Bound'}}
 const sc={apiVersion:'storage.k8s.io/v1',kind:'StorageClass',metadata:{name:'manual',uid:'sc1',resourceVersion:'30'},provisioner:'nfs.csi.k8s.io',parameters:{server:'nfs.internal',share:'/exports'},reclaimPolicy:'Retain',volumeBindingMode:'WaitForFirstConsumer',allowVolumeExpansion:false,allowedTopologies:[{matchLabelExpressions:[{key:'zone',values:['east']}]}]}
 const cm={apiVersion:'v1',kind:'ConfigMap',metadata:{name:'settings',namespace:'team',uid:'cm1',resourceVersion:'40'},data:{key:'old'}}
 const resources={persistentvolumeclaims:[pvc],persistentvolumes:[pv],storageclasses:[sc],configmaps:[cm]}
@@ -84,6 +84,17 @@ try{
  await page.getByRole('link',{name:'返回配置字典列表',exact:true}).click()
  await page.getByRole('dialog',{name:'未保存的修改',exact:true}).getByRole('button',{name:'放弃修改',exact:true}).click()
  await page.waitForURL('**/configmaps');assert.equal(await page.evaluate(()=>localStorage.getItem('kp_ns')),'team')
+ await page.goto(base+root+'/_core/v1/persistentvolumeclaims/team/data')
+ const details=page.locator('.storage-details');await details.getByRole('heading',{name:'持久卷声明配置',exact:true}).waitFor()
+ await details.getByText('实际容量',{exact:true}).waitFor();await details.getByText('8Gi',{exact:true}).first().waitFor()
+ await details.getByText('NFS',{exact:true}).waitFor();await details.getByText('/exports/data',{exact:true}).waitFor()
+ await page.locator('.kp-content').evaluate(el=>el.scrollTop=0);await page.screenshot({path:'.local/frontend-qa/storage-pvc-detail.png',fullPage:true,animations:'disabled'})
+ await details.getByRole('link',{name:'data-pv',exact:true}).first().click();await page.waitForURL('**/persistentvolumes/_all/data-pv')
+ await details.getByRole('heading',{name:'持久卷配置',exact:true}).waitFor();await details.getByRole('link',{name:'team / data',exact:true}).waitFor()
+ await page.setViewportSize({width:390,height:844});await page.waitForFunction(()=>document.documentElement.scrollWidth<=innerWidth)
+ await page.setViewportSize({width:1651,height:871})
+ assert.equal(await page.getByRole('link',{name:'持久卷声明',exact:true}).count(),1)
+ await page.getByPlaceholder('搜索菜单 / 资源类型').fill('Deployments');await page.getByRole('link',{name:'部署',exact:true}).waitFor()
  assert.deepEqual(errors,[])
  console.log('PASS: dedicated PVC/PV/StorageClass forms, immutable fields, bound expansion and shrink validation, defaults/unknowns/UID/RV preservation, NFS creation, mobile layout, clickable breadcrumbs and unsaved guard; fixture-only writes.')
 }catch(e){console.error('Browser errors',errors);console.error('URL',page.url());console.error((await page.locator('body').innerText()).slice(-5000));await page.screenshot({path:'.local/frontend-qa/storage-navigation-failure.png',fullPage:true});throw e}finally{await browser.close();await vite?.close()}

@@ -146,7 +146,7 @@ try{
  await page.getByRole('textbox',{name:'配置条目键 3',exact:true}).fill('extra.conf')
  await page.getByRole('textbox',{name:'配置条目值 3',exact:true}).fill('enabled=true')
  await page.getByRole('button',{name:'app.conf',exact:true}).click()
- await page.getByRole('link',{name:'Deployments',exact:true}).click()
+ await page.getByRole('link',{name:'部署',exact:true}).click()
  await page.getByRole('dialog',{name:'未保存的修改',exact:true}).getByRole('button',{name:'取消',exact:true}).click()
  await page.getByRole('dialog',{name:'未保存的修改',exact:true}).waitFor({state:'hidden'})
  await page.waitForURL('**/configmaps/team/settings/edit')

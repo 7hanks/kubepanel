@@ -102,4 +102,4 @@ npm --prefix server run check && npm --prefix server test
 npm --prefix frontend test && npm --prefix frontend run build
 ```
 
-发布与回滚参见 `deploy/release.sh`、`deploy/backup.sh`、`deploy/verify.sh`。
+发布与回滚参见 `deploy/release.sh`、`deploy/backup.sh`、`deploy/verify.sh`。自动发布的镜像标签使用北京时间，格式为 `kubepanel:YYYYMMDD-HHmm`，正式容器固定为 `kubepanel`。更新通过健康检查后自动清理已退出的旧发布容器，保留数据目录和发布备份。
