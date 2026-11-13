@@ -68,19 +68,6 @@
             <el-option label="全部命名空间" value="all" />
             <el-option v-for="ns in store.namespaces" :key="ns" :label="ns" :value="ns" />
           </el-select>
-          <el-dropdown @command="setAutoRefresh">
-            <button type="button" class="kp-header-action">
-              <el-icon><Timer /></el-icon>{{ autoLabel }}<el-icon><ArrowDown /></el-icon>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item :command="0">关闭自动刷新</el-dropdown-item>
-                <el-dropdown-item :command="15" divided>每 15 秒</el-dropdown-item>
-                <el-dropdown-item :command="30">每 30 秒</el-dropdown-item>
-                <el-dropdown-item :command="60">每 60 秒</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
           <el-tooltip content="刷新当前数据" placement="bottom">
             <el-button size="small" circle text :loading="reloading" aria-label="刷新当前数据" @click="reload"><el-icon><Refresh /></el-icon></el-button>
           </el-tooltip>
@@ -123,11 +110,11 @@
 </template>
 
 <script setup>
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, OfficeBuilding, Refresh, Timer, QuestionFilled, UserFilled, ArrowDown,
+  Search, OfficeBuilding, Refresh, QuestionFilled, UserFilled, ArrowDown,
 } from '@element-plus/icons-vue'
 import { store } from '../store'
 import {resourceTitle} from '../utils/resource-ui'
@@ -153,9 +140,7 @@ const username = ref(localStorage.getItem('kp_user') || 'admin')
 const roleLabel = ref(roleName())
 const tick = ref(0)
 const collapsed = ref(localStorage.getItem('kp_side_collapsed') === '1')
-const autoRefresh = ref(Number(localStorage.getItem('kp_auto_refresh') || 0))
 const pwdVisible = ref(false)
-let refreshTimer = null
 
 const allow = computed(() => {
   void tick.value
@@ -166,8 +151,6 @@ const allow = computed(() => {
     monitor: permitMonitor(),
   }
 })
-
-const autoLabel = computed(() => autoRefresh.value ? `${autoRefresh.value}s 刷新` : '自动刷新')
 
 const baseGroups = computed(() => {
   const platform = [
@@ -211,19 +194,6 @@ function toggleCollapse() {
   collapsed.value = !collapsed.value
   localStorage.setItem('kp_side_collapsed', collapsed.value ? '1' : '0')
 }
-function setAutoRefresh(sec) {
-  autoRefresh.value = Number(sec) || 0
-  localStorage.setItem('kp_auto_refresh', String(autoRefresh.value))
-  applyAutoRefresh()
-  ElMessage.success(autoRefresh.value ? `已开启每 ${autoRefresh.value} 秒自动刷新` : '已关闭自动刷新')
-}
-function applyAutoRefresh() {
-  clearInterval(refreshTimer)
-  if (autoRefresh.value > 0) {
-    refreshTimer = setInterval(() => window.dispatchEvent(new Event('kp:refresh')), autoRefresh.value * 1000)
-  }
-}
-
 function isActive(path) {
   const full = cpath(path, route.params.clusterId)
   if (path === '/overview') return route.path === full
@@ -270,7 +240,6 @@ onMounted(async () => {
   store.setCluster(route.params.clusterId)
   try { await store.loadClusters() } catch (e) { /* 顶部仍可手动切换 */ }
   store.init().catch(() => {})
-  applyAutoRefresh()
   try {
     const p = await refreshSession()
     username.value = p.username
@@ -278,8 +247,6 @@ onMounted(async () => {
     tick.value++
   } catch (e) { /* 拦截器已处理 401 */ }
 })
-onUnmounted(() => clearInterval(refreshTimer))
-
 // 同一集群从管理页返回资源页也需要重试失败的初始化。
 watch(() => route.path, () => {
   const id = route.params.clusterId

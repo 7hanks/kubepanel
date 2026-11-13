@@ -69,7 +69,7 @@
           <template #default="{ row }">
             <div class="kp-list-actions">
               <ResourceActionButton @click="viewYaml(row)">YAML</ResourceActionButton>
-              <ResourceActionButton v-if="canUpdateRes" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm(row)">编辑</ResourceActionButton>
+              <ResourceActionButton v-if="canUpdateRes&&policy.edit!=='none'" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm(row)">编辑</ResourceActionButton>
               <el-tooltip v-if="meta.kind==='Pod'&&can('cluster:update')" :content="podScaleAvailability(row)||'调整所属工作负载的副本数'" :disabled="!podScaleAvailability(row)"><span><ResourceActionButton class="resource-scale-button" :disabled="!!podScaleAvailability(row)" @click="openPodScale(row)">扩缩容</ResourceActionButton></span></el-tooltip>
               <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
               <el-dropdown
@@ -112,13 +112,14 @@
       </div>
     </div>
 
+    <SimpleResourceDialog v-model="simpleVisible" :meta="meta" :cluster-id="store.currentClusterId" :namespace="store.namespace==='all'?(store.namespaces[0]||'default'):store.namespace" :namespaces="store.namespaces" :target="simpleTarget" @saved="load"/>
     <PodScaleDialog v-model="podScaleVisible" :target="podScaleTarget" :context-key="bulkContextKey" @saved="load"/>
     <ContainerFilePicker v-model="filesVisible" :resource="filesResource" />
     <BulkPodRestartDialog v-model="bulkRestartVisible" :targets="bulkRestartTargets" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :context-key="bulkContextKey" :can-restart="canRestartTarget" @submitted="load" />
     </div>
     <YamlDialog
       v-model="yamlVisible" :title="yamlTitle" :content="yamlText" :saving="saving"
-      :readonly="!canUpdateRes && yamlMode !== 'create'" :creating="yamlMode === 'create'" :preflight="preflightYaml" :target="yamlTarget" :mode="yamlDialogMode" :submit-label="yamlMode === 'create' ? '创建' : '保存'" @save="saveYaml"
+      :readonly="(policy.yamlReadonly||!canUpdateRes) && yamlMode !== 'create'" :creating="yamlMode === 'create'" :preflight="preflightYaml" :target="yamlTarget" :mode="yamlDialogMode" :submit-label="yamlMode === 'create' ? '创建' : '保存'" @save="saveYaml"
     />
 
     <ScaleDialog
@@ -150,19 +151,22 @@ import ResourceActionButton from '../components/ResourceActionButton.vue'
 import ContainerFilePicker from '../components/ContainerFilePicker.vue'
 import BulkPodRestartDialog from '../components/BulkPodRestartDialog.vue'
 import {MAX_BULK_POD_RESTART} from '../utils/bulk-pod-restart'
+import SimpleResourceDialog from '../components/SimpleResourceDialog.vue'
+import {resourceUiPolicy} from '../utils/resource-policy'
 import PodScaleDialog from '../components/PodScaleDialog.vue'
 import {resourceTitle,filterResourceRows,servicePortLabel,podScaleAvailability} from '../utils/resource-ui'
 
 const route = useRoute()
 const router = useRouter()
 const meta = computed(() => metaFromRoute(route.params, store.discovery))
+const policy=computed(()=>resourceUiPolicy(meta.value)),simpleVisible=ref(false),simpleTarget=shallowRef(null)
 const columns = computed(() => columnsFor(meta.value.kind, meta.value.namespaced))
 const scalable = computed(() => ['Deployment', 'StatefulSet', 'ReplicaSet'].includes(meta.value.kind))
 const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].includes(meta.value.kind))
 const fileSupported=computed(()=>['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.value.kind))
 const filesVisible=ref(false),filesResource=shallowRef(null)
 function openFiles(row){if(!can('pod:files:read'))return;const m=meta.value;filesResource.value={...row._raw,kind:m.kind,apiVersion:m.group?`${m.group}/${m.version}`:m.version};filesVisible.value=true}
-const actionWidth = computed(() => meta.value.kind==='Pod'&&can('cluster:update')?280:canUpdateRes.value?200:135)
+const actionWidth = computed(() => meta.value.kind==='Pod'&&can('cluster:update')?230:canUpdateRes.value?200:135)
 const createdRange=ref([]),serviceType=ref(''),compactRows=ref(true),podScaleVisible=ref(false),podScaleTarget=shallowRef(null)
 const serviceTypes=['ClusterIP','NodePort','LoadBalancer','ExternalName']
 function openPodScale(row){if(!can('cluster:update')||podScaleAvailability(row))return;const md=row._raw?.metadata;if(!md?.uid)return ElMessage.warning('缺少 Pod UID，请刷新后重试');podScaleTarget.value={clusterId:store.currentClusterId,namespace:md.namespace,name:md.name,uid:md.uid};podScaleVisible.value=true}
@@ -172,7 +176,7 @@ const loading = ref(false)
 const saving = ref(false)
 const actionBusy=ref(false)
 const removeContextGuard=registerUnsavedGuard(()=>{if(saving.value || scaleSaving.value || actionBusy.value){ElMessage.warning('操作进行中，请稍后切换上下文');return false}return true})
-const canCreateRes = computed(() => canResource(meta.value,'create',store.namespace))
+const canCreateRes = computed(() => policy.value.create!=='none'&&(!meta.value.verbs||meta.value.verbs.includes('create'))&&canResource(meta.value,'create',store.namespace))
 const canUpdateRes = computed(() => canResource(meta.value,'update',store.namespace))
 const canDeleteRes = computed(() => canResource(meta.value,'delete',store.namespace))
 const canBulkRestart = computed(() => meta.value.kind === 'Pod' && canUpdateRes.value && canDeleteRes.value)
@@ -203,7 +207,7 @@ const activeCount = computed(() => activeFilterCount(filters))
 const sort = ref({prop:'name',order:'ascending'})
 const states = computed(()=>[...new Set([...(capabilities.value.pod ? ['Pending','Running','NotReady','CrashLoopBackOff','ImagePullBackOff','ErrImagePull','Succeeded','Failed','Evicted','Terminating','Unknown'] : []), ...rows.value.map(r=>r.status), filters.state, draft.state].filter(state => state && !['abnormal','active-abnormal'].includes(state)))])
 const nodes = computed(()=>[...new Set(rows.value.map(r=>r.node).filter(node=>node && node!=='-'))].sort())
-const yamlTarget = computed(()=>targetDescription(store.currentCluster?.name || store.currentClusterId, editingRow.value ? editingRow.value._raw?.metadata?.namespace : nsParam(), meta.value.kind, editingRow.value?.name))
+const yamlTarget = computed(()=>yamlContext.value?yamlContext.value.clusterId+' · '+targetDescription(yamlContext.value.clusterName,yamlContext.value.namespace,yamlContext.value.meta.kind,yamlContext.value.name):'')
 const keyword = ref(filters.keyword)
 const selected = ref([])
 const page = ref(1)
@@ -212,6 +216,7 @@ const scaleVisible = ref(false)
 const scaleRow = ref(null)
 const scaleSaving = ref(false)
 
+const yamlContext=shallowRef(null);let yamlReadEpoch=0,yamlReadController
 const yamlVisible = ref(false)
 const yamlText = ref('')
 const yamlTitle = ref('')
@@ -290,48 +295,42 @@ function openDetail(row) { router.push(detailPath(row)) }
 function goLogs(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/logs`)) }
 function goTerminal(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/terminal`)) }
 
-function openCreate() { router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/new`)) }
-function editForm(row) { router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/${encodeURIComponent(row.namespace==='-'?'_all':row.namespace)}/${encodeURIComponent(row.name)}/edit`)) }
+function openCreate() { if(!canCreateRes.value)return;yamlReadEpoch++;yamlReadController?.abort();if(policy.value.create==='simple'){simpleTarget.value=null;simpleVisible.value=true;return}if(policy.value.create==='yaml'){yamlContext.value={context:bulkContextKey.value,clusterId:store.currentClusterId,clusterName:store.currentCluster?.name||store.currentClusterId,meta:{...meta.value},namespace:nsParam(),creating:true};yamlMode.value='create';yamlDialogMode.value='edit';yamlTitle.value='新建 '+resourceTitle(meta.value);yamlText.value=yamlTemplate(meta.value,nsParam());editingRow.value=null;yamlVisible.value=true;return}router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/new`)) }
+function editForm(row) { if(policy.value.edit==='none'||!canUpdateRes.value)return;if(policy.value.edit!=='yaml'){yamlReadEpoch++;yamlReadController?.abort()}if(policy.value.edit==='simple'){simpleTarget.value={namespace:nsPath(row.namespace),name:row.name};simpleVisible.value=true;return}if(policy.value.edit==='yaml')return openYaml(row,'edit');router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/${encodeURIComponent(row.namespace==='-'?'_all':row.namespace)}/${encodeURIComponent(row.name)}/edit`)) }
 
 /** 点「YAML」默认只读查看；要改必须再点弹窗里的「编辑」 */
 async function openYaml(row, mode) {
-  yamlMode.value = 'edit'
-  yamlDialogMode.value = mode
-  yamlTitle.value = `${mode === 'view' ? '查看' : '编辑'} ${row.name}`
-  // 列表中的对象可能已过期，打开前重新拉最新版本，避免保存时撞上 K8s 乐观锁 409
-  let latest = row._raw
+  const epoch=++yamlReadEpoch,context=bulkContextKey.value,m={...meta.value},clusterId=store.currentClusterId,namespace=nsPath(row.namespace),name=row.name
+  yamlReadController?.abort();yamlReadController=new AbortController()
   try {
-    const m = meta.value
-    latest = await api.get(m.group, m.version, m.plural, nsPath(row.namespace), row.name)
-  } catch (e) { ElMessage.error('无法读取最新版本，请重试：' + e.message); return }
-  editingRow.value = { ...row, _raw: latest }
-  yamlText.value = yaml.dump(latest, { noRefs: true, lineWidth: 120 })
-  yamlVisible.value = true
+    const latest=await api.get(m.group,m.version,m.plural,namespace,name,{params:{clusterId},signal:yamlReadController.signal})
+    if(epoch!==yamlReadEpoch||context!==bulkContextKey.value)return
+    yamlContext.value={context,clusterId,clusterName:store.currentCluster?.name||clusterId,meta:m,namespace,name,uid:latest.metadata?.uid,resourceVersion:latest.metadata?.resourceVersion,creating:false}
+    yamlMode.value='edit';yamlDialogMode.value=mode;yamlTitle.value=`${mode==='view'?'查看':'编辑'} ${name}`
+    editingRow.value={...row,_raw:latest};yamlText.value=yaml.dump(latest,{noRefs:true,lineWidth:120});yamlVisible.value=true
+  } catch(e){if(epoch===yamlReadEpoch&&!e.cancelled)ElMessage.error('无法读取最新版本，请重试：'+e.message)}
 }
 function viewYaml(row) { return openYaml(row, 'view') }
 
-async function preflightYaml(text) {
-  const obj=yaml.load(text); const m=meta.value
-  if (!obj || !obj.metadata?.name) throw new Error('metadata.name 必填')
-  if (obj.kind!==m.kind || obj.apiVersion!==(m.group ? `${m.group}/${m.version}` : m.version)) throw new Error('YAML 的 kind/apiVersion 与当前目标不一致')
-  if (yamlMode.value==='create') return api.create(m.group,m.version,m.plural,obj.metadata.namespace || nsParam(),obj,{dryRun:true})
-  if (obj.metadata.name!==editingRow.value.name || (obj.metadata.namespace || '_all')!==nsPath(editingRow.value.namespace)) throw new Error('不能在编辑中更改资源名称或命名空间')
-  return api.update(m.group,m.version,m.plural,nsPath(editingRow.value.namespace),editingRow.value.name,obj,{dryRun:true})
+function yamlSubmission(text){
+ const t=yamlContext.value,obj=yaml.load(text)
+ if(!t||t.context!==bulkContextKey.value)throw new Error('目标上下文已变化，请重新打开资源')
+ const m=t.meta
+ if(!obj||!obj.metadata?.name)throw new Error('metadata.name 必填')
+ if(obj.kind!==m.kind||obj.apiVersion!==(m.group?`${m.group}/${m.version}`:m.version))throw new Error('YAML 的 kind/apiVersion 与当前目标不一致')
+ if(!t.creating&&(obj.metadata.name!==t.name||nsPath(obj.metadata.namespace)!==t.namespace))throw new Error('不能在编辑中更改资源名称或命名空间')
+ if(!canResource(m,t.creating?'create':'update',obj.metadata.namespace,t.clusterId)||resourceUiPolicy(m).yamlReadonly)throw new Error('当前账号或资源不允许此操作')
+ if(!t.creating){obj.metadata.uid=t.uid;obj.metadata.resourceVersion=t.resourceVersion}
+ return {t,obj}
 }
+async function preflightYaml(text){const {t,obj}=yamlSubmission(text),m=t.meta;return t.creating?api.create(m.group,m.version,m.plural,obj.metadata.namespace,obj,{dryRun:true,clusterId:t.clusterId}):api.update(m.group,m.version,m.plural,t.namespace,t.name,obj,{dryRun:true,clusterId:t.clusterId})}
 async function saveYaml(text) {
   saving.value = true
   try {
-    const obj = yaml.load(text)
-    if (!obj || typeof obj !== 'object') throw new Error('YAML 内容不是一个对象')
-    if (yamlMode.value === 'create') {
-      const m = meta.value
-      await api.create(m.group,m.version,m.plural,obj.metadata?.namespace || nsParam(),obj)
-      ElMessage.success('已提交创建')
-    } else {
-      const m = meta.value
-      await api.update(m.group, m.version, m.plural, editingRow.value.namespace === '-' ? '_all' : editingRow.value.namespace, editingRow.value.name, obj)
-      ElMessage.success('保存成功')
-    }
+    const {t,obj}=yamlSubmission(text),m=t.meta
+    if(t.creating)await api.create(m.group,m.version,m.plural,obj.metadata.namespace,obj,{clusterId:t.clusterId})
+    else await api.update(m.group,m.version,m.plural,t.namespace,t.name,obj,{clusterId:t.clusterId})
+    ElMessage.success(t.creating?'已提交创建':'保存成功')
     yamlVisible.value = false
     await load()
   } catch (e) {
@@ -453,6 +452,7 @@ watch(() => route.query, () => {
   if(JSON.stringify(next)!==JSON.stringify({...filters,keyword:keyword.value})) setFilters(next)
 })
 watch([() => route.path, () => store.currentClusterId, () => store.namespace], () => {
+  yamlReadEpoch++;yamlReadController?.abort();yamlVisible.value=false;yamlContext.value=null
   listPath=route.path
   clearTimeout(queryTimer)
   filterOpen.value=false;createdRange.value=[];serviceType.value=''
@@ -465,7 +465,7 @@ onMounted(() => {
   load()
   window.addEventListener('kp:refresh', load)
 })
-onUnmounted(() => { clearTimeout(queryTimer); removeContextGuard(); gate.invalidate(); controller?.abort(); window.removeEventListener('kp:refresh', load) })
+onUnmounted(() => { yamlReadEpoch++;yamlReadController?.abort();clearTimeout(queryTimer); removeContextGuard(); gate.invalidate(); controller?.abort(); window.removeEventListener('kp:refresh', load) })
 </script>
 
 <style scoped>
@@ -482,7 +482,7 @@ onUnmounted(() => { clearTimeout(queryTimer); removeContextGuard(); gate.invalid
 .resource-filter-grid :deep(.el-select),.resource-filter-grid :deep(.el-input-number) { width:100%; }
 @media (max-width:700px) { .resource-toolbar { flex-wrap:wrap; } .resource-search { flex:1; } .resource-filter-grid { grid-template-columns:minmax(0,1fr); } }
 
-.resource-page-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}.resource-heading-title{display:flex;align-items:center;gap:12px}.resource-heading-title h1{font-size:22px;color:#304d73;letter-spacing:.01em;margin:0;font-weight:650}.resource-scope{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--kp-muted)}.resource-scope>.el-icon{font-size:15px}.resource-scope-divider{padding:0 8px;color:var(--kp-faint)}.resource-query-card{display:flex;align-items:center;gap:28px;flex-wrap:wrap;padding:18px 22px;background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;box-shadow:0 2px 5px rgba(22,40,70,.025);margin-bottom:18px}.resource-query-field{display:flex;align-items:center;gap:14px;min-width:250px;flex:1}.resource-query-field>label{font-size:13px;color:var(--kp-text-2);white-space:nowrap}.resource-query-field>.el-input{flex:1}.resource-query-date{flex:1.2;min-width:330px}.resource-query-date :deep(.el-date-editor){width:100%;min-width:0}.resource-query-actions{display:flex;gap:8px;margin-left:auto}.resource-query-actions .el-button+.el-button{margin:0}.resource-table-panel{background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;padding:18px 18px 2px;box-shadow:0 2px 5px rgba(22,40,70,.025)}.resource-type-tabs{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--kp-border)}.resource-type-tabs>button{display:flex;align-items:center;gap:9px;background:transparent;border:1px solid transparent;color:var(--kp-text-2);font:inherit;font-size:13px;padding:8px 13px;border-radius:8px;cursor:pointer}.resource-type-tabs>button>span{font-size:12px;background:var(--kp-surface-2);padding:1px 7px;border-radius:5px}.resource-type-tabs>button.active{background:var(--kp-side-active);border-color:#dce7f6;color:var(--kp-brand);font-weight:600}.resource-type-tabs>button.active>span{background:var(--kp-surface)}.resource-table-panel>.kp-card{border-radius:8px;box-shadow:none;border:0}.pod-list-summary{display:flex;gap:16px;font-size:12px;color:var(--kp-muted);white-space:nowrap}.pod-list-summary>span{display:flex;align-items:center;gap:6px}.pod-list-summary strong{color:var(--kp-text);font-weight:600}.summary-dot{display:inline-block;width:6px;height:6px;border-radius:50%}.summary-dot.running{background:#16a36b}.summary-dot.warning{background:#d68b24}.resource-name-cell{display:flex;align-items:flex-start;flex-direction:column;gap:4px}.resource-namespace-pill{font-size:11px;color:var(--kp-muted);background:var(--kp-surface-2);padding:0 6px;border-radius:4px;line-height:18px}.resource-port-chips{display:flex;flex-direction:column;align-items:flex-start;gap:6px;white-space:normal}.resource-port-chips>span{display:inline-block;background:#f0f3f7;color:#5d6d83;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;padding:3px 7px;border-radius:5px;white-space:normal;overflow-wrap:anywhere;line-height:1.5}.service-type-tag{font-weight:600;letter-spacing:.01em}.resource-image-cell{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0;font-size:inherit;line-height:inherit}.resource-image-cell>span{max-width:100%;white-space:normal;overflow-wrap:anywhere;background:#edf4ff;border:1px solid #dce8fa;border-radius:4px;padding:2px 7px;color:#315e9b}.resource-table-panel :deep(.resource-ports-column .cell){white-space:normal;overflow:visible}.resource-scale-button{inline-size:5.5em!important}.resource-toolbar{gap:9px;margin-bottom:16px}.resource-toolbar>.el-button+.el-button{margin:0}.resource-table-panel :deep(.el-table th.el-table__cell){background:#f7f9fc}.resource-table-panel :deep(.el-table--small td.el-table__cell){padding:8px 0}.resource-table-panel :deep(.el-table:not(.el-table--small) td.el-table__cell){padding:14px 0}
+.resource-page-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}.resource-heading-title{display:flex;align-items:center;gap:12px}.resource-heading-title h1{font-size:22px;color:#304d73;letter-spacing:.01em;margin:0;font-weight:650}.resource-scope{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--kp-muted)}.resource-scope>.el-icon{font-size:15px}.resource-scope-divider{padding:0 8px;color:var(--kp-faint)}.resource-query-card{display:flex;align-items:center;gap:28px;flex-wrap:wrap;padding:18px 22px;background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;box-shadow:0 2px 5px rgba(22,40,70,.025);margin-bottom:18px}.resource-query-field{display:flex;align-items:center;gap:14px;min-width:250px;flex:1}.resource-query-field>label{font-size:13px;color:var(--kp-text-2);white-space:nowrap}.resource-query-field>.el-input{flex:1}.resource-query-date{flex:1.2;min-width:330px}.resource-query-date :deep(.el-date-editor){width:100%;min-width:0}.resource-query-actions{display:flex;gap:8px;margin-left:auto}.resource-query-actions .el-button+.el-button{margin:0}.resource-table-panel{background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;padding:18px 18px 2px;box-shadow:0 2px 5px rgba(22,40,70,.025)}.resource-type-tabs{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--kp-border)}.resource-type-tabs>button{display:flex;align-items:center;gap:9px;background:transparent;border:1px solid transparent;color:var(--kp-text-2);font:inherit;font-size:13px;padding:8px 13px;border-radius:8px;cursor:pointer}.resource-type-tabs>button>span{font-size:12px;background:var(--kp-surface-2);padding:1px 7px;border-radius:5px}.resource-type-tabs>button.active{background:var(--kp-side-active);border-color:#dce7f6;color:var(--kp-brand);font-weight:600}.resource-type-tabs>button.active>span{background:var(--kp-surface)}.resource-table-panel>.kp-card{border-radius:8px;box-shadow:none;border:0}.pod-list-summary{display:flex;gap:16px;font-size:12px;color:var(--kp-muted);white-space:nowrap}.pod-list-summary>span{display:flex;align-items:center;gap:6px}.pod-list-summary strong{color:var(--kp-text);font-weight:600}.summary-dot{display:inline-block;width:6px;height:6px;border-radius:50%}.summary-dot.running{background:#16a36b}.summary-dot.warning{background:#d68b24}.resource-name-cell{display:flex;align-items:flex-start;flex-direction:column;gap:4px}.resource-namespace-pill{font-size:11px;color:var(--kp-muted);background:var(--kp-surface-2);padding:0 6px;border-radius:4px;line-height:18px}.resource-port-chips{display:flex;flex-direction:column;align-items:flex-start;gap:6px;white-space:normal}.resource-port-chips>span{display:inline-block;background:var(--kp-success-bg);color:var(--el-color-success);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;padding:3px 7px;border-radius:5px;white-space:normal;overflow-wrap:anywhere;line-height:1.5}.service-type-tag{font-weight:600;letter-spacing:.01em}.resource-image-cell{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0;font-size:inherit;line-height:inherit}.resource-image-cell>span{max-width:100%;white-space:normal;overflow-wrap:anywhere;background:var(--kp-success-bg);border:1px solid transparent;border-radius:4px;padding:2px 7px;color:var(--el-color-success)}.resource-table-panel :deep(.resource-ports-column .cell){white-space:normal;overflow:visible}.resource-scale-button{inline-size:5.5em!important}.resource-toolbar{gap:9px;margin-bottom:16px}.resource-toolbar>.el-button+.el-button{margin:0}.resource-table-panel :deep(.el-table th.el-table__cell){background:#f7f9fc}.resource-table-panel :deep(.el-table--small td.el-table__cell){padding:8px 0}.resource-table-panel :deep(.el-table:not(.el-table--small) td.el-table__cell){padding:14px 0}
 @media(max-width:1000px){.resource-query-card{gap:16px}.resource-query-field{min-width:220px}.resource-query-date{min-width:280px}.resource-query-actions{margin-left:0}.pod-list-summary{display:none}}
 @media(max-width:700px){.resource-page-heading{margin-bottom:14px;gap:10px}.resource-heading-title h1{font-size:19px}.resource-scope{font-size:12px}.resource-query-card{padding:14px;gap:12px}.resource-query-field,.resource-query-date{min-width:0;flex:1 1 100%}.resource-query-field>label{width:56px;flex:none}.resource-query-actions{justify-content:flex-end;width:100%}.resource-table-panel{padding:12px 10px 2px}.resource-toolbar{flex-wrap:wrap}.resource-type-tabs{gap:3px}.resource-type-tabs>button{font-size:11px;padding:7px 8px}.resource-type-tabs>button>span{padding:0 5px}.resource-count{display:none}}
 </style>

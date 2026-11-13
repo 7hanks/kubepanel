@@ -153,6 +153,35 @@ test('returning from management to an unreachable same-cluster overview or resou
   }
 })
 
+test('legacy automatic refresh preferences stay inactive while manual refresh reloads current data', async () => {
+  let clusterReads = 0, refreshEvents = 0
+  const { store, localStorage } = makeStore({
+    clusters: async () => [{ id: 'old', name: 'Current cluster' }],
+    cluster: async () => { clusterReads++; return { name: 'Current cluster', namespaces: ['private'] } },
+    discovery: async () => [],
+  })
+  localStorage.setItem('kp_auto_refresh', '15')
+  const route = reactive({ params: { clusterId: 'old' }, path: '/c/old/overview', name: 'overview', meta: {} })
+  const mounted = [], unmounted = [], intervals = [], scope = effectScope(), window = new EventTarget()
+  window.addEventListener('kp:refresh', () => refreshEvents++)
+  const { descriptor } = parse(fs.readFileSync(new URL('../src/layout/Layout.vue', import.meta.url), 'utf8'))
+  const source = stripImports(compileScript(descriptor, { id: 'layout-manual-refresh' }).content).replace('export default', 'return')
+  const bindings = { ref, computed, watch, onMounted: fn => mounted.push(fn), onUnmounted: fn => unmounted.push(fn), useRoute: () => route, useRouter: () => ({}), ElMessage: { success() {} }, ElMessageBox: {}, Search: {}, OfficeBuilding: {}, Refresh: {}, Timer: {}, QuestionFilled: {}, UserFilled: {}, ArrowDown: {}, store, navGroups, metaFromRoute, resourceTitle, parseNavigationExpansion, visibleNavigationGroups, revealActiveNavigationGroup, confirmContextChange: async () => true, cpath: (path, id = store.currentClusterId) => '/c/' + id + path, api: {}, ChangePasswordDialog: {}, permitCluster: () => true, permitUsers: () => false, permitRegistry: () => false, permitMonitor: () => false, refreshSession: async () => ({}), clearSession() {}, roleName: () => '', can: () => true, canResource: () => true, localStorage, window, Event, setInterval: (fn, delay) => { intervals.push({ fn, delay }); return intervals.length }, clearInterval() {} }
+  const definition = Function(...Object.keys(bindings), source)(...Object.values(bindings))
+  const state = scope.run(() => definition.setup({}, { expose() {} }))
+  try {
+    for (const fn of mounted) await fn()
+    await nextTick(); await nextTick()
+    assert.equal(intervals.length, 0, 'a remembered refresh interval must not schedule background requests')
+    assert.equal(refreshEvents, 0)
+    const readsBeforeRefresh = clusterReads
+    await state.reload()
+    assert.equal(refreshEvents, 1, 'manual refresh still notifies the current resource page')
+    assert.equal(clusterReads, readsBeforeRefresh + 1, 'manual refresh still reloads cluster information')
+    assert.equal(state.reloading.value, false)
+  } finally { unmounted.forEach(fn => fn()); scope.stop() }
+})
+
 function pendingClusterRequests() {
   const requests = []
   const { store } = makeStore({ cluster: () => new Promise((resolve, reject) => requests.push({ resolve, reject })), discovery: async () => [] })

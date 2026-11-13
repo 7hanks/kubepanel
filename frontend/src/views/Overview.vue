@@ -84,7 +84,7 @@
     <el-table-column prop="memoryPercent" label="内存 / request" min-width="160" sortable="custom"><template #default="{row}">{{pct(row.memoryPercent)}}</template></el-table-column>
    </el-table>
   </section>
-  <details ref="diagnostics" class="kp-card diagnostics-panel">
+  <details ref="diagnostics" class="kp-card diagnostics-panel" open>
    <summary>诊断详情<span class="kp-muted">Pod 阶段、节点、事件与连接</span></summary>
    <el-tabs v-model="diagnosticTab" class="diagnostic-tabs">
     <el-tab-pane label="Pod 阶段" name="pods" lazy>

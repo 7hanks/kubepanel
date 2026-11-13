@@ -94,8 +94,8 @@ export const api = {
   // ---- 通用资源 CRUD ----
   list: (group, version, plural, params = {}, config = {}) =>
     http.get(resPath(group, version, plural), { ...config, params }),
-  get: (group, version, plural, namespace, name) =>
-    http.get(resPath(group, version, plural, namespace, name)),
+  get: (group, version, plural, namespace, name, config = {}) =>
+    http.get(resPath(group, version, plural, namespace, name), config),
   create: (group, version, plural, namespace, body, params = {}) =>
     http.post(resPath(group, version, plural), body, { params: { namespace, ...params } }),
   update: (group, version, plural, namespace, name, body, params = {}) =>

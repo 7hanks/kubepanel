@@ -6,7 +6,7 @@ import {createServer} from '../node_modules/vite/dist/node/index.js'
 const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright')
 const vite=await createServer({root:new URL('../',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),server:{host:'127.0.0.1',port:5188,strictPort:true}})
 await vite.listen()
-const browser=await chromium.launch({headless:true,channel:'msedge'}),context=await browser.newContext({viewport:{width:1651,height:1000}}),page=await context.newPage()
+const browser=await chromium.launch({headless:true,channel:'msedge'}),context=await browser.newContext({viewport:{width:1651,height:871}}),page=await context.newPage()
 page.setDefaultTimeout(12000)
 const errors=[],writes=[];let conflict=false,permissions=['*']
 page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept())
@@ -46,19 +46,26 @@ await page.route('**/api/**',async route=>{
  return send({})
 })
 const footer=()=>page.locator('.editor-footer')
-async function preflight(){await footer().getByRole('button',{name:'服务端预检',exact:true}).click();await page.getByRole('dialog',{name:/预览/}).waitFor()}
+async function assertPreviewFits(){
+ await page.waitForFunction(()=>{const el=document.querySelector('.resource-preview-dialog');if(!el)return false;const b=el.getBoundingClientRect();return b.x>=0&&b.y>=0&&b.bottom<=innerHeight+1})
+ const box=await page.locator('.resource-preview-dialog').boundingBox(),size=page.viewportSize();assert.ok(box.width<=size.width&&box.height<=size.height)
+ const close=page.getByRole('button',{name:'关闭预览',exact:true});await close.waitFor();const bounds=await close.boundingBox();assert.ok(bounds.y>=0&&bounds.y+bounds.height<=size.height)
+}
+
+async function preflight(){await footer().getByRole('button',{name:'服务端预检',exact:true}).click();await page.getByRole('dialog',{name:/预览/}).waitFor();await assertPreviewFits()}
 try{
  await page.goto('http://127.0.0.1:5188/c/test/r/apps/v1/deployments')
  await page.getByRole('button',{name:'新建',exact:true}).click()
- await page.getByRole('heading',{name:'新建 部署',exact:true}).waitFor()
+ await page.getByRole('heading',{name:'新建部署',exact:true}).waitFor()
  await page.getByRole('textbox',{name:'资源名称',exact:true}).fill('created-app')
  await page.getByRole('tab',{name:'容器组模板',exact:true}).click()
  await page.getByRole('textbox',{name:'容器镜像',exact:true}).fill('nginx:1.25-alpine')
  await page.getByRole('button',{name:'添加初始化容器',exact:true}).click()
  await page.getByRole('textbox',{name:'容器镜像',exact:true}).fill('busybox:1.36')
  await preflight()
+ await page.setViewportSize({width:900,height:500});await assertPreviewFits();await page.setViewportSize({width:1651,height:871})
  const preview=page.getByRole('dialog',{name:'创建预览',exact:true})
- await preview.getByRole('button',{name:'返回表单',exact:true}).click()
+ await preview.getByRole('button',{name:'关闭预览',exact:true}).click()
  await page.getByText('探针、安全上下文和其他容器设置',{exact:true}).click()
  await page.getByRole('textbox',{name:'新字段 container',exact:true}).fill('stdin')
  await page.locator('.el-select').filter({has:page.getByRole('combobox',{name:'字段类型 container',exact:true})}).click()
@@ -129,7 +136,7 @@ try{
  await preflight();await page.getByRole('dialog',{name:'变更预览',exact:true}).getByRole('button',{name:'确认保存',exact:true}).click();await page.waitForURL('**/configmaps')
  const configCall=writes.filter(item=>item.method==='PUT'&&item.path.includes('/configmaps/')&&item.params.dryRun==='false').at(-1)
  assert.equal(configCall.body.metadata.resourceVersion,'21');assert.equal(configCall.body.data['extra.conf'],'enabled=true');assert.equal(configCall.body.binaryData.image,'AAEC')
- await page.setViewportSize({width:1651,height:1000})
+ await page.setViewportSize({width:1651,height:871})
  await page.goto('http://127.0.0.1:5188/c/test/r/_core/v1/pods')
  assert.equal(await page.getByRole('button',{name:'日志',exact:true}).count(),0)
  await page.getByRole('button',{name:'更多操作',exact:true}).click()

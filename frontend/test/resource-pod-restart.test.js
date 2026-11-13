@@ -1,3 +1,4 @@
+import {resourceUiPolicy} from '../src/utils/resource-policy.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -9,13 +10,13 @@ import * as filters from '../src/utils/resource-filters.js'
 import * as columns from '../src/config/columns.js'
 import {MAX_BULK_POD_RESTART} from '../src/utils/bulk-pod-restart.js'
 
-function fixture(confirm=async()=>{}) {
+function fixture(confirm=async()=>{},apiOverrides={}) {
  const scope=effectScope(),calls=[],cleanups=[],warnings=[]
  const store=reactive({currentClusterId:'a',namespace:'team'}),route=reactive({path:'/c/a/r/_core/v1/pods',params:{},query:{}})
  const {descriptor}=parse(fs.readFileSync(new URL('../src/views/ResourceList.vue',import.meta.url),'utf8'))
  const source=compileScript(descriptor,{id:'pod-actions'}).content.replace(/^import[\s\S]*?from\s+['"][^'"]+['"]\s*\r?\n/gm,'').replace('export default','return')
- const bindings={ref,shallowRef,computed,reactive,watch,onMounted(){},onUnmounted:fn=>cleanups.push(fn),useRoute:()=>route,useRouter:()=>({replace(){},push(){}}),store,yaml,
-  ElMessage:{warning:m=>warnings.push(m),error:m=>warnings.push(m),success(){}},ElMessageBox:{confirm},api:{restartPod:async(...args)=>{calls.push(args);return {ok:true}},list:async()=>({items:[]})},registerUnsavedGuard:()=>()=>{},
+ const bindings={resourceUiPolicy,SimpleResourceDialog:{},ref,shallowRef,computed,reactive,watch,onMounted(){},onUnmounted:fn=>cleanups.push(fn),useRoute:()=>route,useRouter:()=>({replace(){},push(){}}),store,yaml,
+  ElMessage:{warning:m=>warnings.push(m),error:m=>warnings.push(m),success(){}},ElMessageBox:{confirm},api:{restartPod:async(...args)=>{calls.push(args);return {ok:true}},list:async()=>({items:[]}),...apiOverrides},registerUnsavedGuard:()=>()=>{},
   metaFromRoute:()=>({kind:'Pod',group:'',version:'v1',plural:'pods',namespaced:true}),statusTag:()=>'',cpath:path=>path,nsPath:ns=>ns,
   can:()=>true,canResource:()=>true,canCreate:()=>true,canUpdate:()=>true,canDelete:()=>true,...resource,...filters,...columns,MAX_BULK_POD_RESTART,
   Search:{},Filter:{},Plus:{},Refresh:{},MoreFilled:{},YamlDialog:{},ScaleDialog:{},PodScaleDialog:{},ResourceActionButton:{},ContainerFilePicker:{},BulkPodRestartDialog:{},window:{removeEventListener(){}}}
@@ -52,4 +53,14 @@ test('bulk snapshot includes only checked rows and refuses more than the bounded
   view.state.bulkRestartVisible.value=false;view.state.selected.value=Array.from({length:101},()=>pod());view.state.openBulkRestart()
   assert.equal(view.state.bulkRestartVisible.value,false)
  }finally{view.destroy()}
+})
+
+test('late YAML reads cannot open objects in a different cluster context',async()=>{
+ let resolve;const view=fixture(undefined,{get:()=>new Promise(done=>resolve=done)})
+ try{const reading=view.state.openYaml(pod(),'edit');view.store.currentClusterId='b';resolve({kind:'Pod',metadata:{name:'web',namespace:'team',uid:'old',resourceVersion:'3'}});await reading;assert.equal(view.state.yamlVisible.value,false)}finally{view.destroy()}
+})
+
+test('opening a new draft invalidates an older YAML read in the same context',async()=>{
+ let resolve;const view=fixture(undefined,{get:()=>new Promise(done=>resolve=done)})
+ try{const reading=view.state.openYaml(pod(),'edit');view.state.openCreate();resolve({kind:'Pod',metadata:{name:'web',namespace:'team',uid:'old',resourceVersion:'3'}});await reading;assert.equal(view.state.yamlVisible.value,false)}finally{view.destroy()}
 })

@@ -1,40 +1,10 @@
 <template>
   <div class="resource-editor" :class="{'service-editor':meta.kind==='Service'}" v-loading="loading">
-    <header class="editor-hero">
-      <span class="hero-grid" aria-hidden="true"></span>
-      <span class="hero-orb" aria-hidden="true"></span>
-      <div class="hero-body">
-        <nav class="editor-context" aria-label="当前位置">
-          <span>{{store.currentCluster?.name||store.currentClusterId}}</span>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
-          <span>{{draft?.metadata?.namespace||'集群范围'}}</span>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5"/></svg>
-          <span>{{resourceTitle(meta)}}</span>
-        </nav>
-        <div class="hero-title-row">
-          <span class="hero-icon" aria-hidden="true"><el-icon><component :is="meta.icon||'Document'"/></el-icon></span>
-          <div class="hero-title-text">
-            <h1>{{creating?'新建':'编辑'}} {{resourceTitle(meta)}}<span v-if="!creating" class="hero-resource-name">{{route.params.name}}</span></h1>
-            <div class="hero-chips">
-              <span class="hchip"><i class="hchip-dot"></i>{{creating?'新草稿':'已纳管'}}</span>
-              <span class="hchip" v-if="meta.namespaced">{{draft?.metadata?.namespace||'—'}}</span>
-              <span class="hchip hchip--brand">{{meta.kind}}</span>
-              <span class="hchip" v-if="original?.metadata?.resourceVersion">RV {{original.metadata.resourceVersion}}</span>
-              <span class="hchip hchip--amber" v-if="draft?.immutable">不可变</span>
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="editor-heading-actions">
-        <el-button :disabled="busy" @click="cancel">取消</el-button>
-        <el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">{{creating?'创建':'保存'}}</el-button>
-      </div>
-    </header>
-
+    <template v-if="uiMode==='form'">
+    <header class="editor-hero"><div><nav class="editor-context" aria-label="当前位置">{{store.currentCluster?.name||store.currentClusterId}} / {{draft?.metadata?.namespace||'集群范围'}}</nav><h1>{{creating?'新建':'编辑'}}{{resourceTitle(meta)}}<span v-if="!creating" class="hero-resource-name">{{route.params.name}}</span></h1></div><div class="editor-heading-actions"><span v-if="original?.metadata?.resourceVersion" class="editor-version">RV {{original.metadata.resourceVersion}}</span><el-button :disabled="busy" @click="cancel">取消</el-button><el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">{{creating?'创建':'保存'}}</el-button></div></header>
     <div v-if="error" ref="errorRef" class="editor-error" role="alert" tabindex="-1"><span class="editor-error-icon" aria-hidden="true">!</span><div><strong>请检查以下问题</strong><p>{{error}}</p></div><div class="editor-error-actions"><el-button :disabled="busy" @click="reread">重新读取</el-button><el-button v-if="draft" :disabled="busy" @click="exportYaml">导出草稿</el-button></div></div>
     <el-alert v-if="!authorized&&!loading" type="warning" :closable="false" show-icon :title="meta.kind==='Secret'&&!creating&&!can('secret:read')?'编辑 Secret 需要独立的读取 Secret 权限，避免覆盖未读取的密文。':'当前账号没有此目标资源的编辑权限。'"/>
 
-    <EditorInsights v-if="draft&&!loadFailed&&authorized&&meta.kind!=='Service'" :items="insightItems"/>
 
     <template v-if="draft&&!loadFailed&&authorized">
       <div class="editor-card" :key="formKey">
@@ -81,12 +51,14 @@
         </div>
       </div>
       <footer class="editor-footer">
-        <div class="save-flow" aria-hidden="true"><span class="flow-step" :class="{done:dirty}"><i>1</i>编辑配置</span><span class="flow-line" :class="{done:!!checked}"></span><span class="flow-step" :class="{done:!!checked}"><i>2</i>服务端预检</span><span class="flow-line" :class="{done:canSave}"></span><span class="flow-step" :class="{done:canSave}"><i>3</i>保存</span></div>
         <span class="editor-check-state" :class="{checked:canSave}">{{canSave?'当前配置已通过预检，可保存':checked?'配置已更改，请重新预检':'填写完成后，先预检并核对变更'}}</span>
         <div class="editor-footer-actions"><el-button :disabled="busy" @click="preview">变更预览</el-button><el-button :loading="checking" :disabled="busy||!authorized" @click="check">服务端预检</el-button><el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">{{creating?'创建':'保存'}}</el-button></div>
       </footer>
     </template>
-    <el-dialog v-model="previewOpen" :title="creating?'创建预览':'变更预览'" width="min(1300px,96vw)" top="5vh"><YamlDiff :before="creating?'':originalYaml" :after="previewYaml"/><template #footer><el-button @click="previewOpen=false">返回表单</el-button><el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">确认{{creating?'创建':'保存'}}</el-button></template></el-dialog>
+    <el-dialog v-model="previewOpen" :title="creating?'创建预览':'变更预览'" class="resource-preview-dialog" width="min(1080px,calc(100vw - 32px))" top="4vh" append-to-body destroy-on-close :close-on-click-modal="!busy" :close-on-press-escape="!busy" :before-close="done=>{if(!busy)done()}"><YamlDiff :before="creating?'':originalYaml" :after="previewYaml"/><template #footer><el-button :disabled="busy" @click="previewOpen=false">关闭预览</el-button><el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">确认{{creating?'创建':'保存'}}</el-button></template></el-dialog>
+    </template>
+    <SimpleResourceDialog v-else-if="uiMode==='simple'" :model-value="true" :meta="meta" :cluster-id="store.currentClusterId" :namespace="store.namespace==='all'?(store.namespaces[0]||'default'):store.namespace" :namespaces="namespaces" :target="creating?null:{namespace:route.params.namespace,name:route.params.name}" @update:model-value="value=>{if(!value)cancel()}" @saved="cancel"/>
+    <el-result v-else-if="uiMode==='none'" icon="info" :title="resourceTitle(meta)" :sub-title="policy.reason"><template #extra><el-button @click="cancel">返回列表</el-button></template></el-result>
   </div>
 </template>
 <script setup>
@@ -106,11 +78,13 @@ import StructuredFields from '../components/StructuredFields.vue'
 import WorkloadForm from '../components/WorkloadForm.vue'
 import YamlDiff from '../components/YamlDiff.vue'
 import ServiceForm from '../components/ServiceForm.vue'
-import EditorInsights from '../components/EditorInsights.vue'
+import SimpleResourceDialog from '../components/SimpleResourceDialog.vue'
+import {resourceUiPolicy} from '../utils/resource-policy'
 import {resourceTitle} from '../utils/resource-ui'
 
 const route=useRoute(),router=useRouter(),meta=computed(()=>metaFromRoute(route.params,store.discovery))
 const creating=computed(()=>route.name==='resource-create'),workload=computed(()=>WORKLOAD_KINDS.includes(meta.value.kind))
+const policy=computed(()=>resourceUiPolicy(meta.value)),uiMode=computed(()=>creating.value?policy.value.create:policy.value.edit)
 const draft=ref(null),original=ref(null),baseline=ref(''),target=ref(null),loading=ref(false),loadFailed=ref(false),error=ref(''),errorRef=ref(null)
 const activeTab=ref('basic'),templateSection=ref('containers'),fieldErrors=ref({}),touched=ref(false),formKey=ref(0)
 const saving=ref(false),checking=ref(false),checked=ref(null),previewOpen=ref(false),previewYaml=ref(''),errorSource=ref('local')
@@ -138,27 +112,6 @@ const entryMap=computed(()=>{const d=draft.value||{};return ['ConfigMap','Secret
 const entryCount=computed(()=>Object.keys(entryMap.value).length)
 const contentBytes=computed(()=>Object.values(entryMap.value).reduce((sum,value)=>sum+new TextEncoder().encode(String(value??'')).length,0))
 function formatBytes(bytes){if(bytes<1024)return `${bytes} B`;if(bytes<1024*1024)return `${(bytes/1024).toFixed(1)} KB`;return `${(bytes/1024/1024).toFixed(2)} MB`}
-const insightItems=computed(()=>{
- const d=draft.value;if(!d)return []
- const labels=Object.keys(d.metadata?.labels||{}).length,annotations=Object.keys(d.metadata?.annotations||{}).length
- const ports=meta.value.kind==='Service'?(d.spec?.ports||[]).length:0
- const containers=workload.value?((meta.value.kind==='Pod'?d.spec?.containers:podTemplate(d)?.spec?.containers)||[]).length:0
- const first=workload.value
-  ?{icon:'cube',label:'容器数量',value:containers,suffix:'个',hint:'容器组内定义的容器',tone:'blue'}
-  :meta.value.kind==='Service'
-   ?{icon:'link',label:'服务端口',value:ports,suffix:'个',hint:'已声明的 port 数量',tone:'blue'}
-   :{icon:'files',label:'配置条目',value:entryCount.value,suffix:'个',hint:'文件名作为键',tone:'blue'}
- const second=meta.value.kind==='Service'
-  ?{icon:'link',label:'访问方式',value:d.spec?.type||'ClusterIP',text:true,hint:d.spec?.externalName||d.spec?.clusterIP||'集群 IP 自动分配',tone:'violet'}
-  :entryCount.value
-  ?{icon:'database',label:'内容体积',value:formatBytes(contentBytes.value),hint:'按 UTF-8 字节估算',tone:'violet'}
-  :{icon:'tags',label:'部署范围',value:d.metadata?.namespace||'集群',text:true,hint:resourceTitle(meta.value),tone:'violet'}
- const status=canSave.value?{icon:'check',text:'已通过预检',hint:'可以保存',tone:'green'}
-  :checked.value?{icon:'warn',text:'需重新预检',hint:'配置已发生变更',tone:'amber'}
-  :dirty.value?{icon:'edit',text:'有未保存修改',hint:'改动尚未提交预检',tone:'blue'}
-  :{icon:'clock',text:'无改动',hint:'等待编辑',tone:'slate'}
- return [first,second,{icon:'tags',label:'元数据',value:labels+annotations,suffix:'项',hint:`${labels} 标签 · ${annotations} 注解`,tone:'teal'},{icon:status.icon,label:'草稿状态',value:status.text,hint:status.hint,tone:status.tone,text:true}]
-})
 let generation=0,leavingAfterSave=false
 const removeGuard=registerUnsavedGuard(async()=>{if(leavingAfterSave)return true;if(busy.value)return false;if(!dirty.value)return true;try{await ElMessageBox.confirm('表单内容尚未保存，确定放弃修改？','未保存的修改',{type:'warning',confirmButtonText:'放弃修改'});draft.value=cloneResource(original.value);baseline.value=JSON.stringify(draft.value);touched.value=false;fieldErrors.value={};checked.value=null;formKey.value++;return true}catch{return false}})
 function touch(){touched.value=true}
@@ -172,6 +125,7 @@ async function load(){
  const initialNamespace=store.namespace==='all'?(namespaces.value[0]||'default'):store.namespace
  target.value={meta:m,clusterId,creating:isCreate,namespace:nsPath(route.params.namespace),name:route.params.name,key:targetKey.value}
  try{
+  if(uiMode.value!=='form'){loading.value=false;if(uiMode.value==='yaml')await router.replace(listPath());return}
   if(!canResource(m,isCreate?'create':'update',isCreate?initialNamespace:route.params.namespace,clusterId)||!isCreate&&m.kind==='Secret'&&!can('secret:read'))return
   const value=isCreate?newResourceDraft(m,initialNamespace):await api.get(m.group,m.version,m.plural,target.value.namespace,target.value.name)
   if(epoch!==generation)return
@@ -320,5 +274,9 @@ onUnmounted(()=>{generation++;removeGuard();window.removeEventListener('beforeun
  .cm-toolbar-copy p{display:none}
 }
 @media(prefers-reduced-motion:reduce){.resource-editor,.configmap-editor{animation:none}}
-.service-editor .editor-hero{background:transparent;border:0;box-shadow:none;border-radius:0;padding:0 0 18px}.service-editor .hero-grid,.service-editor .hero-orb{display:none}.service-editor .hero-icon{width:32px;height:32px;border-radius:0;background:transparent;box-shadow:none;color:#426597;font-size:24px}.service-editor .hero-chips{margin-top:7px}.service-editor .hero-title-text h1{font-size:21px}.service-editor .editor-context{margin-bottom:12px}.service-editor .editor-card{margin-top:0}.service-root-fields{margin-top:18px;padding-top:16px;border-top:1px solid var(--kp-border)}.service-root-fields summary{font-size:13px;cursor:pointer;margin-bottom:14px}.secret-entry-editor :deep(.el-form-item__label){font-weight:600;margin:6px 0 12px}.secret-entry-editor :deep(.kv-file-editor){min-height:280px}
+.resource-editor .editor-hero{background:transparent;border:0;box-shadow:none;border-radius:0;padding:0 0 18px}.resource-editor .hero-grid,.resource-editor .hero-orb{display:none}.resource-editor .hero-icon{width:32px;height:32px;border-radius:0;background:transparent;box-shadow:none;color:#426597;font-size:24px}.resource-editor .hero-chips{margin-top:7px}.resource-editor .hero-title-text h1{font-size:21px}.resource-editor .editor-context{margin-bottom:12px}.resource-editor .editor-card{margin-top:0}.service-root-fields{margin-top:18px;padding-top:16px;border-top:1px solid var(--kp-border)}.service-root-fields summary{font-size:13px;cursor:pointer;margin-bottom:14px}.secret-entry-editor :deep(.el-form-item__label){font-weight:600;margin:6px 0 12px}.secret-entry-editor :deep(.kv-file-editor){min-height:280px}
+.resource-editor{animation:none}.editor-hero{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:16px}.editor-hero h1{font-size:21px;font-weight:600;color:var(--kp-text);margin:0}.hero-resource-name{font-size:16px;font-weight:400;letter-spacing:normal;border:0;padding:0;margin-left:12px}.editor-version{font-size:12px;color:var(--kp-muted)}.editor-context{margin-bottom:10px}.editor-card{border-radius:7px;box-shadow:none}.editor-tabs :deep(.el-tabs__item){background:transparent!important;box-shadow:none!important;border:0!important;border-radius:0!important}.tab-inner svg{display:none}.editor-footer{box-shadow:none;border-radius:7px}.editor-error-icon{display:none}
+</style>
+<style>
+.resource-preview-dialog{display:flex;flex-direction:column;max-height:92vh;max-height:92dvh;margin-bottom:0!important}.resource-preview-dialog .el-dialog__header,.resource-preview-dialog .el-dialog__footer{flex:none}.resource-preview-dialog .el-dialog__body{min-height:0;overflow:auto;flex:1}.resource-preview-dialog .yaml-line-diff{height:min(60vh,580px);height:min(60dvh,580px);min-height:0;max-height:100%}.resource-preview-dialog .el-dialog__footer{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 </style>

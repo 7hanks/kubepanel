@@ -315,6 +315,69 @@ export function yamlTemplate(meta, namespace) {
     PersistentVolumeClaim: {
       spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: '1Gi' } } },
     },
+    PersistentVolume: {
+      spec: {
+        capacity: { storage: '1Gi' },
+        accessModes: ['ReadWriteOnce'],
+        persistentVolumeReclaimPolicy: 'Retain',
+        storageClassName: 'replace-with-storage-class',
+        csi: { driver: 'replace-with-driver.example.com', volumeHandle: 'replace-with-volume-handle' },
+      },
+    },
+    StorageClass: {
+      provisioner: 'replace-with-driver.example.com',
+      parameters: {},
+      reclaimPolicy: 'Retain',
+      volumeBindingMode: 'WaitForFirstConsumer',
+    },
+    Role: { rules: [] },
+    ClusterRole: { rules: [] },
+    RoleBinding: {
+      roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'Role', name: 'replace-with-role' },
+      subjects: [{ kind: 'ServiceAccount', name: 'replace-with-service-account', namespace: ns }],
+    },
+    ClusterRoleBinding: {
+      roleRef: { apiGroup: 'rbac.authorization.k8s.io', kind: 'ClusterRole', name: 'replace-with-cluster-role' },
+      subjects: [{ kind: 'ServiceAccount', name: 'replace-with-service-account', namespace: ns }],
+    },
+    HorizontalPodAutoscaler: {
+      spec: {
+        scaleTargetRef: { apiVersion: 'apps/v1', kind: 'Deployment', name: 'replace-with-workload' },
+        minReplicas: 1,
+        maxReplicas: 3,
+        metrics: [{ type: 'Resource', resource: { name: 'cpu', target: { type: 'Utilization', averageUtilization: 80 } } }],
+      },
+    },
+    LimitRange: {
+      spec: {
+        limits: [{ type: 'Container', default: { cpu: '100m', memory: '128Mi' }, defaultRequest: { cpu: '100m', memory: '128Mi' } }],
+      },
+    },
+    CustomResourceDefinition: {
+      metadata: { name: 'widgets.example.com' },
+      spec: {
+        group: 'example.com',
+        names: { plural: 'widgets', singular: 'widget', kind: 'Widget' },
+        scope: 'Namespaced',
+        versions: [{
+          name: 'v1', served: true, storage: true,
+          schema: { openAPIV3Schema: { type: 'object', properties: { spec: { type: 'object', properties: { message: { type: 'string' } } } } } },
+        }],
+      },
+    },
+    EndpointSlice: {
+      metadata: { name: '', namespace: ns, labels: { 'kubernetes.io/service-name': 'replace-with-service', 'endpointslice.kubernetes.io/managed-by': 'kubepanel.example.com/manual' } },
+      addressType: 'IPv4',
+      ports: [{ name: 'http', protocol: 'TCP', port: 80 }],
+      endpoints: [{ addresses: ['192.0.2.10'], conditions: { ready: true } }],
+    },
+    Endpoints: {
+      subsets: [{ addresses: [{ ip: '192.0.2.10' }], ports: [{ name: 'http', protocol: 'TCP', port: 80 }] }],
+    },
+    NetworkPolicy: {
+      spec: { podSelector: { matchLabels: { app: 'replace-with-app' } }, policyTypes: ['Ingress'], ingress: [] },
+    },
+    ResourceQuota: { spec: { hard: { pods: '10' } } },
     CronJob: {
       spec: {
         schedule: '*/5 * * * *',
@@ -346,5 +409,16 @@ export function yamlTemplate(meta, namespace) {
     // 集群级资源不带 namespace 字段
     delete obj.metadata.namespace
   }
-  return yaml.dump(obj, { noRefs: true, lineWidth: 120 })
+  const hints = {
+    PersistentVolume: '请替换 CSI 驱动、卷标识和存储类为实际配置；回收策略默认为 Retain。',
+    StorageClass: '请替换供给器并按驱动要求填写 parameters；此示例不会设置默认存储类。',
+    HorizontalPodAutoscaler: '请替换工作负载名称；CPU 利用率指标需要目标容器配置 CPU requests。',
+    CustomResourceDefinition: 'example.com / Widget 为示例；metadata.name 必须与 spec.names.plural 和 spec.group 对应。',
+    Endpoints: '请将名称设为对应 Service；192.0.2.10 为文档示例地址，请替换为实际端点 IP 和端口。',
+    EndpointSlice: '请替换 Service 标签、端点 IP 和端口；192.0.2.10 为文档示例地址。',
+    NetworkPolicy: '请替换 Pod 标签；此示例会拒绝匹配 Pod 的全部入站流量，可按需填写 ingress。',
+    ResourceQuota: 'pods: 10 为示例配额，请按命名空间需求调整。',
+    LimitRange: 'CPU 和内存为示例默认值，请按命名空间需求调整。',
+  }
+  return (hints[meta.kind] ? `# ${hints[meta.kind]}\n` : '') + yaml.dump(obj, { noRefs: true, lineWidth: 120 })
 }

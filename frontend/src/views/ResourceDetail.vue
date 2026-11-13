@@ -11,7 +11,7 @@
       <el-button v-if="['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.kind) && can('pod:files:read')" @click="filesVisible=true">文件浏览器</el-button>
       <el-button v-if="scalable && canUpdateRes" @click="doScale">扩缩容</el-button>
       <el-button v-if="restartable && canUpdateRes" @click="doRestart">重启</el-button>
-      <el-button v-if="canUpdateRes" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm">编辑</el-button>
+      <el-button v-if="canUpdateRes&&policy.edit!=='none'" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm">编辑</el-button>
       <el-button v-if="canDeleteRes" type="danger" plain @click="doDelete">删除</el-button>
     </div>
 
@@ -126,10 +126,11 @@
       </el-tab-pane>
     </el-tabs>
 
+    <SimpleResourceDialog v-model="simpleVisible" :meta="meta" :cluster-id="store.currentClusterId" :namespace="ns" :namespaces="store.namespaces" :target="{namespace:apiNs(),name}" @saved="load"/>
     <ContainerFilePicker v-model="filesVisible" :resource="obj" />
     <YamlDialog
       v-model="yamlDialogVisible" :title="`编辑 ${name}`" :content="yamlDialogText"
-      :saving="yamlDialogSaving" :readonly="!canUpdateRes" :preflight="preflightYaml" :target="yamlTarget" submit-label="保存"
+      :saving="yamlDialogSaving" :readonly="policy.yamlReadonly||!canUpdateRes" :preflight="preflightYaml" :target="yamlTarget" submit-label="保存"
       @save="saveYamlDialog"
     />
 
@@ -156,6 +157,8 @@ import { store } from '../store'
 import { relatedPods, createRequestGate, targetDescription } from '../utils/resource'
 import ResourceOperations from '../components/ResourceOperations.vue'
 import ContainerFilePicker from '../components/ContainerFilePicker.vue'
+import SimpleResourceDialog from '../components/SimpleResourceDialog.vue'
+import {resourceUiPolicy} from '../utils/resource-policy'
 import YamlDialog from '../components/YamlDialog.vue'
 import ScaleDialog from '../components/ScaleDialog.vue'
 
@@ -171,6 +174,7 @@ const isDataResource = computed(() => ['Secret', 'ConfigMap'].includes(meta.valu
 const hasSelector = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'Job', 'Service'].includes(meta.value.kind))
 
 const loading = ref(false)
+const policy=computed(()=>resourceUiPolicy(meta.value)),simpleVisible=ref(false)
 const canUpdateRes = computed(() => canResource(meta.value,'update',ns.value))
 const canDeleteRes = computed(() => canResource(meta.value,'delete',ns.value))
 const writable = computed(() => canUpdateRes.value)
@@ -280,7 +284,7 @@ async function preflightYaml(text) {
   return api.update(meta.value.group,meta.value.version,meta.value.plural,apiNs(),name.value,parsed,{dryRun:true})
 }
 
-function editForm() { router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/${encodeURIComponent(apiNs())}/${encodeURIComponent(name.value)}/edit`)) }
+function editForm() { if(policy.value.edit==='none'||!canUpdateRes.value)return;if(policy.value.edit==='simple'){simpleVisible.value=true;return}if(policy.value.edit==='yaml'){editYaml();return}router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/${encodeURIComponent(apiNs())}/${encodeURIComponent(name.value)}/edit`)) }
 
 /** 顶部「编辑 YAML」按钮：打开带导入/下载/全屏的编辑弹窗 */
 function editYaml() {
