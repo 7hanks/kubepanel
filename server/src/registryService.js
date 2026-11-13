@@ -124,8 +124,11 @@ function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000, response
           return reject(new KubeError(502, '仓库返回了 HTML 页面，未收到 Harbor API 响应，请检查 HTTPS / NodePort 地址和反向代理配置'))
         }
         if (response === 'ping') {
-          if (!/^pong$/i.test(body.trim())) return reject(new KubeError(502, 'Harbor ping 响应不合法，请检查仓库地址'))
-          return resolve({ status: res.statusCode, data: body.trim(), headers: res.headers })
+          let pong = body.trim()
+          // Harbor versions may serialize the string as JSON ("Pong") or plain text.
+          try { pong = JSON.parse(pong) } catch { /* plain-text response */ }
+          if (typeof pong !== 'string' || !/^pong$/i.test(pong)) return reject(new KubeError(502, 'Harbor ping 响应不合法，未收到预期的 Pong 内容'))
+          return resolve({ status: res.statusCode, data: pong, headers: res.headers })
         }
         try { resolve({ status: res.statusCode, data: JSON.parse(body), headers: res.headers }) }
         catch (e) { reject(new KubeError(502, 'Harbor 返回的 API 响应不是有效 JSON，请检查仓库地址和反向代理配置')) }

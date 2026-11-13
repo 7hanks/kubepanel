@@ -94,6 +94,35 @@ test('Harbor marks public connectivity without credentials as anonymous', async 
   })
 })
 
+test('Harbor accepts the JSON-encoded Pong returned by the live Harbor API', async () => {
+  await withHarbor((req, res) => {
+    if (req.url !== '/api/v2.0/ping') return
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end('"Pong"\n')
+    return true
+  }, async url => {
+    const r = await registry.addRegistry({ url, username: 'reader', password: 'test-only-password' })
+    const result = await registry.testRegistry(r.id)
+    assert.equal(result.ok, true)
+    assert.equal(result.authenticated, true)
+  })
+})
+
+test('Harbor ping rejects JSON values other than the exact Pong string', async () => {
+  for (const value of [{ message: 'Pong' }, ['Pong'], true, 'Pong extra']) {
+    await withHarbor((req, res) => {
+      if (req.url !== '/api/v2.0/ping') return
+      json(res, value)
+      return true
+    }, async url => {
+      const r = await registry.addRegistry({ url })
+      const result = await registry.testRegistry(r.id)
+      assert.equal(result.ok, false)
+      assert.match(result.message, /ping/)
+    })
+  }
+})
+
 test('Harbor does not browse public data when the saved Basic credentials are invalid', async () => {
   await withHarbor(null, async (url, requests) => {
     const r = await registry.addRegistry({ url, username: 'reader', password: 'wrong-test-password' })
