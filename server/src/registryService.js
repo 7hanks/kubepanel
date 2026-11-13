@@ -72,21 +72,22 @@ export function registryTlsOptions(cfg = {}) {
   return { rejectUnauthorized: cfg.insecure !== true, ...(cfg.ca ? { ca: String(cfg.ca) } : {}) }
 }
 
-/** 通用 Harbor 请求：自签证书场景可关闭校验 */
-function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000 } = {}) {
+/** 通用 Harbor 请求：只接受预期的 API 响应，同源重定向最多跟随 3 次。 */
+function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000, response = 'json' } = {}, redirects = 0, target) {
   return new Promise((resolve, reject) => {
     const base = new URL(cfg.url)
-    const isHttps = base.protocol === 'https:'
+    const url = target || new URL(base.pathname.replace(/\/$/, '') + reqPath, base.origin)
+    const isHttps = url.protocol === 'https:'
     const mod = isHttps ? https : http
     const headers = { Accept: 'application/json', 'User-Agent': 'KubePanel' }
     if (cfg.username) {
       headers.Authorization = 'Basic ' + Buffer.from(`${cfg.username}:${cfg.password || ''}`).toString('base64')
     }
     const req = mod.request({
-      protocol: base.protocol,
-      hostname: base.hostname,
-      port: base.port || (isHttps ? 443 : 80),
-      path: base.pathname.replace(/\/$/, '') + reqPath,
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port || (isHttps ? 443 : 80),
+      path: url.pathname + url.search,
       method,
       headers,
       ...registryTlsOptions(cfg),
@@ -96,20 +97,69 @@ function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000 } = {}) {
       res.on('data', c => chunks.push(c))
       res.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf8')
-        if (res.statusCode === 401 || res.statusCode === 403) {
-          return reject(new KubeError(401, `仓库拒绝访问（${res.statusCode}）：请填写有权限的账号密码`))
+        if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+          let next
+          try { next = new URL(res.headers.location, url) } catch { /* rejected below */ }
+          if (!res.headers.location || !next || !['http:', 'https:'].includes(next.protocol) || next.username || next.password) {
+            return reject(new KubeError(502, 'Harbor 返回了无效的重定向地址，请检查仓库地址'))
+          }
+          // 不把 Basic 凭据转发给另一个 origin，也不允许 HTTPS 降级。
+          if (next.origin !== base.origin) {
+            return reject(new KubeError(502, `仓库地址重定向至 ${next.origin}，请使用正确的 Harbor HTTPS / NodePort 地址`))
+          }
+          if (redirects >= 3) return reject(new KubeError(502, 'Harbor 地址重定向次数过多，请检查仓库地址'))
+          return resolve(harborRequest(cfg, reqPath, { method, timeout, response }, redirects + 1, next))
+        }
+        if (res.statusCode === 401) {
+          return reject(new KubeError(401, 'Harbor 账号密码认证失败（401），请检查账号、密码或机器人密钥', { source: 'harbor', upstreamStatus: 401 }))
+        }
+        if (res.statusCode === 403) {
+          return reject(new KubeError(403, 'Harbor 拒绝访问（403），请检查账号的项目和仓库权限', { source: 'harbor', upstreamStatus: 403 }))
         }
         if (res.statusCode >= 400) {
-          return reject(new KubeError(res.statusCode, `Harbor 返回 ${res.statusCode}：${body.slice(0, 200)}`))
+          return reject(new KubeError(res.statusCode, `Harbor 返回 ${res.statusCode}，请检查仓库地址及访问权限`))
+        }
+        if (res.statusCode < 200 || res.statusCode >= 300) return reject(new KubeError(502, `Harbor 返回了异常响应（${res.statusCode}）`))
+        if (/\btext\/html\b/i.test(res.headers['content-type'] || '') || /^\s*</.test(body)) {
+          return reject(new KubeError(502, '仓库返回了 HTML 页面，未收到 Harbor API 响应，请检查 HTTPS / NodePort 地址和反向代理配置'))
+        }
+        if (response === 'ping') {
+          if (!/^pong$/i.test(body.trim())) return reject(new KubeError(502, 'Harbor ping 响应不合法，请检查仓库地址'))
+          return resolve({ status: res.statusCode, data: body.trim(), headers: res.headers })
         }
         try { resolve({ status: res.statusCode, data: JSON.parse(body), headers: res.headers }) }
-        catch (e) { resolve({ status: res.statusCode, data: body, headers: res.headers }) }
+        catch (e) { reject(new KubeError(502, 'Harbor 返回的 API 响应不是有效 JSON，请检查仓库地址和反向代理配置')) }
       })
     })
     req.on('error', e => reject(new KubeError(502, `连接仓库失败：${e.code || e.message}`)))
     req.on('timeout', () => req.destroy(new Error('timeout')))
     req.end()
   })
+}
+
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+async function verifyHarborAuthentication(rec) {
+  if (!rec.username) return false
+  // /ping、/systeminfo 和公开项目列表均不能证明 Basic 凭据有效。
+  // 此接口要求已认证，且适用于普通用户及 /users/current 不支持的 robot。
+  const { data } = await harborRequest(rec, '/api/v2.0/users/current/permissions')
+  // Harbor 的空权限切片可能序列化为 null。
+  if (data !== null && (!Array.isArray(data) || !data.every(p => isObject(p) && typeof p.resource === 'string' && typeof p.action === 'string'))) {
+    throw new KubeError(502, 'Harbor 认证接口响应不合法，无法验证账号密码，请检查仓库地址')
+  }
+  return true
+}
+
+async function harborList(rec, reqPath) {
+  await verifyHarborAuthentication(rec)
+  const result = await harborRequest(rec, reqPath)
+  if (!Array.isArray(result.data) || !result.data.every(isObject)) {
+    throw new KubeError(502, 'Harbor 列表响应格式不合法，预期为 JSON 数组，请检查仓库地址和反向代理配置')
+  }
+  return result
 }
 
 export function listRegistries() {
@@ -176,15 +226,21 @@ export function removeRegistry(id) {
 export async function testRegistry(id) {
   const rec = getRegistry(id)
   const started = Date.now()
+  const authMode = rec.username ? 'basic' : 'anonymous'
+  let authenticated = false
   try {
-    await harborRequest(rec, '/api/v2.0/ping')
-    const info = await harborRequest(rec, '/api/v2.0/systeminfo').catch(() => ({ data: {} }))
-    const version = info?.data?.harbor_version || info?.data?.registry_url || ''
-    const health = { at: Date.now(), ok: true, ms: Date.now() - started, version, message: '连接正常' }
+    authenticated = await verifyHarborAuthentication(rec)
+    await harborRequest(rec, '/api/v2.0/ping', { response: 'ping' })
+    const info = await harborRequest(rec, '/api/v2.0/systeminfo')
+    if (!isObject(info.data) || !(typeof info.data.harbor_version === 'string' || typeof info.data.registry_url === 'string')) {
+      throw new KubeError(502, 'Harbor 系统信息响应不合法，请检查仓库地址')
+    }
+    const version = info.data.harbor_version || info.data.registry_url || ''
+    const health = { at: Date.now(), ok: true, ms: Date.now() - started, version, authMode, authenticated, message: authenticated ? '连接正常，账号认证通过' : '匿名连接正常，仅可访问公开项目' }
     healthCache.set(id, health)
     return { ok: true, ...health, host: hostOf(rec.url) }
   } catch (e) {
-    const health = { at: Date.now(), ok: false, ms: Date.now() - started, message: e.message }
+    const health = { at: Date.now(), ok: false, ms: Date.now() - started, authMode, authenticated, message: e.message }
     healthCache.set(id, health)
     return { ok: false, ...health }
   }
@@ -204,12 +260,11 @@ function pageResult(items, headers, options, paging) {
 export async function listProjects(id, options) {
   const rec = getRegistry(id)
   const paging = pagination(options)
-  const { data, headers } = await harborRequest(rec, `/api/v2.0/projects?${paging.query}&with_detail=true`)
-  const items = Array.isArray(data) ? data : []
+  const { data: items, headers } = await harborList(rec, `/api/v2.0/projects?${paging.query}&with_detail=true`)
   return pageResult(items.map(p => ({
     name: p.name,
     repoCount: p.repo_count ?? 0,
-    public: !!p.public,
+    public: [true, 'true'].includes(p.metadata?.public ?? p.public),
     createdAt: p.creation_time,
     updatedAt: p.update_time,
     pullCount: p.pull_count ?? 0,
@@ -221,9 +276,8 @@ export async function listRepositories(id, project, options) {
   const rec = getRegistry(id)
   if (!project) throw new KubeError(400, '缺少 project 参数')
   const paging = pagination(options)
-  const { data, headers } = await harborRequest(rec,
+  const { data: items, headers } = await harborList(rec,
     `/api/v2.0/projects/${encodeURIComponent(project)}/repositories?${paging.query}`)
-  const items = Array.isArray(data) ? data : []
   return pageResult(items.map(r => {
     const full = r.name || ''
     const short = full.startsWith(`${project}/`) ? full.slice(project.length + 1) : full
@@ -243,9 +297,8 @@ export async function listArtifacts(id, project, repository, options) {
   if (!project || !repository) throw new KubeError(400, '缺少 project / repository 参数')
   const short = repository.startsWith(`${project}/`) ? repository.slice(project.length + 1) : repository
   const paging = pagination(options, 50)
-  const { data, headers } = await harborRequest(rec,
+  const { data: items, headers } = await harborList(rec,
     `/api/v2.0/projects/${encodeURIComponent(project)}/repositories/${encodeURIComponent(encodeURIComponent(short))}/artifacts?${paging.query}&with_tag=true&with_label=false&with_scan_overview=false`)
-  const items = Array.isArray(data) ? data : []
   const host = hostOf(rec.url)
   return pageResult(items.map(a => ({
     digest: a.digest,

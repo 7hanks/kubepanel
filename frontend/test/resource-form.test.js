@@ -82,3 +82,13 @@ test('Service type and affinity transitions remove incompatible server defaults 
  draft.spec.type='NodePort';draft.spec.ports[0].nodePort=NaN
  assert.throws(()=>form.resourceBody(draft,{meta:m,creating:true}),/节点端口/)
 })
+
+test('storage form submits preserve identities and reject shrinking a bound PVC before dry-run',()=>{
+ const m={kind:'PersistentVolumeClaim',group:'',version:'v1',plural:'persistentvolumeclaims',namespaced:true}
+ const original={apiVersion:'v1',kind:m.kind,metadata:{name:'data',namespace:'team',uid:'p1',resourceVersion:'18'},spec:{accessModes:['ReadWriteOnce'],storageClassName:'',resources:{requests:{storage:'10Gi'}},volumeName:'data-pv'},status:{phase:'Bound'}}
+ const draft=structuredClone(original);draft.spec.resources.requests.storage='20Gi'
+ const body=form.resourceBody(draft,{meta:m,creating:false,original})
+ assert.equal(body.metadata.resourceVersion,'18');assert.equal(body.metadata.uid,'p1');assert.equal(body.status,undefined)
+ assert.equal(body.spec.storageClassName,'');assert.equal(body.spec.volumeName,'data-pv')
+ draft.spec.resources.requests.storage='5Gi';assert.throws(()=>form.resourceBody(draft,{meta:m,creating:false,original}),/容量/)
+})

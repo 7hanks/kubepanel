@@ -13,3 +13,13 @@ test('resource flows distinguish host joins, runtime Pods, simple metadata and a
  assert.equal(resourceUiPolicy({kind:'EndpointSlice',group:'discovery.k8s.io'}).edit,'yaml')
  assert.equal(resourceUiPolicy({kind:'Node',group:'custom.example.com'}).create,'yaml')
 })
+
+test('storage resources expose dedicated forms in their real API groups',()=>{
+ for(const kind of ['PersistentVolumeClaim','PersistentVolume']){
+  assert.equal(resourceUiPolicy({kind,group:''}).create,'form')
+  assert.equal(resourceUiPolicy({kind,group:''}).edit,'form')
+ }
+ assert.equal(resourceUiPolicy({kind:'StorageClass',group:'storage.k8s.io'}).create,'form')
+ assert.equal(resourceUiPolicy({kind:'StorageClass',group:'storage.k8s.io'}).edit,'form')
+ assert.equal(resourceUiPolicy({kind:'StorageClass',group:'custom.example.com'}).edit,'yaml')
+})

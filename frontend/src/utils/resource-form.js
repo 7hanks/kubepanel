@@ -1,6 +1,7 @@
 import { load, dump } from 'js-yaml'
 import { yamlTemplate } from '../config/columns.js'
 import { importYamlDraft } from './yaml-import.js'
+import {STORAGE_KINDS,validateStorageResource} from './storage-form.js'
 
 export const WORKLOAD_KINDS = ['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob']
 export const cloneResource = value => JSON.parse(JSON.stringify(value))
@@ -34,6 +35,8 @@ export function newResourceDraft(meta, namespace) {
     }
   }
   if (meta.kind === 'ConfigMap') resource.data = {}
+  if (meta.kind === 'PersistentVolume') {resource.spec.csi = {driver:'',volumeHandle:''};delete resource.spec.storageClassName}
+  if (meta.kind === 'StorageClass') resource.provisioner = ''
   return resource
 }
 export function rowsToMap(rows) {
@@ -101,6 +104,7 @@ export function resourceBody(draft, {meta, creating, original, validate = true})
     }
   }
   if (validate && WORKLOAD_KINDS.includes(body.kind)) validateWorkload(body)
+  if (validate && STORAGE_KINDS.includes(body.kind) && (['','_core'].includes(meta.group||'') || meta.group==='storage.k8s.io')) validateStorageResource(body,{creating,original})
   if(body.kind==='Service'){
     const type=body.spec?.type||'ClusterIP'
     if((body.spec?.sessionAffinity||'None')==='None'&&body.spec)delete body.spec.sessionAffinityConfig

@@ -22,13 +22,15 @@ http.interceptors.response.use(
     // 登录接口的失败由登录页就地展示（401 即「用户名或密码错误」），
     // 这里既不弹全局提示也不跳转，否则登录页的提示会被静默吞掉
     const isLogin = String(err.config?.url || '').includes('/auth/login')
+    const harborAuthError = err.response?.data?.details?.source === 'harbor' && err.response?.data?.details?.upstreamStatus === 401
+    const sessionExpired = status === 401 && !harborAuthError
     if (axios.isCancel(err)) return Promise.reject({ cancelled: true, message: '请求已取消' })
-    if (status === 401) {
+    if (sessionExpired) {
       for (const key of ['kp_token','kp_authenticated','kp_user','kp_perms','kp_role','kp_role_name','kp_scope']) localStorage.removeItem(key)
       sessionStorage.removeItem('kp_csrf')
     }
     if (!isLogin) {
-      if (status === 401) {
+      if (sessionExpired) {
         if (!location.pathname.startsWith('/login')) location.href = '/login'
       } else if (status !== 404 && !err.config?.silent) {
         ElMessage.error(typeof msg === 'string' ? msg.slice(0, 300) : '请求失败')

@@ -11,6 +11,7 @@ import * as navigationGroups from '../src/utils/navigation-groups.js'
 import { createRequestGate } from '../src/utils/resource.js'
 import { normalizePage } from '../src/utils/pagination.js'
 import { parseScope } from '../src/utils/scope.js'
+import {copyText} from '../src/utils/clipboard.js'
 
 const pages = [
   ['audit', 'Audit', '操作审计', 'audit:list'],
@@ -54,6 +55,7 @@ function view(file, context, inlineTemplate = true) {
     '../utils/resource': { createRequestGate },
     '../utils/pagination': { normalizePage },
     '../utils/scope': { parseScope },
+    '../utils/clipboard': {copyText},
     '../config/resources': { navGroups, metaFromRoute },
     '../utils/resource-ui': { resourceTitle },
     '../layout/PlatformLayout.vue': { default: file.endsWith('PlatformLayout.vue') ? empty : view('layout/PlatformLayout.vue', context).component },
