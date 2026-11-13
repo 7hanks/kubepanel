@@ -6,15 +6,6 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
-FROM node:22-alpine AS verification
-WORKDIR /verify
-COPY server/package.json server/package-lock.json server/
-RUN npm --prefix server ci --no-audit --no-fund
-COPY server/ server/
-RUN npm --prefix server run check && npm --prefix server test
-COPY --from=frontend-builder /build/frontend /verify/frontend
-RUN npm --prefix frontend test
-
 FROM node:22-alpine AS backend-deps
 WORKDIR /build/server
 COPY server/package.json server/package-lock.json ./

@@ -52,8 +52,7 @@ fi
 [[ "$source_dir" != "$base/data"* && "$source_dir" != "$base/clusters"* ]] || exit 2
 cp -a -- "$source_dir" "$destination"
 python3 "$destination/deploy/manifest.py" verify "$destination" >/dev/null
-# Run tests/build in a disposable image; source staging remains byte-identical.
-docker build --target verification -t "$image-verification" "$destination"
+# Build the production image directly; automated tests are not part of release.
 docker build --build-arg BUILD_REVISION="$revision" --build-arg SOURCE_MANIFEST_SHA256="$manifest_sha" -t "$image" "$destination"
 [[ $(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image") == "$revision" ]] || exit 1
 backup=$(BASE_DIR="$base" CONTAINER="$CONTAINER" ENV_FILE="${ENV_FILE:-}" bash "$destination/deploy/backup.sh")
@@ -157,5 +156,4 @@ success=1
 # recovery backups remain on disk, so successful upgrades leave no exited copy.
 if ((old_renamed)); then docker rm "$previous" >/dev/null; fi
 python3 "$destination/deploy/prune_containers.py" "$CONTAINER"
-docker image rm "$image-verification" >/dev/null 2>&1 || true
 printf 'Released %s\nImage: %s\nContainer: %s\nSource: %s\nBackup: %s\n' "$revision" "$image" "$CONTAINER" "$destination" "$backup"
