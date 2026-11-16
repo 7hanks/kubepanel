@@ -326,7 +326,7 @@ async function openDiscover() {
   if (!canCreate.value) return
   resetDiscovery()
   discoverClusterId.value = route.params.clusterId || store.currentClusterId || ''
-  discoverNs.value = store.namespace === 'all' ? '' : (store.namespace || '')
+  discoverNs.value = ''
   discoverVisible.value = true
   const request = discoverRequest
   if (!clusterContext.value) {

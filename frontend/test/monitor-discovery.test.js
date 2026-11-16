@@ -25,9 +25,20 @@ test('Grafana scan uses selected cluster and namespace, and shows partial scan w
   const view = fixture({ discoverGrafanas: async (clusterId, namespace) => { assert.equal(clusterId, 'selected'); assert.equal(namespace, 'team'); return { items: [{ name: 'grafana', namespace: 'team', url: '' }], warnings: ['Ingress 无权读取'] } } })
   try {
     await view.state.openDiscover()
+    assert.equal(view.state.discoverNs.value, '')
+    view.state.discoverNs.value = 'team'
     await view.state.runDiscover()
     assert.equal(view.state.candidates.value.length, 1)
     assert.deepEqual(view.state.discoverWarnings.value, ['Ingress 无权读取'])
+  } finally { view.destroy() }
+})
+
+test('opening Grafana discovery scans all authorized namespaces in the selected cluster by default', async () => {
+  const view = fixture()
+  try {
+    await view.state.openDiscover()
+    await view.state.runDiscover()
+    assert.deepEqual(view.calls, [['selected', '']])
   } finally { view.destroy() }
 })
 

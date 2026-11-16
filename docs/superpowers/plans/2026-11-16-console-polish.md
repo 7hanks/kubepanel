@@ -48,6 +48,6 @@
 
 ### Task 4: Integration and release
 
-- [x] Review combined changes; frontend build/backend syntax checks passed. 23 focused development cases passed, including roles 3/3; release pipeline remains without automatic suites/browser regression.
+- [x] Review combined changes; frontend build/backend syntax checks passed. Focused cases passed: roles 3/3, backend discovery 9/9, frontend discovery 7/7 and existing context 5/5. Default discovery scans all authorized namespaces; release pipeline remains without automatic suites/browser regression.
 - [ ] Use existing manifest/release workflow and retained runtime mounts for deployment.
 - [ ] Verify deployed source version and browser behavior, report concrete evidence.
