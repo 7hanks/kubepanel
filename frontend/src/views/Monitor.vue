@@ -26,6 +26,9 @@
                   Grafana 实例
                   <el-tag disable-transitions size="small" type="info" effect="plain" round>{{ instances.length }} 个</el-tag>
                   <span style="flex:1" />
+                  <el-button link type="primary" size="small" :disabled="!canCreate" @click="openDiscover">
+                    <el-icon><Connection /></el-icon><span style="margin-left:3px">从集群中发现</span>
+                  </el-button>
                   <el-button link type="primary" size="small" :disabled="!canCreate" @click="openCreate">
                     <el-icon><Plus /></el-icon><span style="margin-left:3px">添加</span>
                   </el-button>
@@ -188,6 +191,35 @@
       </el-tabs>
     </main>
 
+    <el-dialog v-model="discoverVisible" title="从集群中发现 Grafana" width="min(760px, 94vw)" :close-on-click-modal="false">
+      <div class="discover-controls">
+        <el-select v-if="!clusterContext" v-model="discoverClusterId" placeholder="选择集群" aria-label="扫描集群" size="small">
+          <el-option v-for="cluster in store.clusters" :key="cluster.id" :value="cluster.id" :label="cluster.name || cluster.id" />
+        </el-select>
+        <span v-else class="kp-muted">当前集群：{{ store.clusters.find(cluster => cluster.id === discoverClusterId)?.name || discoverClusterId }}</span>
+        <el-input v-model="discoverNs" size="small" placeholder="命名空间（留空扫描授权范围）" aria-label="扫描命名空间" clearable />
+        <el-button type="primary" size="small" :loading="discovering" :disabled="!canCreate || !discoverClusterId" @click="runDiscover">开始扫描</el-button>
+      </div>
+      <p class="kp-muted discover-hint">识别 Service 和 Ingress 中的 Grafana 候选；点击「添加」后确认地址并保存。</p>
+      <el-alert v-if="discoverError" :title="discoverError" type="error" :closable="false" show-icon class="discover-notice" />
+      <el-alert v-for="warning in discoverWarnings" :key="warning" :title="warning" type="warning" :closable="false" show-icon class="discover-notice" />
+      <el-table :data="candidates" size="small" max-height="360" v-loading="discovering">
+        <el-table-column prop="name" label="命名空间 / 名称" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="exposure" label="入口" width="105" />
+        <el-table-column label="候选地址" min-width="230">
+          <template #default="{ row }">
+            <div class="kp-mono discover-url">{{ row.url || '需要手动填写外部地址' }}</div>
+            <div class="kp-muted discover-hint">{{ row.hint }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column width="65" align="right">
+          <template #default="{ row }"><el-button link type="primary" size="small" :disabled="!canCreate" @click="useCandidate(row)">添加</el-button></template>
+        </el-table-column>
+        <template #empty><div class="kp-empty">{{ discoverError ? '扫描失败，请查看上方提示' : (discoverScanned ? '未发现 Grafana 候选' : '选择范围后开始扫描') }}</div></template>
+      </el-table>
+      <template #footer><el-button size="small" @click="discoverVisible = false">关闭</el-button></template>
+    </el-dialog>
+
     <!-- 添加 / 编辑 Grafana 实例 -->
     <el-dialog v-model="dialogVisible" :title="editing ? '编辑 Grafana 实例' : '添加 Grafana 实例'"
       width="540px" :close-on-click-modal="false">
@@ -278,6 +310,59 @@ const activeId = ref(localStorage.getItem(ACTIVE_KEY) || '')
 const dialogVisible = ref(false)
 const editing = ref(null) // 正在编辑的实例视图；null = 新建
 const form = reactive({ name: '', environment: '生产', url: '', token: '', enabled: true, clearToken: false, insecure:false,ca:'' })
+const discoverVisible = ref(false), discovering = ref(false), discoverScanned = ref(false)
+const discoverClusterId = ref(''), discoverNs = ref(''), candidates = ref([]), discoverWarnings = ref([]), discoverError = ref('')
+let discoverRequest = 0
+
+function resetDiscovery() {
+  discoverRequest++
+  discovering.value = false
+  discoverScanned.value = false
+  candidates.value = []
+  discoverWarnings.value = []
+  discoverError.value = ''
+}
+async function openDiscover() {
+  if (!canCreate.value) return
+  resetDiscovery()
+  discoverClusterId.value = route.params.clusterId || store.currentClusterId || ''
+  discoverNs.value = store.namespace === 'all' ? '' : (store.namespace || '')
+  discoverVisible.value = true
+  const request = discoverRequest
+  if (!clusterContext.value) {
+    try { await store.loadClusters() } catch (e) {
+      if (!disposed && discoverVisible.value && request === discoverRequest) discoverError.value = e.message || '读取集群失败'
+    }
+  }
+}
+async function runDiscover() {
+  if (!canCreate.value || !discoverClusterId.value || discovering.value) return
+  const request = ++discoverRequest, clusterId = discoverClusterId.value, namespace = discoverNs.value.trim()
+  candidates.value = []
+  discoverWarnings.value = []
+  discoverError.value = ''
+  discoverScanned.value = false
+  discovering.value = true
+  try {
+    const result = await api.discoverGrafanas(clusterId, namespace)
+    if (disposed || !discoverVisible.value || request !== discoverRequest) return
+    candidates.value = result.items || []
+    discoverWarnings.value = result.warnings || []
+    discoverScanned.value = true
+  } catch (e) {
+    if (!disposed && discoverVisible.value && request === discoverRequest) discoverError.value = e.message || '扫描失败'
+  } finally { if (!disposed && request === discoverRequest) discovering.value = false }
+}
+function useCandidate(candidate) {
+  if (!canCreate.value) return
+  discoverVisible.value = false
+  openCreate()
+  form.name = candidate.name || candidate.service || 'Grafana'
+  form.url = candidate.url || ''
+}
+watch([discoverClusterId, discoverNs], resetDiscovery, { flush: 'sync' })
+watch(discoverVisible, visible => { if (!visible) resetDiscovery() }, { flush: 'sync' })
+watch(() => [route.params.clusterId, store.currentClusterId], () => { discoverVisible.value = false })
 
 // 按环境分组；常见环境在前，其余按拼音排序
 const groups = computed(() => {
@@ -613,4 +698,11 @@ onUnmounted(()=>{disposed=true;metricsRequest++;dashboardRequest++;window.remove
 .bar-text { font-size: 11px; color: var(--kp-muted); width: 104px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .unit { font-size: 12px; color: var(--kp-muted); margin-left: 2px; font-weight: 400; }
 .dlg-footer { display: flex; align-items: center; gap: 8px; }
+.discover-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.discover-controls .el-select { width: 180px; }
+.discover-controls .el-input { flex: 1; min-width: 210px; }
+.discover-hint { margin: 5px 0 12px; font-size: 11.5px; line-height: 1.5; }
+.discover-notice { margin-bottom: 10px; }
+.discover-url { overflow-wrap: anywhere; font-size: 12px; }
+.discover-url + .discover-hint { margin: 4px 0 0; }
 </style>

@@ -68,9 +68,6 @@
             <el-option label="全部命名空间" value="all" />
             <el-option v-for="ns in store.namespaces" :key="ns" :label="ns" :value="ns" />
           </el-select>
-          <el-tooltip content="刷新当前数据" placement="bottom">
-            <el-button size="small" circle text :loading="reloading" aria-label="刷新当前数据" @click="reload"><el-icon><Refresh /></el-icon></el-button>
-          </el-tooltip>
           <el-tooltip content="关于" placement="bottom">
             <el-button size="small" circle text aria-label="关于" @click="onCommand('about')"><el-icon><QuestionFilled /></el-icon></el-button>
           </el-tooltip>
@@ -114,7 +111,7 @@ import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, OfficeBuilding, Refresh, QuestionFilled, UserFilled, ArrowDown,
+  Search, OfficeBuilding, QuestionFilled, UserFilled, ArrowDown,
 } from '@element-plus/icons-vue'
 import { store } from '../store'
 import {resourceTitle} from '../utils/resource-ui'
@@ -132,7 +129,6 @@ import {
 
 const route = useRoute()
 const router = useRouter()
-const reloading = ref(false)
 const menuFilter = ref('')
 const groupExpansionKey = 'kp_nav_groups_v1'
 const groupExpansion = ref(parseNavigationExpansion(localStorage.getItem(groupExpansionKey)))
@@ -213,11 +209,9 @@ function afterPasswordChanged() {
 }
 
 async function reload() {
-  reloading.value = true
   window.dispatchEvent(new Event('kp:refresh'))
   try { await store.init(true); ElMessage.success('集群信息已刷新') }
   catch (e) { /* store.error 已展示 */ }
-  finally { reloading.value = false }
 }
 
 async function onCommand(cmd) {

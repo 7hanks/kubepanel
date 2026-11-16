@@ -65,7 +65,9 @@
                 {{ healthLabel(row.health) }}
               </el-tag>
               <span v-else class="kp-muted">未测试</span>
-              <div v-if="row.health?.message" class="health-message" :class="{ 'kp-danger': !row.health.ok }">{{ row.health.message }}</div>
+              <el-tooltip v-if="row.health?.message && !row.health.ok" :content="row.health.message" placement="top" :show-after="200">
+                <el-button link type="danger" size="small" class="health-detail">查看原因</el-button>
+              </el-tooltip>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="220" fixed="right" align="right">
@@ -506,7 +508,7 @@ onMounted(load)
 .registry-list-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 14px 16px; font-size: 14px; border-bottom: 1px solid var(--kp-border); }
 .registry-list-head > .kp-muted { flex: 1; font-size: 13px; }
 .registry-name, .repository-name { max-width: 100%; height: auto; white-space: normal; text-align: left; overflow-wrap: anywhere; line-height: 1.6; font-weight: 600; }
-.health-message { margin-top: 4px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.health-detail { margin-left: 8px; }
 .registry-alert { margin-bottom: 14px; }
 .registry-browser { font-size: 14px; line-height: 1.6; }
 .registry-browser :deep(.el-table), .registry-browser :deep(.el-button), .registry-browser :deep(.el-tag), .registry-browser :deep(.el-select__placeholder) { font-size: 14px; }

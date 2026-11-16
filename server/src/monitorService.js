@@ -6,6 +6,7 @@ import https from 'node:https'
 import { config } from './config.js'
 import { sealSecret, openSecret } from './secretStore.js'
 import { kubeRequest, KubeError } from './kube.js'
+export { discoverGrafanas } from './grafanaDiscovery.js'
 
 /**
  * 监控：对接多个外部 Grafana 实例（按环境分组管理），并提供不依赖 Grafana 的内置指标。

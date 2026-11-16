@@ -6,12 +6,19 @@
 
     <main class="plat-main" :class="{ 'platform-embedded-main': embedded }">
       <div class="page-head">
-        <div>
+        <div class="page-title">
           <h1>角色</h1>
-          <p class="kp-muted">
-            角色由「对象 × 动作」的权限组合而成：创建角色时勾选它允许访问的对象和能执行的操作，
-            再到「用户」页面把角色分配给账号。内置 admin 始终拥有全部权限，不在此列表中。
-          </p>
+          <el-popover trigger="click" placement="bottom-start" :width="360" :popper-style="{ maxWidth: 'calc(100vw - 32px)' }">
+            <template #reference>
+              <el-button class="help-button" text circle :icon="QuestionFilled" aria-label="角色使用说明" />
+            </template>
+            <div class="role-help">
+              <strong>角色使用说明</strong>
+              <p>勾选角色允许访问的对象和操作，再到「用户」页面分配给账号。内置 admin 拥有全部权限，不在此列表中。</p>
+              <p>「列表 / 详情」为只读权限；「创建 / 编辑 / 删除」为写权限。服务端会拒绝只读账号的写请求（403）。</p>
+              <p>权限变更在账号下次请求时立即生效；仍有账号使用的角色不能删除。</p>
+            </div>
+          </el-popover>
         </div>
         <div style="display:flex;gap:8px">
           <el-button v-if="embedded" :loading="loading" :icon="Refresh" @click="load">刷新</el-button>
@@ -20,37 +27,67 @@
       </div>
 
       <div class="kp-card" style="padding:0;margin-bottom:16px">
-        <el-table :data="roles" v-loading="loading" size="small" style="width:100%">
-          <el-table-column label="名称" min-width="180">
+        <el-table :data="displayRoles" v-loading="loading" size="small" class="roles-table" style="width:100%">
+          <el-table-column label="角色" min-width="210">
             <template #default="{ row }">
-              <div style="display:flex;align-items:center;gap:6px">
+              <div class="role-name" :title="`角色 ID：${row.id}`">
                 <strong style="font-weight:600">{{ row.name }}</strong>
-                <el-tag disable-transitions v-if="row.builtin" size="small" type="info" effect="plain">预置</el-tag>
+                <span v-if="row.builtin" class="builtin-label">预置</span>
               </div>
-              <div class="kp-mono kp-muted" style="font-size:11px;margin-top:2px">{{ row.id }}</div>
+              <div v-if="row.description" class="role-description kp-muted" :title="row.description">{{ row.description }}</div>
             </template>
           </el-table-column>
-          <el-table-column prop="description" label="描述" min-width="200">
+          <el-table-column label="权限" min-width="290">
             <template #default="{ row }">
-              <span class="kp-muted">{{ row.description || '—' }}</span>
+              <span v-if="!row.groups.length" class="kp-muted">无权限</span>
+              <el-popover v-else trigger="click" placement="bottom-start" :width="400" :popper-style="{ maxWidth: 'calc(100vw - 32px)' }">
+                <template #reference>
+                  <button type="button" class="summary-button permission-summary" :aria-label="`查看${row.name}的权限明细`">
+                    <span v-for="group in row.groups" :key="group.key" class="permission-group-summary">
+                      {{ group.label }}<span class="summary-separator">·</span>{{ group.access ? accessLabels[group.access] : `${group.permissions.length} 项` }}
+                    </span>
+                    <el-icon class="summary-chevron"><ArrowDown /></el-icon>
+                  </button>
+                </template>
+                <div class="permission-details">
+                  <div class="detail-heading">权限明细<span class="kp-muted">{{ row.permissions.length }} 项</span></div>
+                  <section v-for="group in row.groups" :key="group.key" class="permission-detail-group">
+                    <strong>{{ group.label }}</strong>
+                    <div v-for="permission in group.permissions" :key="permission.key" class="permission-detail-item">
+                      <span>{{ permission.label }}</span><code>{{ permission.key }}</code>
+                    </div>
+                  </section>
+                </div>
+              </el-popover>
             </template>
           </el-table-column>
-          <el-table-column label="权限范围" min-width="360">
+          <el-table-column label="作用范围" min-width="240">
             <template #default="{ row }">
-              <span v-if="!row.permissions.length" class="kp-muted">无任何权限</span>
-              <el-tag
-                v-for="p in row.permissionLabels" :key="p" size="small" effect="plain"
-                style="margin:2px 4px 2px 0"
-              >{{ p }}</el-tag>
+              <el-popover trigger="click" placement="bottom-start" :width="360" :popper-style="{ maxWidth: 'calc(100vw - 32px)' }">
+                <template #reference>
+                  <button type="button" class="summary-button scope-summary" :aria-label="`查看${row.name}的作用范围`">
+                    <span>{{ row.scopeSummary.map(field => field.summary).join(' / ') }}</span>
+                    <el-icon class="summary-chevron"><ArrowDown /></el-icon>
+                  </button>
+                </template>
+                <div class="scope-details">
+                  <div class="detail-heading">作用范围</div>
+                  <section v-for="field in row.scopeSummary" :key="field.key" class="scope-detail-field">
+                    <strong>{{ field.label }}</strong>
+                    <span v-if="field.unrestricted" class="kp-muted">{{ field.summary }}</span>
+                    <span v-else-if="!field.values.length" class="kp-muted">无授权</span>
+                    <code v-else v-for="value in field.values" :key="value">{{ value }}</code>
+                  </section>
+                </div>
+              </el-popover>
             </template>
           </el-table-column>
-          <el-table-column label="作用范围" min-width="230"><template #default="{row}"><div v-for="f in scopeFields" :key="f.key">{{f.label}}：{{(row.scope?.[f.key] ?? ['*']).join(', ') || '无授权'}}</div></template></el-table-column>
-          <el-table-column label="账号数" width="90" align="center">
+          <el-table-column label="账号" width="70" align="center">
             <template #default="{ row }">
               <span :class="row.userCount ? '' : 'kp-muted'">{{ row.userCount || 0 }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="180" align="right" fixed="right">
+          <el-table-column label="操作" width="160" align="right" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" :disabled="!canUpdateRole" @click="openEdit(row)">编辑</el-button>
               <el-button link type="primary" size="small" :disabled="!canCreateRole" @click="openCopy(row)">复制</el-button>
@@ -64,11 +101,6 @@
           </template>
         </el-table>
       </div>
-
-      <p class="kp-muted" style="font-size:12px;line-height:1.7">
-        「列表 / 详情」为只读权限；「创建 / 编辑 / 删除」为写权限，只读账号发出的写请求会被服务端拒绝（403）。
-        修改角色权限后，已绑定的账号在下次请求时立即生效；仍有账号在用的角色不能删除。
-      </p>
 
       <!-- 创建 / 编辑 -->
       <el-dialog
@@ -133,11 +165,12 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Refresh } from '@element-plus/icons-vue'
+import { Plus, Refresh, QuestionFilled, ArrowDown } from '@element-plus/icons-vue'
 import PlatformLayout from '../layout/PlatformLayout.vue'
 import api from '../api'
 import {parseScope} from '../utils/scope'
 import { canCreate, canUpdate, canDelete } from '../utils/perm'
+import { permissionGroups, scopeSummary } from '../utils/roleSummary'
 
 defineProps({ embedded: { type: Boolean, default: false } })
 
@@ -147,6 +180,12 @@ const roles = ref([])
 const objects = ref([])
 const actions = ref([])
 const sensitivePermissions=ref([])
+const accessLabels = { read: '只读', manage: '管理', custom: '自定义' }
+const displayRoles = computed(() => roles.value.map(role => ({
+  ...role,
+  groups: permissionGroups(role.permissions, objects.value, actions.value, sensitivePermissions.value),
+  scopeSummary: scopeSummary(role.scope),
+})))
 const scopeFields=[{key:'clusters',label:'集群',hint:'填集群 ID，或 *。'},{key:'namespaces',label:'命名空间',hint:'受限命名空间角色不能读取集群级资源。'},{key:'resources',label:'资源',hint:'使用 group/plural，例如 _core/pods、apps/deployments，或 *。'}]
 const scopeOf=row=>Object.fromEntries(scopeFields.map(f=>[f.key,[...(row?.scope?.[f.key] ?? ['*'])]]))
 
@@ -329,9 +368,34 @@ onMounted(load)
 <style scoped>
 .plat-main { max-width: 1280px; margin: 0 auto; padding: 24px 22px 48px; }
 .plat-main.platform-embedded-main { max-width: none; margin: 0; padding: 0; }
-.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
 .page-head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
-.page-head p { margin: 6px 0 0; font-size: 12px; max-width: 760px; line-height: 1.6; }
+.page-title { display: flex; align-items: center; gap: 7px; }
+.help-button { color: #98a2b3; }
+.role-help { font-size: 12px; line-height: 1.7; }
+.role-help p { margin: 8px 0 0; }
+.roles-table :deep(.el-table__cell) { padding: 15px 0; }
+.role-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.role-name strong { overflow-wrap: anywhere; }
+.builtin-label { flex: none; font-size: 11px; color: #98a2b3; }
+.role-description { margin-top: 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-button { border: 0; background: transparent; font: inherit; color: #475467; text-align: left; padding: 3px 0; cursor: pointer; line-height: 1.8; }
+.summary-button:hover { color: var(--el-color-primary); }
+.summary-button:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 3px; border-radius: 3px; }
+.permission-summary { display: flex; align-items: center; gap: 3px 12px; flex-wrap: wrap; }
+.permission-group-summary { white-space: nowrap; }
+.summary-separator { padding: 0 4px; color: #b0b8c4; }
+.summary-chevron { flex: none; font-size: 10px; color: #98a2b3; }
+.scope-summary { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; }
+.permission-details, .scope-details { max-height: min(480px, 65vh); overflow-y: auto; font-size: 12px; }
+.detail-heading { display: flex; align-items: center; gap: 8px; color: #344054; font-weight: 600; padding-bottom: 10px; }
+.detail-heading .kp-muted { font-weight: 400; }
+.permission-detail-group + .permission-detail-group { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eef1f5; }
+.permission-detail-group > strong, .scope-detail-field > strong { display: block; margin-bottom: 5px; font-weight: 600; color: #475467; }
+.permission-detail-item { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 3px 0; }
+.permission-detail-item code, .scope-detail-field code { color: #7b8493; font-size: 11px; overflow-wrap: anywhere; }
+.scope-detail-field + .scope-detail-field { margin-top: 14px; }
+.scope-detail-field code { display: block; line-height: 1.8; }
 .perm-box { width: 100%; }
 .perm-box :deep(.el-table .cell) { padding: 0 6px; }
 .hint { font-size: 11.5px; line-height: 1.4; margin-top: 1px; }

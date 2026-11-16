@@ -139,6 +139,7 @@ export const api = {
   updateMonitor: (id, body) => http.patch(`/v1/monitor/${encodeURIComponent(id)}`, body),
   removeMonitor: id => http.delete(`/v1/monitor/${encodeURIComponent(id)}`),
   testMonitor: body => http.post('/v1/monitor/test', body),
+  discoverGrafanas: (clusterId, namespace) => http.post('/v1/monitor/discover', { clusterId, namespace }, { params: { clusterId }, silent: true }),
   dashboards: id => http.get('/v1/monitor/dashboards', { params: id ? { id } : {} }),
 }
 

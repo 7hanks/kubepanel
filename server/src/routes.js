@@ -16,7 +16,7 @@ import {
   listRegistries, addRegistry, updateRegistry, removeRegistry, testRegistry,
   listProjects, listRepositories, listArtifacts, discoverRegistries,
 } from './registryService.js'
-import { monitorView, createMonitor, updateMonitor, deleteMonitor, testMonitor, listDashboards, parseCpu, parseMem, fmtCpu, fmtBytes } from './monitorService.js'
+import { monitorView, createMonitor, updateMonitor, deleteMonitor, testMonitor, listDashboards, discoverGrafanas, parseCpu, parseMem, fmtCpu, fmtBytes } from './monitorService.js'
 import { can, canAny, OBJECTS, ACTIONS, PERMISSIONS, PERMISSION_LABEL, SENSITIVE_PERMISSIONS } from './permissions.js'
 import { assertResourceAccess, assertClusterAccess, resourceAllowed } from './access.js'
 import { scopedList } from './resourceScope.js'
@@ -261,6 +261,10 @@ router.post('/v1/monitor', requirePerm('monitor:create'), wrap(async (req, res) 
 }))
 router.post('/v1/monitor/test', requirePerm('monitor:update', 'monitor:create'), wrap(async (req, res) => {
   res.json(await testMonitor(req.body || {}))
+}))
+router.post('/v1/monitor/discover', requirePerm('monitor:create'), wrap(async (req, res) => {
+  const { clusterId, namespace } = req.body || {}
+  res.json(await discoverGrafanas(clusterId, namespace, { account: req.account }))
 }))
 router.patch('/v1/monitor/:id', requirePerm('monitor:update'), wrap(async (req, res) => {
   res.json(updateMonitor(req.params.id, req.body || {}))

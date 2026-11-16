@@ -3,78 +3,67 @@
     <aside class="login-visual">
       <div class="login-brand"><span class="mark">K</span><span>KubePanel</span></div>
       <div class="login-headline">
-        <h1>Kubernetes<br />多集群管理</h1>
-        <p>统一查看集群状态、排查工作负载、编辑资源与常用运维操作。</p>
+        <h1>多集群，<br />尽在掌握<span>。</span></h1>
       </div>
       <div class="login-art" aria-hidden="true">
-        <svg viewBox="0 0 560 460" xmlns="http://www.w3.org/2000/svg">
+        <svg viewBox="0 0 640 440" fill="none" xmlns="http://www.w3.org/2000/svg">
           <defs>
-            <linearGradient id="lwRing" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#93c5fd" /><stop offset="52%" stop-color="#60a5fa" /><stop offset="100%" stop-color="#6366f1" />
+            <linearGradient id="cluster-top" x1="0" y1="0" x2="1" y2="1">
+              <stop stop-color="#fff" /><stop offset="1" stop-color="#e7effc" />
             </linearGradient>
-            <linearGradient id="lwBadge" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stop-color="#3b82f6" /><stop offset="100%" stop-color="#4f46e5" />
+            <linearGradient id="cluster-blue" x1="0" y1="0" x2="1" y2="1">
+              <stop stop-color="#5188f8" /><stop offset="1" stop-color="#2563eb" />
             </linearGradient>
-            <radialGradient id="lwGlow" cx="50%" cy="48%" r="52%">
-              <stop offset="0%" stop-color="#dbeafe" stop-opacity=".9" />
-              <stop offset="100%" stop-color="#dbeafe" stop-opacity="0" />
-            </radialGradient>
-            <radialGradient id="lwNodeGlow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stop-color="#bfdbfe" stop-opacity=".9" />
-              <stop offset="100%" stop-color="#bfdbfe" stop-opacity="0" />
-            </radialGradient>
+            <filter id="cluster-shadow" x="-50%" y="-50%" width="200%" height="230%">
+              <feDropShadow dx="0" dy="14" stdDeviation="13" flood-color="#6b8ec7" flood-opacity=".13" />
+            </filter>
+            <g id="cluster-server">
+              <path d="M0 21 66-17 132 21v23L66 82 0 44Z" fill="#dae6f8" stroke="#b8cdec" />
+              <path d="m0 21 66 38 66-38M66 59v23" stroke="#b8cdec" />
+              <path d="m0 21 66-38 66 38-66 38Z" fill="url(#cluster-top)" stroke="#c2d3ec" stroke-linejoin="round" />
+              <path d="M0-11 66-49l66 38v23L66 50 0 12Z" fill="#e4edfa" stroke="#b8cdec" />
+              <path d="m0-11 66 38 66-38M66 27v23" stroke="#b8cdec" />
+              <path d="m0-11 66-38 66 38-66 38Z" fill="url(#cluster-top)" stroke="#c2d3ec" stroke-linejoin="round" />
+              <path d="m43-11 23-13 23 13-23 13Z" fill="#d4e3fc" stroke="#9ebff8" stroke-linejoin="round" />
+              <path d="m12 8 20 12m-20 21 20 12" stroke="#a5bce0" stroke-width="3" stroke-linecap="round" />
+              <circle cx="116" cy="10" r="3" fill="#38bda3" />
+              <circle cx="116" cy="42" r="3" fill="#38bda3" />
+            </g>
           </defs>
-
-          <ellipse cx="280" cy="222" rx="238" ry="204" fill="url(#lwGlow)" />
-
-          <!-- 外圈刻度环 -->
-          <circle cx="280" cy="222" r="186" fill="none" stroke="#dbe7fb" stroke-width="1.2" stroke-dasharray="2 10" />
-
-          <!-- 六边形主体（集群拓扑） -->
-          <path d="M280 76 L406 148 L406 296 L280 368 L154 296 L154 148 Z"
-                fill="rgba(255,255,255,.46)" stroke="url(#lwRing)" stroke-width="2.2" stroke-linejoin="round" />
-
-          <!-- 中心到各节点的辐条 -->
-          <g stroke="#c3d8fa" stroke-width="1.5" opacity=".95">
-            <path d="M280 222 L280 76" /><path d="M280 222 L406 148" /><path d="M280 222 L406 296" />
-            <path d="M280 222 L280 368" /><path d="M280 222 L154 296" /><path d="M280 222 L154 148" />
+          <path d="M36 247 310 88l294 170-274 159Z" fill="#edf3fc" />
+          <g stroke="#dce6f4" stroke-dasharray="3 7">
+            <path d="m86 276 274-159M140 307l274-159M194 338l274-159M248 369l274-159" />
+            <path d="m91 215 294 170M146 183l294 170M201 151l294 170M256 119l294 170" />
           </g>
-
-          <!-- 节点外光晕 -->
-          <g fill="url(#lwNodeGlow)">
-            <circle cx="280" cy="76" r="30" /><circle cx="406" cy="148" r="30" /><circle cx="406" cy="296" r="30" />
-            <circle cx="280" cy="368" r="30" /><circle cx="154" cy="296" r="30" /><circle cx="154" cy="148" r="30" />
+          <g stroke="#8aaff1" stroke-width="2" stroke-linejoin="round">
+            <path d="m157 234 156 90 170-98" />
+            <path d="m313 324 1-121 105-61" />
+            <path d="m157 234 157-91 169 98" stroke-dasharray="5 7" opacity=".55" />
           </g>
-
-          <!-- 节点 -->
-          <g fill="#fff" stroke="url(#lwRing)" stroke-width="2.4">
-            <circle cx="280" cy="76" r="14" /><circle cx="406" cy="148" r="14" /><circle cx="406" cy="296" r="14" />
-            <circle cx="280" cy="368" r="14" /><circle cx="154" cy="296" r="14" /><circle cx="154" cy="148" r="14" />
+          <g fill="#fff" stroke="#8aaff1" stroke-width="2">
+            <ellipse cx="313" cy="324" rx="7" ry="4" />
+            <ellipse cx="252" cy="289" rx="5" ry="3" />
+            <ellipse cx="381" cy="285" rx="5" ry="3" />
           </g>
-          <g>
-            <circle cx="280" cy="76" r="5.5" fill="#34d399" />
-            <circle cx="406" cy="296" r="5.5" fill="#60a5fa" />
-            <circle cx="154" cy="148" r="5.5" fill="#818cf8" />
-            <circle cx="280" cy="368" r="5.5" fill="#38bdf8" opacity=".9" />
+          <g filter="url(#cluster-shadow)">
+            <use href="#cluster-server" x="91" y="167" />
+            <use href="#cluster-server" x="353" y="75" />
+            <use href="#cluster-server" x="417" y="223" />
           </g>
-
-          <!-- 中心徽章 -->
-          <g>
-            <rect x="246" y="188" width="68" height="68" rx="20" fill="url(#lwBadge)" />
-            <rect x="246" y="188" width="68" height="68" rx="20" fill="none" stroke="#ffffff" stroke-opacity=".5" stroke-width="1.4" />
-            <path d="M280 207 L293 214.5 L293 229.5 L280 237 L267 229.5 L267 214.5 Z"
-                  fill="none" stroke="#fff" stroke-width="2.6" stroke-linejoin="round" />
+          <g filter="url(#cluster-shadow)">
+            <path d="m262 161 52-30 52 30v46l-52 30-52-30Z" fill="#2563eb" />
+            <path d="m262 161 52 30 52-30-52-30Z" fill="url(#cluster-blue)" stroke="#76a2fb" />
+            <path d="M314 191v46" stroke="#79a4ff" />
+            <g stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m294 161 20-12 20 12-20 12Z" />
+              <path d="m314 149v-7m20 19 7 4m-27 8v7m-20-19-7 4" />
+            </g>
           </g>
-
-          <!-- 点缀 -->
-          <g fill="#93c5fd">
-            <circle cx="212" cy="112" r="2.6" opacity=".8" />
-            <circle cx="462" cy="206" r="2.6" opacity=".7" />
-            <circle cx="352" cy="392" r="2.6" opacity=".7" />
+          <g fill="#c6d7f2">
+            <circle cx="129" cy="102" r="4" /><circle cx="529" cy="152" r="4" /><circle cx="220" cy="361" r="4" />
           </g>
         </svg>
       </div>
-      <div class="login-note">轻量 · 单镜像 · 非 root 运行</div>
     </aside>
 
     <main class="login-main">

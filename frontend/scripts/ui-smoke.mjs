@@ -241,7 +241,7 @@ try{
  await page.locator('.diagnostics-panel>summary').click();assert.equal(await page.locator('.diagnostics-panel').evaluate(el=>el.open),false)
  await page.locator('.diagnostics-panel>summary').click()
  assert.equal(await page.getByRole('button',{name:'刷新',exact:true}).count(),0)
- assert.equal(await page.getByRole('button',{name:'刷新当前数据',exact:true}).count(),1)
+ assert.equal(await page.getByRole('button',{name:'刷新当前数据',exact:true}).count(),0)
  assert.equal(await page.locator('.plat-layout').count(),0)
  await page.screenshot({path:'.local/frontend-qa/overview-metrics.png',fullPage:true,animations:'disabled'})
  const clusterGroup=page.getByRole('navigation',{name:'控制台导航'}).getByRole('button',{name:'集群管理',exact:true})
@@ -271,7 +271,7 @@ try{
  await page.getByRole('button',{name:'测试集群',exact:true}).click()
  await page.getByRole('button',{name:'重新连接',exact:true}).waitFor()
  failCluster=false
- await page.getByRole('button',{name:'刷新当前数据',exact:true}).click()
+ await page.getByRole('button',{name:'重新连接',exact:true}).click()
  await page.getByLabel('当前集群关键指标',{exact:true}).waitFor()
  const platform=page.getByRole('navigation',{name:'控制台导航'}).getByRole('button',{name:'平台',exact:true})
  await platform.click()
