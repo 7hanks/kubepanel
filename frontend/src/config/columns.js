@@ -203,7 +203,6 @@ const KIND_COLS = {
   Deployment: [
     { key: 'replicas', label: '副本 (就绪/期望)', width: 150 },
     { key: 'status', label: '状态', width: 125, tag: true },
-    { key: 'images', label: '镜像', minWidth: 210 },
   ],
   StatefulSet: [{ key: 'replicas', label: '副本', width: 110 }, { key: 'status', label: '状态', width: 125, tag: true }, { key: 'images', label: '镜像', minWidth: 200 }],
   ReplicaSet: [{ key: 'replicas', label: '副本', width: 110 }, { key: 'status', label: '状态', width: 125, tag: true }],
@@ -259,7 +258,7 @@ const KIND_COLS = {
 
 export function columnsFor(kind, namespaced) {
   const mid = KIND_COLS[kind] || [{ key: 'status', label: '状态', width: 130, tag: true }]
-  return [NAME, ...(namespaced&&kind!=='Pod' ? [NS] : []), ...mid, AGE]
+  return [NAME, ...(namespaced ? [NS] : []), ...mid, AGE]
 }
 
 // ---------- 新建资源 YAML 模板 ----------

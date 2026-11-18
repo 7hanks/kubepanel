@@ -65,7 +65,7 @@
           :width="col.width" :min-width="col.minWidth" :class-name="col.key==='ports'&&meta.kind==='Service'?'resource-ports-column':''" sortable="custom" :show-overflow-tooltip="col.key!=='ports'&&col.key!=='images'"
         >
           <template #default="{ row }">
-            <div v-if="col.link" class="resource-name-cell"><router-link :to="detailPath(row)">{{ row[col.key] }}</router-link><span v-if="meta.kind==='Pod'&&store.namespace==='all'" class="resource-namespace-pill">{{row.namespace}}</span></div>
+            <div v-if="col.link" class="resource-name-cell"><router-link :to="detailPath(row)">{{ row[col.key] }}</router-link></div>
             <el-tag v-else-if="meta.kind==='Service'&&col.key==='type'" :type="row.type==='NodePort'?'success':row.type==='LoadBalancer'?'warning':row.type==='ExternalName'?'info':'primary'" effect="light" size="small" class="service-type-tag">{{row.type}}</el-tag>
             <div v-else-if="meta.kind==='Service'&&col.key==='ports'" class="resource-port-chips"><span v-for="(port,index) in row._raw?.spec?.ports||[]" :key="index">{{servicePortLabel(port)}}</span></div>
             <div v-else-if="col.key==='images'" class="resource-image-cell"><span v-for="(name,index) in String(row.images||'—').split(', ')" :key="index">{{name}}</span></div>
@@ -92,6 +92,7 @@
                     <el-dropdown-item v-if="meta.kind==='Pod'&&can('pod:logs')" command="logs">日志</el-dropdown-item>
                     <el-dropdown-item v-if="meta.kind==='Pod'&&can('pod:exec')" command="terminal">终端</el-dropdown-item>
                     <el-dropdown-item v-if="fileSupported&&can('pod:files:read')" command="files">文件浏览器</el-dropdown-item>
+                    <el-dropdown-item v-if="deploymentImages" command="updateImages" :disabled="!canUpdateImages(row)">调整镜像版本</el-dropdown-item>
                     <el-dropdown-item v-if="scalable" command="scale" :disabled="!canUpdateRes">扩缩容</el-dropdown-item>
                     <el-dropdown-item v-if="restartable" command="restart" :disabled="!canUpdateRes">重启工作负载</el-dropdown-item>
                     <el-dropdown-item v-if="meta.kind === 'Node'" command="cordon" :disabled="!can('node:maintain') || !canUpdateRes">
@@ -122,6 +123,8 @@
 
     <SimpleResourceDialog v-model="simpleVisible" :meta="meta" :cluster-id="store.currentClusterId" :namespace="store.namespace==='all'?(store.namespaces[0]||'default'):store.namespace" :namespaces="store.namespaces" :target="simpleTarget" @saved="load"/>
     <PodScaleDialog v-model="podScaleVisible" :target="podScaleTarget" :context-key="bulkContextKey" @saved="load"/>
+    <DeploymentImageDialog v-if="imageTarget" :target="imageTarget" :context-key="bulkContextKey"
+      @close="imageTarget=null" @saved="imageTarget=null; load()" />
     <ContainerFilePicker v-model="filesVisible" :resource="filesResource" />
     <BulkPodRestartDialog v-model="bulkRestartVisible" :targets="bulkRestartTargets" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :context-key="bulkContextKey" :can-restart="canRestartTarget" @submitted="load" />
     </div>
@@ -162,6 +165,7 @@ import {MAX_BULK_POD_RESTART} from '../utils/bulk-pod-restart'
 import SimpleResourceDialog from '../components/SimpleResourceDialog.vue'
 import {resourceUiPolicy} from '../utils/resource-policy'
 import PodScaleDialog from '../components/PodScaleDialog.vue'
+import DeploymentImageDialog from '../components/DeploymentImageDialog.vue'
 import {resourceTitle,filterResourceRows,servicePortLabel,podScaleAvailability} from '../utils/resource-ui'
 
 const route = useRoute()
@@ -171,6 +175,19 @@ const policy=computed(()=>resourceUiPolicy(meta.value)),simpleVisible=ref(false)
 const columns = computed(() => columnsFor(meta.value.kind, meta.value.namespaced))
 const scalable = computed(() => ['Deployment', 'StatefulSet', 'ReplicaSet'].includes(meta.value.kind))
 const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].includes(meta.value.kind))
+const deploymentImages = computed(() => meta.value.group === 'apps' && meta.value.version === 'v1' && meta.value.plural === 'deployments')
+const imageTarget = shallowRef(null)
+function canUpdateImages(row) {
+  return deploymentImages.value && (!meta.value.verbs || meta.value.verbs.includes('patch'))
+    && canResource(meta.value, 'update', row.namespace, store.currentClusterId)
+}
+function openImageUpdate(row) {
+  if (!canUpdateImages(row)) return
+  const { uid, name, namespace } = row._raw?.metadata || {}
+  const clusterId = store.currentClusterId
+  if (!uid || !name || !namespace || !clusterId) return ElMessage.warning('部署信息不完整，请刷新列表后重试')
+  imageTarget.value = Object.freeze({ uid, name, namespace, clusterId, clusterName: store.currentCluster?.name || clusterId })
+}
 const fileSupported=computed(()=>['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.value.kind))
 const filesVisible=ref(false),filesResource=shallowRef(null)
 function openFiles(row){if(!can('pod:files:read'))return;const m=meta.value;filesResource.value={...row._raw,kind:m.kind,apiVersion:m.group?`${m.group}/${m.version}`:m.version};filesVisible.value=true}
@@ -249,6 +266,7 @@ function nsParam() {
 function clearSelection() { selected.value=[]; tableRef.value?.clearSelection() }
 function beginFilters() { Object.assign(draft, filters) }
 function syncQuery() {
+  if (route.path !== listPath || route.params.clusterId !== store.currentClusterId) return
   const query={...route.query}
   for(const key of filterQueryKeys) delete query[key]
   Object.assign(query, filterQuery({...filters,keyword:keyword.value}))
@@ -388,6 +406,7 @@ async function saveScale(replicas) {
 }
 
 async function onCommand(cmd, row) {
+  if(cmd==='updateImages')return openImageUpdate(row)
   if(cmd==='files')return openFiles(row)
   if(cmd==='logs'&&can('pod:logs'))return goLogs(row)
   if(cmd==='terminal'&&can('pod:exec'))return goTerminal(row)
@@ -472,7 +491,7 @@ async function batchDelete() {
 }
 
 let queryTimer
-let listPath=route.path
+const listPath=route.path
 watch([createdRange,serviceType],()=>{page.value=1;clearSelection()},{deep:true})
 watch(keyword, () => {
   page.value=1; clearSelection()
@@ -486,8 +505,8 @@ watch(() => route.query, () => {
   if(JSON.stringify(next)!==JSON.stringify({...filters,keyword:keyword.value})) setFilters(next)
 })
 watch([() => route.path, () => store.currentClusterId, () => store.namespace], () => {
+  if (route.path !== listPath || route.params.clusterId !== store.currentClusterId || !store.ready) return
   yamlReadEpoch++;yamlReadController?.abort();yamlVisible.value=false;yamlContext.value=null
-  listPath=route.path
   clearTimeout(queryTimer)
   filterOpen.value=false;createdRange.value=[];serviceType.value=''
   Object.assign(filters,normalizeFilters(meta.value.kind,route.query))
@@ -516,7 +535,7 @@ onUnmounted(() => { yamlReadEpoch++;yamlReadController?.abort();clearTimeout(que
 .resource-filter-grid :deep(.el-select),.resource-filter-grid :deep(.el-input-number) { width:100%; }
 @media (max-width:700px) { .resource-toolbar { flex-wrap:wrap; } .resource-search { flex:1; } .resource-filter-grid { grid-template-columns:minmax(0,1fr); } }
 
-.resource-page-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}.resource-heading-title{display:flex;align-items:center;gap:12px}.resource-heading-title h1{font-size:22px;color:#304d73;letter-spacing:.01em;margin:0;font-weight:650}.resource-scope{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--kp-muted)}.resource-scope>.el-icon{font-size:15px}.resource-scope-divider{padding:0 8px;color:var(--kp-faint)}.resource-query-card{display:flex;align-items:center;gap:28px;flex-wrap:wrap;padding:18px 22px;background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;box-shadow:0 2px 5px rgba(22,40,70,.025);margin-bottom:18px}.resource-query-field{display:flex;align-items:center;gap:14px;min-width:250px;flex:1}.resource-query-field>label{font-size:13px;color:var(--kp-text-2);white-space:nowrap}.resource-query-field>.el-input{flex:1}.resource-query-date{flex:1.2;min-width:330px}.resource-query-date :deep(.el-date-editor){width:100%;min-width:0}.resource-query-actions{display:flex;gap:8px;margin-left:auto}.resource-query-actions .el-button+.el-button{margin:0}.resource-table-panel{background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;padding:18px 18px 2px;box-shadow:0 2px 5px rgba(22,40,70,.025)}.resource-type-tabs{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--kp-border)}.resource-type-tabs>button{display:flex;align-items:center;gap:9px;background:transparent;border:1px solid transparent;color:var(--kp-text-2);font:inherit;font-size:13px;padding:8px 13px;border-radius:8px;cursor:pointer}.resource-type-tabs>button>span{font-size:12px;background:var(--kp-surface-2);padding:1px 7px;border-radius:5px}.resource-type-tabs>button.active{background:var(--kp-side-active);border-color:#dce7f6;color:var(--kp-brand);font-weight:600}.resource-type-tabs>button.active>span{background:var(--kp-surface)}.resource-table-panel>.kp-card{border-radius:8px;box-shadow:none;border:0}.pod-list-summary{display:flex;gap:16px;font-size:12px;color:var(--kp-muted);white-space:nowrap}.pod-list-summary>span{display:flex;align-items:center;gap:6px}.pod-list-summary strong{color:var(--kp-text);font-weight:600}.summary-dot{display:inline-block;width:6px;height:6px;border-radius:50%}.summary-dot.running{background:#16a36b}.summary-dot.warning{background:#d68b24}.resource-name-cell{display:flex;align-items:flex-start;flex-direction:column;gap:4px}.resource-namespace-pill{font-size:11px;color:var(--kp-muted);background:var(--kp-surface-2);padding:0 6px;border-radius:4px;line-height:18px}.resource-port-chips{display:flex;flex-direction:column;align-items:flex-start;gap:6px;white-space:normal}.resource-port-chips>span{display:inline-block;background:var(--kp-success-bg);color:var(--el-color-success);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;padding:3px 7px;border-radius:5px;white-space:normal;overflow-wrap:anywhere;line-height:1.5}.service-type-tag{font-weight:600;letter-spacing:.01em}.resource-image-cell{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0;font-size:inherit;line-height:inherit}.resource-image-cell>span{max-width:100%;white-space:normal;overflow-wrap:anywhere;background:var(--kp-success-bg);border:1px solid transparent;border-radius:4px;padding:2px 7px;color:var(--el-color-success)}.resource-table-panel :deep(.resource-ports-column .cell){white-space:normal;overflow:visible}.resource-scale-button{inline-size:5.5em!important}.resource-toolbar{gap:9px;margin-bottom:16px}.resource-toolbar>.el-button+.el-button{margin:0}.resource-table-panel :deep(.el-table th.el-table__cell){background:#f7f9fc}.resource-table-panel :deep(.el-table--small td.el-table__cell){padding:8px 0}.resource-table-panel :deep(.el-table:not(.el-table--small) td.el-table__cell){padding:14px 0}
+.resource-page-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}.resource-heading-title{display:flex;align-items:center;gap:12px}.resource-heading-title h1{font-size:22px;color:#304d73;letter-spacing:.01em;margin:0;font-weight:650}.resource-scope{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--kp-muted)}.resource-scope>.el-icon{font-size:15px}.resource-scope-divider{padding:0 8px;color:var(--kp-faint)}.resource-query-card{display:flex;align-items:center;gap:28px;flex-wrap:wrap;padding:18px 22px;background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;box-shadow:0 2px 5px rgba(22,40,70,.025);margin-bottom:18px}.resource-query-field{display:flex;align-items:center;gap:14px;min-width:250px;flex:1}.resource-query-field>label{font-size:13px;color:var(--kp-text-2);white-space:nowrap}.resource-query-field>.el-input{flex:1}.resource-query-date{flex:1.2;min-width:330px}.resource-query-date :deep(.el-date-editor){width:100%;min-width:0}.resource-query-actions{display:flex;gap:8px;margin-left:auto}.resource-query-actions .el-button+.el-button{margin:0}.resource-table-panel{background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;padding:18px 18px 2px;box-shadow:0 2px 5px rgba(22,40,70,.025)}.resource-type-tabs{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--kp-border)}.resource-type-tabs>button{display:flex;align-items:center;gap:9px;background:transparent;border:1px solid transparent;color:var(--kp-text-2);font:inherit;font-size:13px;padding:8px 13px;border-radius:8px;cursor:pointer}.resource-type-tabs>button>span{font-size:12px;background:var(--kp-surface-2);padding:1px 7px;border-radius:5px}.resource-type-tabs>button.active{background:var(--kp-side-active);border-color:#dce7f6;color:var(--kp-brand);font-weight:600}.resource-type-tabs>button.active>span{background:var(--kp-surface)}.resource-table-panel>.kp-card{border-radius:8px;box-shadow:none;border:0}.pod-list-summary{display:flex;gap:16px;font-size:12px;color:var(--kp-muted);white-space:nowrap}.pod-list-summary>span{display:flex;align-items:center;gap:6px}.pod-list-summary strong{color:var(--kp-text);font-weight:600}.summary-dot{display:inline-block;width:6px;height:6px;border-radius:50%}.summary-dot.running{background:#16a36b}.summary-dot.warning{background:#d68b24}.resource-name-cell{display:flex;align-items:flex-start;flex-direction:column;gap:4px}.resource-port-chips{display:flex;flex-direction:column;align-items:flex-start;gap:6px;white-space:normal}.resource-port-chips>span{display:inline-block;background:var(--kp-success-bg);color:var(--el-color-success);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;padding:3px 7px;border-radius:5px;white-space:normal;overflow-wrap:anywhere;line-height:1.5}.service-type-tag{font-weight:600;letter-spacing:.01em}.resource-image-cell{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0;font-size:inherit;line-height:inherit}.resource-image-cell>span{max-width:100%;white-space:normal;overflow-wrap:anywhere;background:var(--kp-success-bg);border:1px solid transparent;border-radius:4px;padding:2px 7px;color:var(--el-color-success)}.resource-table-panel :deep(.resource-ports-column .cell){white-space:normal;overflow:visible}.resource-scale-button{inline-size:5.5em!important}.resource-toolbar{gap:9px;margin-bottom:16px}.resource-toolbar>.el-button+.el-button{margin:0}.resource-table-panel :deep(.el-table th.el-table__cell){background:#f7f9fc}.resource-table-panel :deep(.el-table--small td.el-table__cell){padding:8px 0}.resource-table-panel :deep(.el-table:not(.el-table--small) td.el-table__cell){padding:14px 0}
 @media(max-width:1000px){.resource-query-card{gap:16px}.resource-query-field{min-width:220px}.resource-query-date{min-width:280px}.resource-query-actions{margin-left:0}.pod-list-summary{display:none}}
 @media(max-width:700px){.resource-page-heading{margin-bottom:14px;gap:10px}.resource-heading-title h1{font-size:19px}.resource-scope{font-size:12px}.resource-query-card{padding:14px;gap:12px}.resource-query-field,.resource-query-date{min-width:0;flex:1 1 100%}.resource-query-field>label{width:56px;flex:none}.resource-query-actions{justify-content:flex-end;width:100%}.resource-table-panel{padding:12px 10px 2px}.resource-toolbar{flex-wrap:wrap}.resource-type-tabs{gap:3px}.resource-type-tabs>button{font-size:11px;padding:7px 8px}.resource-type-tabs>button>span{padding:0 5px}.resource-count{display:none}}
 </style>

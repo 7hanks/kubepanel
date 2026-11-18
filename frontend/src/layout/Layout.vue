@@ -54,7 +54,7 @@
           <span class="kp-header-sep" />
           <el-select
             :model-value="store.currentClusterId" size="small" style="width:158px"
-            placeholder="选择集群" @change="switchCluster"
+            placeholder="选择集群" aria-label="选择集群" @change="switchCluster"
           >
             <el-option v-for="c in store.clusters" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
@@ -198,7 +198,15 @@ function isActive(path) {
 function go(path) { if (route.path !== cpath(path)) router.push(cpath(path)) }
 function goClusterList() { router.push(cpath('/clusters')) }
 function switchCluster(id) {
-  router.push(cpath(route.meta.platformPage ? '/' + route.meta.platformPage : route.name==='cluster-monitor' ? '/monitor' : '/overview', id))
+  if (!id || id === route.params.clusterId) return
+  const { group, version, plural } = route.params
+  if (group && version && plural) {
+    return router.push({ name: 'resource-list', params: { clusterId: id, group, version, plural } })
+  }
+  if (route.name === 'pod-logs' || route.name === 'pod-terminal') {
+    return router.push({ name: 'resource-list', params: { clusterId: id, group: '_core', version: 'v1', plural: 'pods' } })
+  }
+  return router.push({ name: route.name || 'overview', params: { clusterId: id } })
 }
 async function changeNs(ns) { if (await confirmContextChange()) store.setNamespace(ns) }
 

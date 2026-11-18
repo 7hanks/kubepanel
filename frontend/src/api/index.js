@@ -102,8 +102,8 @@ export const api = {
     http.post(resPath(group, version, plural), body, { params: { namespace, ...params } }),
   update: (group, version, plural, namespace, name, body, params = {}) =>
     http.put(resPath(group, version, plural, namespace, name), body, { params }),
-  patch: (group, version, plural, namespace, name, body, patchType) =>
-    http.patch(resPath(group, version, plural, namespace, name), body, { params: { patchType } }),
+  patch: (group, version, plural, namespace, name, body, patchType, config = {}) =>
+    http.patch(resPath(group, version, plural, namespace, name), body, { ...config, params: { ...config.params, patchType } }),
   remove: (group, version, plural, namespace, name, params = {}) =>
     http.delete(resPath(group, version, plural, namespace, name), { params }),
   scale: (group, version, plural, namespace, name, replicas) =>
