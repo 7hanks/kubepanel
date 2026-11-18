@@ -203,6 +203,7 @@ const KIND_COLS = {
   Deployment: [
     { key: 'replicas', label: '副本 (就绪/期望)', width: 150 },
     { key: 'status', label: '状态', width: 125, tag: true },
+    { key: 'images', label: '镜像', minWidth: 210 },
   ],
   StatefulSet: [{ key: 'replicas', label: '副本', width: 110 }, { key: 'status', label: '状态', width: 125, tag: true }, { key: 'images', label: '镜像', minWidth: 200 }],
   ReplicaSet: [{ key: 'replicas', label: '副本', width: 110 }, { key: 'status', label: '状态', width: 125, tag: true }],
