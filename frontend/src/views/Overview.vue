@@ -96,7 +96,7 @@
       <el-table-column label="健康 / 调度" min-width="180"><template #default="{row}"><el-tag disable-transitions :type="row.ready ? 'success':'danger'">{{row.ready ? 'Ready':'NotReady'}}</el-tag> {{row.unschedulable ? '已封锁':''}} {{row.diskPressure ? 'DiskPressure':''}}</template></el-table-column>
       <el-table-column label="实际 CPU / 内存" min-width="180"><template #default="{row}">{{data.metricsAvailable ? `${row.cpu} / ${row.memory}`:'—（指标不可用）'}}</template></el-table-column>
       <el-table-column label="CPU 容量 / 可分配" min-width="170"><template #default="{row}">{{row.capacity?.cpu || '—'}} / {{row.allocatable?.cpu || '—'}}</template></el-table-column>
-      <el-table-column label="内存容量 / 可分配" min-width="210"><template #default="{row}">{{row.capacity?.memory || '—'}} / {{row.allocatable?.memory || '—'}}</template></el-table-column>
+      <el-table-column label="内存容量 / 可分配" min-width="210"><template #default="{row}">{{memoryQuantityGi(row.capacity?.memory)}} / {{memoryQuantityGi(row.allocatable?.memory)}}</template></el-table-column>
       <el-table-column label="Pod / 可分配" min-width="155"><template #header><el-tooltip :content="`实际 Pod 数量仅统计${scopeLabel}；可分配量是节点容量。`"><span tabindex="0">Pod / 可分配</span></el-tooltip></template><template #default="{row}">{{number(row.pods)}} / {{row.allocatable?.pods || '—'}}</template></el-table-column>
       <el-table-column label="污点 / 压力" min-width="240" show-overflow-tooltip><template #default="{row}">{{nodeDiagnosis(row)}}</template></el-table-column>
      </el-table>
@@ -122,7 +122,7 @@ import {normalizeRow} from '../config/columns'
 import {isAbnormal,createRequestGate} from '../utils/resource'
 import {cpath} from '../utils/path'
 import {Connection,InfoFilled,Warning,Bell} from '@element-plus/icons-vue'
-import {usagePresentation,overviewHealth,recentWarningCount} from '../utils/overview'
+import {usagePresentation,overviewHealth,recentWarningCount,memoryQuantityGi} from '../utils/overview'
 const router=useRouter(),loading=ref(false),loaded=ref(false),data=ref({}),pods=ref([]),error=ref(''),podError=ref(''),podsLimited=ref(false),gate=createRequestGate()
 const diagnostics=ref(null),diagnosticTab=ref('pods'),riskDetailsOpen=ref(true)
 const stat=computed(()=>data.value.stat || {}),usage=computed(()=>data.value.podUsage || {}),scopeLabel=computed(()=>store.namespace==='all' ? '授权命名空间范围':store.namespace)

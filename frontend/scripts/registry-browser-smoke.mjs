@@ -11,9 +11,9 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const frontendRoot = fileURLToPath(new URL('../', import.meta.url))
 const qaRoot = fileURLToPath(new URL('../../.local/frontend-qa/', import.meta.url))
 const baseURL = (process.env.SMOKE_BASE_URL || 'http://127.0.0.1:5191').replace(/\/$/, '')
-const screenshots = { desktop: path.join(qaRoot, 'registry-project-tags.png'), failure: path.join(qaRoot, 'registry-browser-failure.png') }
+const screenshots = { desktop: path.join(qaRoot, 'registry-project-tags.png'),workspace:path.join(qaRoot,'registry-workspace-1651x871.png'),workspaceMobile:path.join(qaRoot,'registry-workspace-mobile.png'), failure: path.join(qaRoot, 'registry-browser-failure.png') }
 const errors = [], unhandledAPI = [], calls = [], navigations = []
-let vite, browser, page, rejectProjects = false
+let vite, browser, page, rejectProjects = false,readOnly=false
 
 const registries = [
   { id: 'team-harbor', name: '团队 Harbor', type: 'harbor', url: 'https://harbor.fixture.invalid:30003', host: 'harbor.fixture.invalid:30003', username: 'fixture-user', health: { ok: true, authenticated: true, authMode: 'basic', message: '连接正常，账号认证通过', ms: 12 } },
@@ -89,7 +89,7 @@ try {
     const endpoint = url.pathname.replace(/^\/api/, '')
     const send = (data, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) })
     calls.push({ method: request.method(), endpoint, params: Object.fromEntries(url.searchParams) })
-    if (request.method() === 'GET' && endpoint === '/v1/auth/profile') return send({ username: 'fixture-admin', role: 'admin', permissions: ['registry:list', 'registry:detail', 'registry:create', 'registry:update', 'registry:delete'], csrfToken: 'fixture-csrf', scope: { clusters: ['*'], namespaces: ['*'], resources: ['*'] } })
+    if (request.method() === 'GET' && endpoint === '/v1/auth/profile') return send({ username: 'fixture-admin', role: 'admin', permissions: ['registry:list', 'registry:detail',...(!readOnly?['registry:create', 'registry:update', 'registry:delete']:[])], csrfToken: 'fixture-csrf', scope: { clusters: ['*'], namespaces: ['*'], resources: ['*'] } })
     if (request.method() === 'GET' && endpoint === '/v1/registries') return send(registries)
     if (request.method() === 'GET' && endpoint === '/v1/registries/team-harbor/projects') {
       if (rejectProjects) return send({ message: 'Harbor 账号密码认证失败（401），请检查账号或机器人密钥', details: { source: 'harbor', upstreamStatus: 401 } }, 401)
@@ -97,6 +97,20 @@ try {
     }
     if (request.method() === 'GET' && endpoint === '/v1/registries/team-harbor/repositories') return send(paged(repositories[url.searchParams.get('project')] || [], url.searchParams))
     if (request.method() === 'GET' && endpoint === '/v1/registries/team-harbor/artifacts') return send(paged(artifacts[url.searchParams.get('repository')] || [], url.searchParams))
+    if(request.method()==='GET'&&endpoint==='/v1/registries/public-harbor/projects')return send(paged([{name:'public-demo',public:true,repoCount:0}],url.searchParams))
+    if(request.method()==='GET'&&endpoint==='/v1/registries/public-harbor/repositories')return send(paged([],url.searchParams))
+    if(request.method()==='POST'&&endpoint==='/v1/registries/team-harbor/projects'){
+      assert.equal(readOnly,false);const body=request.postDataJSON();assert.equal(body.expectedUrl,registries[0].url);projects.push({name:body.name,public:body.public,repoCount:0});repositories[body.name]=[];return send({ok:true,project:body.name,public:body.public},201)
+    }
+    if(request.method()==='POST'&&endpoint==='/v1/registries/team-harbor/tags'){
+      assert.equal(readOnly,false);const body=request.postDataJSON();assert.equal(body.expectedUrl,registries[0].url);const item=artifacts[body.repository]?.find(item=>item.digest===body.digest);assert.ok(item);item.tags.push(body.tag);item.pullRefs=item.tags.map(tag=>`${host}/${body.repository}:${tag}`);return send({ok:true,...body},201)
+    }
+    if(request.method()==='DELETE'&&endpoint==='/v1/registries/team-harbor/tags'){
+      assert.equal(readOnly,false);assert.equal(url.searchParams.get('expectedUrl'),registries[0].url);const repository=url.searchParams.get('repository'),item=artifacts[repository]?.find(item=>item.digest===url.searchParams.get('digest'));assert.ok(item);item.tags=item.tags.filter(tag=>tag!==url.searchParams.get('tag'));item.pullRefs=item.tags.length?item.tags.map(tag=>`${host}/${repository}:${tag}`):[`${host}/${repository}@${item.digest}`];return send({ok:true})
+    }
+    if(request.method()==='DELETE'&&endpoint==='/v1/registries/team-harbor/artifacts'){
+      assert.equal(readOnly,false);assert.equal(url.searchParams.get('expectedUrl'),registries[0].url);const repository=url.searchParams.get('repository');artifacts[repository]=artifacts[repository].filter(item=>item.digest!==url.searchParams.get('digest'));return send({ok:true})
+    }
     unhandledAPI.push(`${request.method()} ${endpoint}`)
     return send({ message: `Unhandled smoke API: ${request.method()} ${endpoint}` }, 500)
   })
@@ -186,12 +200,58 @@ try {
   await assertDrawerFits(drawer)
   await drawer.locator('.artifact-item').first().scrollIntoViewIfNeeded()
   await assertDrawerFits(drawer)
+  await drawer.getByRole('button',{name:'创建项目',exact:true}).click()
+  const createProjectDialog=page.getByRole('dialog',{name:'创建项目',exact:true})
+  assert.equal(await createProjectDialog.getByRole('radio',{name:'私有',exact:true}).isChecked(),true)
+  await createProjectDialog.getByRole('textbox',{name:'新项目名称',exact:true}).fill('fixture-private')
+  await createProjectDialog.getByRole('button',{name:'创建项目',exact:true}).click()
+  await createProjectDialog.waitFor({state:'hidden'})
+  await drawer.getByText('私有项目',{exact:true}).waitFor()
+  assert.equal(calls.filter(call=>call.method==='POST'&&call.endpoint.endsWith('/projects')).length,1)
+  await drawer.locator('.el-drawer__close-btn').click()
+  await drawer.waitFor({state:'hidden'})
+  const popup=page.waitForEvent('popup')
+  await page.getByRole('link',{name:'在新标签页打开 团队 Harbor',exact:true}).click()
+  page=await popup;page.setDefaultTimeout(12000);page.on('pageerror',error=>errors.push(error.message));await page.setViewportSize({width:1651,height:871})
+  await page.getByRole('heading',{name:'镜像仓库工作区',exact:true}).waitFor()
+  await waitTag(page,'latest')
+  assert.equal(new URL(page.url()).pathname,'/registries/workspace/team-harbor')
+  assert.equal(await page.locator('.plat-shell').count(),0)
+  await page.locator('.artifact-item').first().getByRole('button',{name:'添加标签',exact:true}).click()
+  const addTagDialog=page.getByRole('dialog',{name:'添加标签',exact:true})
+  await addTagDialog.getByText(`sha256:${'a'.repeat(64)}`,{exact:true}).waitFor()
+  await addTagDialog.getByRole('textbox',{name:'新制品标签',exact:true}).fill('fixture-release')
+  await addTagDialog.getByRole('button',{name:'添加标签',exact:true}).click()
+  await addTagDialog.waitFor({state:'hidden'});await waitTag(page,'fixture-release')
+  await page.getByRole('button',{name:'删除标签 fixture-release',exact:true}).click()
+  const deleteTagDialog=page.getByRole('dialog',{name:'删除标签',exact:true})
+  for(const text of [registries[0].url,'library/web-app',`sha256:${'a'.repeat(64)}`,'fixture-release'])assert.ok((await deleteTagDialog.innerText()).includes(text))
+  await deleteTagDialog.getByRole('button',{name:'删除标签',exact:true}).click();await deleteTagDialog.waitFor({state:'hidden'})
+  await page.waitForFunction(()=>![...document.querySelectorAll('.artifact-tags .el-tag')].some(element=>element.textContent==='fixture-release'))
+  const untagged=page.locator('.artifact-item').filter({hasText:`sha256:${'b'.repeat(64)}`})
+  await untagged.getByRole('button',{name:'删除制品',exact:true}).click()
+  const deleteArtifactDialog=page.getByRole('dialog',{name:'删除制品',exact:true});assert.ok((await deleteArtifactDialog.innerText()).includes(`sha256:${'b'.repeat(64)}`))
+  await deleteArtifactDialog.getByRole('button',{name:'删除制品',exact:true}).click();await deleteArtifactDialog.waitFor({state:'hidden'})
+  await page.waitForFunction(()=>document.querySelectorAll('.artifact-item').length===20)
+  assert.equal(await page.locator('.artifact-item').filter({hasText:`sha256:${'b'.repeat(64)}`}).count(),0)
+  await page.getByRole('textbox',{name:'筛选当前页仓库名',exact:true}).fill('web-app');await page.evaluate(()=>window.scrollTo(0,0))
+  await page.screenshot({path:screenshots.workspace,fullPage:false,animations:'disabled'})
+  await page.setViewportSize({width:430,height:932});await page.evaluate(()=>window.scrollTo(0,0))
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'standalone workspace must fit mobile width')
+  await page.screenshot({path:screenshots.workspaceMobile,fullPage:false,animations:'disabled'})
+  await page.locator('.workspace-controls .el-select').click();await page.getByRole('option',{name:'公开 Harbor',exact:true}).click()
+  await page.locator('.project-selector').getByText('public-demo（0 个仓库）',{exact:true}).waitFor()
+  assert.equal(await page.locator('.artifact-item').count(),0)
+  readOnly=true;await page.goto(`${baseURL}/registries/workspace/team-harbor`);await waitTag(page,'latest')
+  assert.equal(await page.getByRole('button',{name:'创建项目',exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'添加标签',exact:true}).count(),0);assert.equal(await page.getByRole('button',{name:'删除制品',exact:true}).count(),0)
+  assert.ok(await page.getByRole('button',{name:'复制命令',exact:true}).count()>0)
+  assert.equal(calls.filter(call=>['POST','DELETE'].includes(call.method)).length,4)
   assert.ok(calls.some(call => call.endpoint.endsWith('/projects') && call.params.page === '2'))
   assert.ok(calls.some(call => call.endpoint.endsWith('/repositories') && call.params.project === 'library' && call.params.page === '2'))
   assert.ok(calls.some(call => call.endpoint.endsWith('/artifacts') && call.params.repository === 'library/web-app' && call.params.page === '2'))
   assert.deepEqual(unhandledAPI, [])
   assert.deepEqual(errors, [])
-  console.log(`PASS: registry filters, named browsing, initial artifacts, all tags/digests/pull refs, repository and project switching, three pagination levels, isolated Harbor 401 and mobile drawer. Screenshot: ${screenshots.desktop}. API fixtures only.`)
+  console.log(`PASS: registry filters, three pagination levels, isolated Harbor 401, mobile drawer, private project creation, separate workspace popup and saved selector, tag creation/deletion, artifact deletion with pinned confirmations, read-only controls and mobile workspace. Workspace screenshot: ${screenshots.workspace}. API fixtures only; 4 intercepted mutations.`)
 } catch (error) {
   if (page) {
     await page.screenshot({ path: screenshots.failure, fullPage: true, animations: 'disabled' }).catch(() => {})

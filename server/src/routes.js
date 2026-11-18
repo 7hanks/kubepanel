@@ -15,6 +15,7 @@ import { streamPodLogs } from './logs.js'
 import {
   listRegistries, addRegistry, updateRegistry, removeRegistry, testRegistry,
   listProjects, listRepositories, listArtifacts, discoverRegistries,
+  createProject, createArtifactTag, deleteArtifactTag, deleteArtifact,
 } from './registryService.js'
 import { monitorView, createMonitor, updateMonitor, deleteMonitor, testMonitor, listDashboards, discoverGrafanas, parseCpu, parseMem, fmtCpu, fmtBytes } from './monitorService.js'
 import { can, canAny, OBJECTS, ACTIONS, PERMISSIONS, PERMISSION_LABEL, SENSITIVE_PERMISSIONS } from './permissions.js'
@@ -221,6 +222,13 @@ router.delete('/v1/clusters/:id', requirePerm('cluster:remove'), wrap(async (req
 }))
 
 // ---------------- 镜像仓库（平台级，Harbor） ----------------
+function auditRegistryTarget(req, input = {}, projectCreation = false) {
+  req.auditTarget = { registryId: req.params.id }
+  for (const key of ['project', 'repository', 'digest', 'tag']) {
+    const value = projectCreation && key === 'project' ? input?.name : input?.[key]
+    if (typeof value === 'string') req.auditTarget[key] = value
+  }
+}
 router.get('/v1/registries', requirePerm('registry:list', 'registry:detail'), wrap(async (req, res) => res.json(listRegistries())))
 router.post('/v1/registries', requirePerm('registry:create'), wrap(async (req, res) => {
   res.status(201).json(await addRegistry(req.body || {}))
@@ -243,11 +251,27 @@ router.post('/v1/registries/:id/test', requirePerm('registry:detail', 'registry:
 router.get('/v1/registries/:id/projects', requirePerm('registry:detail', 'registry:list'), wrap(async (req, res) => {
   res.json(await listProjects(req.params.id, req.query))
 }))
+router.post('/v1/registries/:id/projects', requirePerm('registry:create'), wrap(async (req, res) => {
+  auditRegistryTarget(req, req.body, true)
+  res.status(201).json(await createProject(req.params.id, req.body || {}))
+}))
 router.get('/v1/registries/:id/repositories', requirePerm('registry:detail', 'registry:list'), wrap(async (req, res) => {
   res.json(await listRepositories(req.params.id, String(req.query.project || ''), req.query))
 }))
 router.get('/v1/registries/:id/artifacts', requirePerm('registry:detail', 'registry:list'), wrap(async (req, res) => {
   res.json(await listArtifacts(req.params.id, String(req.query.project || ''), String(req.query.repository || ''), req.query))
+}))
+router.post('/v1/registries/:id/tags', requirePerm('registry:update'), wrap(async (req, res) => {
+  auditRegistryTarget(req, req.body)
+  res.status(201).json(await createArtifactTag(req.params.id, req.body || {}))
+}))
+router.delete('/v1/registries/:id/tags', requirePerm('registry:delete'), wrap(async (req, res) => {
+  auditRegistryTarget(req, req.query)
+  res.json(await deleteArtifactTag(req.params.id, req.query))
+}))
+router.delete('/v1/registries/:id/artifacts', requirePerm('registry:delete'), wrap(async (req, res) => {
+  auditRegistryTarget(req, req.query)
+  res.json(await deleteArtifact(req.params.id, req.query))
 }))
 
 // ---------------- 监控（平台级，Grafana，支持多实例 / 多环境） ----------------

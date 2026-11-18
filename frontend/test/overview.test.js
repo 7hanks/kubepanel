@@ -1,11 +1,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { usagePresentation, overviewHealth, recentWarningCount } from '../src/utils/overview.js'
+import { usagePresentation, overviewHealth, recentWarningCount, memoryQuantityGi } from '../src/utils/overview.js'
 
 test('node usage displays cores and GiB and clamps only the visual bar', () => {
   assert.deepEqual(usagePresentation({ used: 1500, allocatable: 1000, percent: 150 }, 'cpu'), { value: '150%', percent: 100, detail: '1.5 / 1 核', available: true })
   assert.equal(usagePresentation({ used: 1024 ** 3, allocatable: 4 * 1024 ** 3, percent: 25 }, 'memory').detail, '1 / 4 GiB')
   assert.equal(usagePresentation(null, 'cpu').value, '—')
+})
+
+test('node capacity and allocatable quantities use binary Gi and keep missing values unknown', () => {
+  assert.equal(memoryQuantityGi('16385520Ki'), '15.63 Gi')
+  assert.equal(memoryQuantityGi('16283120Ki'), '15.53 Gi')
+  assert.equal(memoryQuantityGi('512Mi'), '0.5 Gi')
+  assert.equal(memoryQuantityGi('1073741824'), '1 Gi')
+  assert.equal(memoryQuantityGi('2G'), '1.86 Gi')
+  assert.equal(memoryQuantityGi('0'), '0 Gi')
+  assert.equal(memoryQuantityGi('unknown'), '—')
+  assert.equal(memoryQuantityGi(null), '—')
 })
 
 test('health never reports normal from missing or partial data', () => {

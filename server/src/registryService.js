@@ -73,13 +73,18 @@ export function registryTlsOptions(cfg = {}) {
 }
 
 /** 通用 Harbor 请求：只接受预期的 API 响应，同源重定向最多跟随 3 次。 */
-function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000, response = 'json' } = {}, redirects = 0, target) {
+function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000, response = 'json', body: requestBody } = {}, redirects = 0, target) {
   return new Promise((resolve, reject) => {
     const base = new URL(cfg.url)
     const url = target || new URL(base.pathname.replace(/\/$/, '') + reqPath, base.origin)
     const isHttps = url.protocol === 'https:'
     const mod = isHttps ? https : http
     const headers = { Accept: 'application/json', 'User-Agent': 'KubePanel' }
+    const payload = requestBody === undefined ? undefined : JSON.stringify(requestBody)
+    if (payload !== undefined) {
+      headers['Content-Type'] = 'application/json'
+      headers['Content-Length'] = Buffer.byteLength(payload)
+    }
     if (cfg.username) {
       headers.Authorization = 'Basic ' + Buffer.from(`${cfg.username}:${cfg.password || ''}`).toString('base64')
     }
@@ -98,6 +103,7 @@ function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000, response
       res.on('end', () => {
         const body = Buffer.concat(chunks).toString('utf8')
         if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
+          if (!['GET', 'HEAD'].includes(method)) return reject(new KubeError(502, 'Harbor 写请求发生重定向，未重放操作；请检查已保存的仓库地址'))
           let next
           try { next = new URL(res.headers.location, url) } catch { /* rejected below */ }
           if (!res.headers.location || !next || !['http:', 'https:'].includes(next.protocol) || next.username || next.password) {
@@ -117,7 +123,13 @@ function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000, response
           return reject(new KubeError(403, 'Harbor 拒绝访问（403），请检查账号的项目和仓库权限', { source: 'harbor', upstreamStatus: 403 }))
         }
         if (res.statusCode >= 400) {
-          return reject(new KubeError(res.statusCode, `Harbor 返回 ${res.statusCode}，请检查仓库地址及访问权限`))
+          const explanation = {
+            404: '目标项目、仓库、镜像摘要或标签不存在，请刷新列表',
+            405: '此镜像不允许执行该操作，请检查签名或不可变策略',
+            409: '项目或标签已存在，或操作与当前状态冲突，请刷新列表',
+            412: '操作被前置条件或保护策略阻止，请检查不可变标签和镜像引用',
+          }[res.statusCode] || '请检查仓库地址及访问权限'
+          return reject(new KubeError(res.statusCode, `Harbor 返回 ${res.statusCode}，${explanation}`, { source: 'harbor', upstreamStatus: res.statusCode }))
         }
         if (res.statusCode < 200 || res.statusCode >= 300) return reject(new KubeError(502, `Harbor 返回了异常响应（${res.statusCode}）`))
         if (/\btext\/html\b/i.test(res.headers['content-type'] || '') || /^\s*</.test(body)) {
@@ -130,13 +142,14 @@ function harborRequest(cfg, reqPath, { method = 'GET', timeout = 12000, response
           if (typeof pong !== 'string' || !/^pong$/i.test(pong)) return reject(new KubeError(502, 'Harbor ping 响应不合法，未收到预期的 Pong 内容'))
           return resolve({ status: res.statusCode, data: pong, headers: res.headers })
         }
+        if (response === 'empty' && !body.trim()) return resolve({ status: res.statusCode, data: null, headers: res.headers })
         try { resolve({ status: res.statusCode, data: JSON.parse(body), headers: res.headers }) }
         catch (e) { reject(new KubeError(502, 'Harbor 返回的 API 响应不是有效 JSON，请检查仓库地址和反向代理配置')) }
       })
     })
     req.on('error', e => reject(new KubeError(502, `连接仓库失败：${e.code || e.message}`)))
     req.on('timeout', () => req.destroy(new Error('timeout')))
-    req.end()
+    req.end(payload)
   })
 }
 
@@ -314,6 +327,76 @@ export async function listArtifacts(id, project, repository, options) {
       ? a.tags.map(t => `${host}/${project}/${short}:${t.name}`)
       : [`${host}/${project}/${short}@${a.digest}`],
   })), headers, options, paging)
+}
+
+function projectName(value) {
+  if (typeof value !== 'string' || !value || value.length > 255 || !/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(value)) {
+    throw new KubeError(400, '项目名称须为 1–255 个小写字母、数字及分隔符（.、_、-），并以字母或数字开头和结尾')
+  }
+  return value
+}
+
+function artifactTarget(input, withTag = false) {
+  const project = projectName(input?.project)
+  if (typeof input?.repository !== 'string' || !input.repository.startsWith(`${project}/`)) {
+    throw new KubeError(400, '请指定带项目名的完整仓库路径')
+  }
+  // Mutation targets use only full names so project/project/repo never resolves to project/repo.
+  const repository = input.repository.slice(project.length + 1)
+  const segment = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/
+  if (!repository || `${project}/${repository}`.length > 255 || repository.split('/').some(part => !segment.test(part))) throw new KubeError(400, '镜像仓库名称不合法，请使用项目内的仓库路径')
+  const digest = input.digest
+  const digestMatch = typeof digest === 'string' && digest.match(/^(sha256|sha384|sha512):([a-f0-9]+)$/)
+  if (!digestMatch || digestMatch[2].length !== ({ sha256: 64, sha384: 96, sha512: 128 })[digestMatch[1]]) throw new KubeError(400, '必须使用完整的镜像摘要 digest（sha256、sha384 或 sha512），不能使用可变标签定位镜像')
+  const target = { project, repository, digest }
+  if (withTag) {
+    if (typeof input.tag !== 'string' || !/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(input.tag)) throw new KubeError(400, '标签须为 1–128 个字母、数字、下划线、点或连字符，且不能以点或连字符开头')
+    target.tag = input.tag
+  }
+  return target
+}
+
+function artifactPath(target) {
+  // Harbor decodes the repository path at both its router and handler layers.
+  const repository = encodeURIComponent(encodeURIComponent(target.repository))
+  return `/api/v2.0/projects/${encodeURIComponent(target.project)}/repositories/${repository}/artifacts/${encodeURIComponent(target.digest)}`
+}
+
+async function harborMutation(id, reqPath, { method, body, expectedUrl }) {
+  const rec = getRegistry(id)
+  if (expectedUrl !== undefined && expectedUrl !== rec.url) throw new KubeError(409, '仓库地址已更新，请刷新后重新确认操作')
+  if (!rec.username || !rec.password) throw new KubeError(400, '写操作需要在仓库配置中保存 Harbor 账号和密码或机器人凭据')
+  await verifyHarborAuthentication(rec)
+  const { status } = await harborRequest(rec, reqPath, { method, body, response: 'empty' })
+  if (!(method === 'POST' ? status === 201 : status === 200 || status === 204)) {
+    throw new KubeError(502, `Harbor 写操作返回异常状态（${status}），请先刷新确认结果`)
+  }
+}
+
+export async function createProject(id, input = {}) {
+  const name = projectName(input?.name)
+  if (input.public !== undefined && typeof input.public !== 'boolean') throw new KubeError(400, '项目公开状态 public 必须是布尔值')
+  const visible = input.public === true
+  await harborMutation(id, '/api/v2.0/projects', { method: 'POST', expectedUrl: input.expectedUrl, body: { project_name: name, metadata: { public: String(visible) } } })
+  return { ok: true, project: name, public: visible }
+}
+
+export async function createArtifactTag(id, input = {}) {
+  const target = artifactTarget(input, true)
+  await harborMutation(id, artifactPath(target) + '/tags', { method: 'POST', expectedUrl: input.expectedUrl, body: { name: target.tag } })
+  return { ok: true, ...target }
+}
+
+export async function deleteArtifactTag(id, input = {}) {
+  const target = artifactTarget(input, true)
+  await harborMutation(id, artifactPath(target) + '/tags/' + encodeURIComponent(target.tag), { method: 'DELETE', expectedUrl: input.expectedUrl })
+  return { ok: true, ...target }
+}
+
+export async function deleteArtifact(id, input = {}) {
+  const target = artifactTarget(input)
+  await harborMutation(id, artifactPath(target), { method: 'DELETE', expectedUrl: input.expectedUrl })
+  return { ok: true, ...target }
 }
 
 /**

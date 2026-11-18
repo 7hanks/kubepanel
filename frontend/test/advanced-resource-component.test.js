@@ -5,16 +5,87 @@ import {parse,compileScript} from '@vue/compiler-sfc'
 import {computed,ref,reactive,watch,effectScope,nextTick} from 'vue'
 import {advancedDraftFields,validateAdvancedResource} from '../src/utils/advanced-resource-form.js'
 
-function fixture(body,creating=false,disabled=false){
- const scope=effectScope(),events=[],props=reactive({modelValue:body,creating,disabled})
+function fixture(body,creating=false,disabled=false,options={}){
+ const scope=effectScope(),events=[],props=reactive({modelValue:body,creating,disabled,clusterId:'c-a',active:true,...options.props})
  const {descriptor}=parse(fs.readFileSync(new URL('../src/components/AdvancedResourceForm.vue',import.meta.url),'utf8'))
  const source=compileScript(descriptor,{id:'advanced-test'}).content.replace(/^import[\s\S]*?from\s+['"][^'"]+['"]\s*\r?\n/gm,'').replace('export default','return')
- const bindings={computed,ref,watch,validateAdvancedResource,KeyValueFields:{},Plus:{},Delete:{}}
+ const bindings={computed,ref,watch,validateAdvancedResource,KeyValueFields:{},Plus:{},Delete:{},
+  api:options.api||{list:async()=>({items:[]})},store:options.store||{discovery:[]},
+  canResource:options.canResource||(()=>true)}
  const component=Function(...Object.keys(bindings),source)(...Object.values(bindings))
  const state=scope.run(()=>component.setup(props,{expose(){},emit:(...event)=>events.push(event)}))
  return {state,props,events,destroy(){scope.stop()}}
 }
 const hpa=()=>({apiVersion:'autoscaling/v2',kind:'HorizontalPodAutoscaler',metadata:{name:'autoscale'},...advancedDraftFields('HorizontalPodAutoscaler')})
+const workload=(name,namespace)=>({metadata:{name,namespace}})
+const flush=()=>new Promise(resolve=>setImmediate(resolve))
+
+test('HPA target options load paged workload names scoped to the selected cluster and namespace', async()=>{
+ const body=hpa()
+ body.metadata.namespace='team'
+ const requests=[]
+ const view=fixture(body,true,false,{api:{list:async(group,version,plural,params)=>{
+  requests.push([group,version,plural,params])
+  return params.continue
+   ? {items:[workload('api','team'),workload('foreign','outside')]}
+   : {items:[workload('worker','team')],metadata:{continue:'page-2'}}
+ }}})
+ try {
+  await flush()
+  assert.deepEqual(view.state.targetNames.value,['api','worker'])
+  assert.deepEqual(requests.map(([group,version,plural,params])=>[group,version,plural,params.clusterId,params.namespace,params.continue]),[
+   ['apps','v1','deployments','c-a','team',undefined],
+   ['apps','v1','deployments','c-a','team','page-2'],
+  ])
+  assert.equal(body.spec.scaleTargetRef.name,'')
+ }finally{view.destroy()}
+})
+
+test('a stale target lookup cannot override a new namespace or type and the old name is cleared', async()=>{
+ const body=hpa()
+ body.metadata.namespace='team'
+ body.spec.scaleTargetRef.name='previous'
+ const requests=[]
+ const view=fixture(body,true,false,{api:{list:(group,version,plural,params,{signal})=>new Promise(resolve=>requests.push({plural,params,signal,resolve}))}})
+ try{
+  await flush()
+  view.props.modelValue.metadata.namespace='prod'
+  view.state.setTargetKind('StatefulSet')
+  await flush()
+  assert.equal(body.spec.scaleTargetRef.name,'')
+  assert.equal(requests[0].signal.aborted,true)
+  assert.equal(requests[1].plural,'statefulsets')
+  assert.equal(requests[1].params.namespace,'prod')
+  requests[1].resolve({items:[workload('cache','prod')]})
+  requests[0].resolve({items:[workload('previous','team')]})
+  await flush()
+  assert.deepEqual(view.state.targetNames.value,['cache'])
+ }finally{view.destroy()}
+})
+
+test('HPA target list reuses cluster discovery and skips unauthorized or all-namespace requests', async()=>{
+ const body=hpa()
+ body.metadata.namespace='all'
+ body.spec.scaleTargetRef={kind:'Scalable',apiVersion:'example.org/v1',name:'existing'}
+ const meta={kind:'Scalable',group:'example.org',version:'v1',plural:'scalables',namespaced:true,verbs:['list']}
+ const scope=ref(false)
+ const requests=[]
+ const view=fixture(body,false,false,{
+  canResource:()=>scope.value,store:{discovery:[meta]},
+  api:{list:async(group,version,plural,params)=>{requests.push([group,version,plural,params.namespace]);return {items:[]}}},
+ })
+ try{
+  await flush()
+  assert.equal(requests.length,0)
+  view.props.modelValue.metadata.namespace='team'
+  await flush()
+  assert.equal(requests.length,0)
+  scope.value=true
+  await flush()
+  assert.deepEqual(requests,[['example.org','v1','scalables','team']])
+  assert.equal(body.spec.scaleTargetRef.name,'existing')
+ }finally{view.destroy()}
+})
 test('HPA plain controls preserve custom metrics and behavior while editing CPU/memory targets',()=>{
  const body=hpa();body.spec.scaleTargetRef.custom='keep';body.spec.behavior={scaleDown:{stabilizationWindowSeconds:120}}
  const custom={type:'External',external:{metric:{name:'queue'},target:{type:'AverageValue',averageValue:'5'}}};body.spec.metrics.unshift(custom)

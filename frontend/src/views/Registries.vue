@@ -1,10 +1,11 @@
 <template>
-  <component :is="embedded ? 'div' : PlatformLayout" active="registries">
-    <template v-if="!embedded" #actions>
+  <component :is="workspace || embedded ? 'div' : PlatformLayout" active="registries" :class="{ 'registry-workspace': workspace }">
+    <template v-if="!embedded && !workspace" #actions>
       <el-button size="small" :loading="loading" circle @click="load"><el-icon><Refresh /></el-icon></el-button>
     </template>
 
-    <main class="plat-main" :class="{ 'platform-embedded-main': embedded }">
+    <main class="plat-main" :class="{ 'platform-embedded-main': embedded, 'workspace-main': workspace }">
+     <template v-if="!workspace">
       <div class="page-head">
         <div>
           <h1>镜像仓库</h1>
@@ -13,6 +14,7 @@
           </p>
         </div>
         <div style="display:flex;gap:8px">
+          <a class="registry-open-workspace" :href="workspaceHref()" target="_blank" rel="noopener noreferrer">在新标签页打开</a>
           <el-button v-if="embedded" :loading="loading" :icon="Refresh" @click="load">刷新</el-button>
           <el-button v-if="canCreateReg" :icon="MagicStick" @click="openDiscover">从集群发现</el-button>
           <el-button v-if="canCreateReg" type="primary" :icon="Plus" @click="openAdd">添加仓库</el-button>
@@ -70,9 +72,10 @@
               </el-tooltip>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="220" fixed="right" align="right">
+          <el-table-column label="操作" width="290" fixed="right" align="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="browse(row)">浏览</el-button>
+              <a class="registry-row-workspace" :href="workspaceHref(row)" target="_blank" rel="noopener noreferrer" :aria-label="`在新标签页打开 ${row.name}`">工作区</a>
               <el-button link type="primary" size="small" :loading="testing === row.id" @click="test(row)">测试</el-button>
               <el-button link type="primary" size="small" :disabled="!canUpdateReg" @click="openEdit(row)">编辑</el-button>
               <el-button link type="danger" size="small" :disabled="!canDeleteReg" @click="remove(row)">移除</el-button>
@@ -139,12 +142,21 @@
         <template #footer><el-button @click="discoverVisible = false">关闭</el-button></template>
       </el-dialog>
 
+     </template>
+     <template v-else>
+      <header class="workspace-header"><div><span class="workspace-brand">KubePanel</span><h1>镜像仓库工作区</h1><p class="kp-muted">管理已保存仓库中的项目、镜像制品与标签</p></div><router-link to="/registries" class="workspace-back">返回仓库配置</router-link></header>
+      <div class="workspace-controls"><label for="workspace-registry">当前仓库</label><el-select id="workspace-registry" :model-value="browseRegistry?.id||''" :loading="loading" aria-label="工作区镜像仓库" @update:model-value="switchWorkspace"><el-option v-for="row in registries" :key="row.id" :label="row.name" :value="row.id"/></el-select><el-button :loading="loading" @click="refreshWorkspace">刷新仓库配置</el-button></div>
+      <el-alert v-if="registryError||workspaceError" type="error" :title="registryError||workspaceError" :closable="false" class="registry-alert"/>
+      <div v-if="!loading&&!registryError&&!workspaceError&&!registries.length" class="browser-empty">尚未保存镜像仓库，请返回仓库配置添加连接。</div>
+     </template>
+
       <!-- 浏览项目 / 仓库 / 标签 -->
-      <el-drawer v-model="browseVisible" :title="`浏览 · ${browseRegistry?.name || ''}`" size="min(1080px, 100vw)" class="registry-drawer" destroy-on-close>
+      <component :is="workspace ? 'section' : 'el-drawer'" v-if="!workspace||browseRegistry" :model-value="workspace||browseVisible" @update:model-value="value=>{if(!workspace)browseVisible=value}" :title="workspace ? undefined : `浏览 · ${browseRegistry?.name || ''}`" size="min(1080px, 100vw)" :class="workspace ? 'workspace-content' : 'registry-drawer'" destroy-on-close>
         <div class="registry-browser">
-          <div class="browser-address kp-muted">{{ browseRegistry?.url }}</div>
+          <div class="browser-address kp-muted"><strong v-if="workspace">{{ browseRegistry?.name }} · </strong>{{ browseRegistry?.url }}</div>
+          <el-alert v-if="operationNotice" :type="operationNotice.type" :title="operationNotice.message" :closable="false" class="registry-alert"/>
           <section class="browser-section" aria-labelledby="registry-projects-heading" v-loading="projectsLoading">
-            <div class="browser-heading"><h2 id="registry-projects-heading">项目</h2><span class="kp-muted">共 {{ projectPage.total }} 个</span><el-button link type="primary" :disabled="projectsLoading" @click="loadProjects">刷新项目</el-button></div>
+            <div class="browser-heading"><h2 id="registry-projects-heading">项目</h2><span class="kp-muted">共 {{ projectPage.total }} 个</span><el-button v-if="canCreateReg" type="primary" :disabled="projectSaving" @click="openCreateProject">创建项目</el-button><el-button link type="primary" :disabled="projectsLoading" @click="loadProjects">刷新项目</el-button></div>
             <el-alert v-if="projectError" type="error" :title="projectError" :closable="false" class="registry-alert"><el-button link type="primary" @click="loadProjects">重试</el-button></el-alert>
             <div v-else-if="projects.length" class="project-selector">
               <el-select v-model="project" aria-label="选择项目" @change="changeProject">
@@ -158,7 +170,7 @@
           </section>
 
           <section v-if="project" class="browser-section" aria-labelledby="registry-repositories-heading" v-loading="reposLoading">
-            <div class="browser-heading"><h2 id="registry-repositories-heading">镜像仓库</h2><span class="kp-muted">{{ project }} · 共 {{ repoPage.total }} 个</span></div>
+            <div class="browser-heading"><h2 id="registry-repositories-heading">镜像仓库</h2><span class="kp-muted">{{ project }} · 共 {{ repoPage.total }} 个</span><el-button link type="primary" :disabled="reposLoading" @click="loadRepos">刷新仓库</el-button></div>
             <el-alert v-if="repoError" type="error" :title="repoError" :closable="false" class="registry-alert"><el-button link type="primary" @click="loadRepos">重试</el-button></el-alert>
             <template v-else>
               <div class="repository-filter"><el-input v-model="repoFilter" placeholder="筛选当前页仓库名" aria-label="筛选当前页仓库名" clearable /><span v-if="repoFilter" class="kp-muted">筛选只覆盖当前页</span></div>
@@ -182,22 +194,36 @@
             <el-alert v-if="artifactErrors[selectedRepository.name]" type="error" :title="artifactErrors[selectedRepository.name]" :closable="false" class="registry-alert"><el-button link type="primary" @click="loadArtifacts(selectedRepository, currentArtifactPage?.page || 1)">重试</el-button></el-alert>
             <template v-else>
               <article v-for="a in currentArtifacts" :key="a.digest" class="artifact-item">
-                <div class="artifact-tags"><span class="kp-muted">标签</span><el-tag v-for="tag in a.tags" :key="tag" disable-transitions effect="plain">{{ tag }}</el-tag><span v-if="!a.tags?.length" class="kp-muted">无标签，可通过 digest 拉取</span></div>
+                <div class="artifact-tags"><span class="kp-muted">标签</span><span v-for="tag in a.tags" :key="tag" class="artifact-tag-entry"><el-tag disable-transitions effect="plain">{{ tag }}</el-tag><el-button v-if="canDeleteReg" text type="danger" size="small" :disabled="!!deleteBusy" :aria-label="`删除标签 ${tag}`" @click="deleteTag(a,tag)">删除标签</el-button></span><span v-if="!a.tags?.length" class="kp-muted">无标签，可通过 digest 拉取</span></div>
                 <dl class="artifact-metadata"><div><dt>大小</dt><dd>{{ fmtSize(a.size) }}</dd></div><div><dt>推送时间</dt><dd>{{ fmtTime(a.pushTime) }}</dd></div><div class="artifact-digest"><dt>Digest</dt><dd class="kp-mono">{{ a.digest || '—' }}</dd></div></dl>
                 <div v-for="pullRef in a.pullRefs" :key="pullRef" class="artifact-pull"><code>docker pull {{ pullRef }}</code><el-button link type="primary" @click="copy(`docker pull ${pullRef}`)">复制命令</el-button></div>
+                <div v-if="canUpdateReg||canDeleteReg" class="artifact-actions"><el-button v-if="canUpdateReg" link type="primary" :disabled="tagSaving" @click="openTag(a)">添加标签</el-button><el-button v-if="canDeleteReg" link type="danger" :disabled="!!deleteBusy" :loading="deleteBusy===a.digest" @click="deleteArtifact(a)">删除制品</el-button></div>
               </article>
               <div v-if="!currentArtifacts.length && !artifactsLoading[selectedRepository.name]" class="browser-empty">该仓库下没有镜像或制品。</div>
               <el-pagination v-if="currentArtifactPage?.total" :current-page="currentArtifactPage.page" :page-size="currentArtifactPage.pageSize" :total="currentArtifactPage.total" layout="total, prev, pager, next" size="small" :aria-label="`${selectedRepository.name} 制品分页`" @current-change="p => loadArtifacts(selectedRepository, p)" />
             </template>
           </section>
         </div>
-      </el-drawer>
+      </component>
+
+      <el-dialog v-model="projectDialog" title="创建项目" width="min(520px, 94vw)" append-to-body :close-on-click-modal="!projectSaving" :close-on-press-escape="!projectSaving" :show-close="!projectSaving">
+       <div v-if="projectTarget" class="mutation-context"><strong>目标仓库：{{projectTarget.name}}</strong><span>{{projectTarget.url}}</span><code>仓库 ID：{{projectTarget.id}}</code></div>
+       <el-form label-position="top" :disabled="projectSaving"><el-form-item label="项目名称"><el-input v-model="projectDraft.name" aria-label="新项目名称" placeholder="例如 team-apps" maxlength="255"/></el-form-item><el-form-item label="可见性"><el-radio-group v-model="projectDraft.public" aria-label="项目可见性"><el-radio :value="false">私有</el-radio><el-radio :value="true">公开</el-radio></el-radio-group></el-form-item></el-form>
+       <p class="kp-muted">公开项目允许匿名拉取；项目操作仍受保存账号在 Harbor 中的权限限制。</p><el-alert v-if="projectMutationError" type="error" :title="projectMutationError" :closable="false"/>
+       <template #footer><el-button :disabled="projectSaving" @click="projectDialog=false">取消</el-button><el-button type="primary" :loading="projectSaving" :disabled="projectUncertain||!canCreateReg" @click="submitProject">创建项目</el-button></template>
+      </el-dialog>
+      <el-dialog v-model="tagDialog" title="添加标签" width="min(640px, 94vw)" append-to-body :close-on-click-modal="!tagSaving" :close-on-press-escape="!tagSaving" :show-close="!tagSaving">
+       <dl v-if="tagTarget" class="mutation-context"><div><dt>仓库</dt><dd>{{tagTarget.registryName}} · {{tagTarget.registryUrl}}（{{tagTarget.registryId}}）</dd></div><div><dt>项目</dt><dd>{{tagTarget.project}}</dd></div><div><dt>镜像仓库</dt><dd>{{tagTarget.repository}}</dd></div><div><dt>Digest</dt><dd class="kp-mono">{{tagTarget.digest}}</dd></div></dl>
+       <el-form label-position="top" :disabled="tagSaving"><el-form-item label="新标签"><el-input v-model="tagDraft.name" aria-label="新制品标签" placeholder="例如 release-2026" maxlength="128"/></el-form-item></el-form><p class="kp-muted">为此 Digest 添加新标签；已有同名标签时由 Harbor 拒绝，页面不会自动覆盖。</p><el-alert v-if="tagMutationError" type="error" :title="tagMutationError" :closable="false"/>
+       <template #footer><el-button :disabled="tagSaving" @click="tagDialog=false">取消</el-button><el-button type="primary" :loading="tagSaving" :disabled="tagUncertain||!canUpdateReg" @click="submitTag">添加标签</el-button></template>
+      </el-dialog>
     </main>
   </component>
 </template>
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import {useRoute,useRouter} from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, Box, CircleCheck, Warning, MagicStick } from '@element-plus/icons-vue'
 import { canCreate, canUpdate, canDelete } from '../utils/perm'
@@ -210,7 +236,8 @@ import { copyText } from '../utils/clipboard'
 const canCreateReg = computed(() => canCreate('registry'))
 const canUpdateReg = computed(() => canUpdate('registry'))
 const canDeleteReg = computed(() => canDelete('registry'))
-defineProps({ embedded: { type: Boolean, default: false } })
+const props=defineProps({ embedded: { type: Boolean, default: false },workspace:{type:Boolean,default:false} })
+const route=useRoute(),router=useRouter()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -245,8 +272,11 @@ const projectPage=reactive({page:1,pageSize:20,total:0})
 const repoPage=reactive({page:1,pageSize:20,total:0})
 const projectError = ref('')
 const repoError = ref('')
-const projectGate=createRequestGate(),repoGate=createRequestGate()
-let artifactEpoch=0
+const workspaceError=ref(''),operationNotice=ref(null)
+const projectDialog=ref(false),projectTarget=ref(null),projectDraft=reactive({name:'',public:false}),projectSaving=ref(false),projectMutationError=ref(''),projectUncertain=ref(false)
+const tagDialog=ref(false),tagTarget=ref(null),tagDraft=reactive({name:''}),tagSaving=ref(false),tagMutationError=ref(''),tagUncertain=ref(false),deleteBusy=ref('')
+const projectGate=createRequestGate(),repoGate=createRequestGate(),listGate=createRequestGate()
+let artifactEpoch=0,browserEpoch=0,projectMutationEpoch=0,tagMutationEpoch=0,deleteRequest=null
 const artifactRequests=new Map()
 
 const okCount = computed(() => registries.value.filter(r => r.health?.ok).length)
@@ -262,18 +292,22 @@ const filteredRepos = computed(() => {
 })
 
 async function load({ autoTest = true } = {}) {
+  const request=listGate.next()
   loading.value = true
   registryError.value = ''
   try {
-    registries.value = await api.registries()
+    const records=await api.registries()
+    if(!listGate.current(request))return
+    registries.value = records
     // 首次进来没有健康状态时静默测一遍，避免列表里一直是「未测试」
     const need = registries.value.filter(r => !r.health)
     if (autoTest && need.length) {
       await Promise.all(need.map(r => api.testRegistry(r.id).catch(() => null)))
-      registries.value = await api.registries()
+      const tested=await api.registries()
+      if(listGate.current(request))registries.value = tested
     }
-  } catch (e) { registryError.value = e.message || '仓库配置加载失败' }
-  finally { loading.value = false }
+  } catch (e) { if(listGate.current(request))registryError.value = e.message || '仓库配置加载失败' }
+  finally { if(listGate.current(request))loading.value = false }
 }
 
 function openAdd() {
@@ -346,6 +380,14 @@ function useCandidate(row) {
 
 function resetArtifacts() {
   artifactEpoch++
+  tagMutationEpoch++
+  tagDialog.value=false
+  tagTarget.value=null
+  tagSaving.value=false
+  tagMutationError.value=''
+  tagUncertain.value=false
+  deleteRequest=null
+  deleteBusy.value=''
   selectedRepository.value = null
   for (const map of [artifacts, artifactsLoading, artifactErrors, artifactPages]) {
     for (const key of Object.keys(map)) delete map[key]
@@ -353,6 +395,14 @@ function resetArtifacts() {
   artifactRequests.clear()
 }
 function resetBrowser() {
+  browserEpoch++
+  projectMutationEpoch++
+  projectDialog.value=false
+  projectTarget.value=null
+  projectSaving.value=false
+  projectMutationError.value=''
+  projectUncertain.value=false
+  operationNotice.value=null
   projectGate.invalidate()
   repoGate.invalidate()
   resetArtifacts()
@@ -372,11 +422,12 @@ function resetBrowser() {
 }
 async function browse(row) {
   resetBrowser()
+  workspaceError.value=''
   browseRegistry.value = row
   browseVisible.value = true
   await loadProjects()
 }
-async function loadProjects() {
+async function loadProjects(options={}) {
   const request = projectGate.next(), registryId = browseRegistry.value?.id
   if (!registryId) return
   repoGate.invalidate()
@@ -395,10 +446,11 @@ async function loadProjects() {
     const data = normalizePage(await api.registryProjects(registryId, { page: projectPage.page, pageSize: projectPage.pageSize }), projectPage)
     if (!projectGate.current(request)) return
     projects.value = data.items
+    if(options?.createdProject&&!projects.value.some(item=>item.name===options.createdProject.name))projects.value=[...projects.value,options.createdProject]
     Object.assign(projectPage, { page: data.page, pageSize: data.pageSize, total: data.total })
     projectsLoading.value = false
     if (projects.value.length) {
-      project.value = projects.value[0].name
+      project.value = projects.value.some(item=>item.name===options?.selectProject)?options.selectProject:projects.value[0].name
       await loadRepos()
     }
   } catch (e) {
@@ -454,6 +506,9 @@ async function loadArtifacts(row,page=1) {
     if (epoch !== artifactEpoch || artifactRequests.get(row.name) !== request) return
     artifacts[row.name] = data.items
     artifactPages[row.name] = { page: data.page, pageSize: data.pageSize, total: data.total }
+    const lastPage = Math.max(1, Math.ceil(data.total / data.pageSize))
+    if (!data.items.length && lastPage < data.page && lastPage < page) return await loadArtifacts(row, lastPage)
+    if(selectedRepository.value?.name===row.name)selectedRepository.value.artifactCount=data.total
   } catch (e) {
     if (epoch === artifactEpoch && artifactRequests.get(row.name) === request) artifactErrors[row.name] = e.message || '镜像与标签加载失败'
   } finally {
@@ -461,7 +516,88 @@ async function loadArtifacts(row,page=1) {
   }
 }
 watch(browseVisible, visible => { if (!visible) resetBrowser() }, { flush: 'sync' })
-onUnmounted(resetBrowser)
+watch(()=>route.params.registryId,()=>{if(props.workspace&&!loading.value)applyWorkspaceRoute()})
+onUnmounted(()=>{listGate.invalidate();resetBrowser()})
+
+function workspaceHref(row){return router.resolve({name:'registry-workspace',params:{...(row?.id?{registryId:row.id}:{})}}).href}
+async function switchWorkspace(id){const row=registries.value.find(item=>item.id===id);if(row)await router.replace(workspaceHref(row))}
+async function applyWorkspaceRoute(){
+ if(!props.workspace)return
+ workspaceError.value=''
+ const id=typeof route.params.registryId==='string'?route.params.registryId:''
+ const row=id?registries.value.find(item=>item.id===id):registries.value[0]
+ if(!row){resetBrowser();if(id)workspaceError.value='指定的镜像仓库不存在或当前账号不可用，请选择其他已保存仓库';return}
+ await browse(row)
+}
+async function refreshWorkspace(){await load({autoTest:false});if(!registryError.value)await applyWorkspaceRoute()}
+function pinArtifact(artifact,tag){
+ if(!browseRegistry.value||!project.value||!selectedRepository.value||!artifact?.digest)return null
+ return Object.freeze({registryId:browseRegistry.value.id,registryName:browseRegistry.value.name,registryUrl:browseRegistry.value.url,project:project.value,repository:selectedRepository.value.name,digest:artifact.digest,...(tag!==undefined?{tag}:{}),tags:[...(artifact.tags||[])]})
+}
+function artifactContextMatches(target){return target&&browseRegistry.value?.id===target.registryId&&project.value===target.project&&selectedRepository.value?.name===target.repository}
+function unknownOutcome(error){return !error?.status||error.status>=500||error.status===408}
+function mutationMessage(error,action){return unknownOutcome(error)?`${action}请求结果未确认，请刷新核对后再操作；页面不会自动重试。${error?.message?' '+error.message:''}`:error?.message||`${action}失败`}
+function openCreateProject(){
+ if(!canCreateReg.value||!browseRegistry.value||projectSaving.value)return
+ projectMutationEpoch++
+ projectTarget.value=Object.freeze({id:browseRegistry.value.id,name:browseRegistry.value.name,url:browseRegistry.value.url})
+ Object.assign(projectDraft,{name:'',public:false});projectMutationError.value='';projectUncertain.value=false;projectDialog.value=true
+}
+async function submitProject(){
+ if(!canCreateReg.value||projectSaving.value||projectUncertain.value||!projectDialog.value||!projectTarget.value)return
+ const target=projectTarget.value,epoch=projectMutationEpoch,name=projectDraft.name.trim(),isPublic=projectDraft.public===true
+ if(name.length>255||!/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/.test(name)){
+  projectMutationError.value='项目名称须为 1–255 个字符，以小写字母或数字开头和结尾，分隔符可用点、横线或下划线'
+  return
+ }
+ projectSaving.value=true;projectMutationError.value=''
+ try{
+  await api.createRegistryProject(target.id,{name,public:isPublic,expectedUrl:target.url},{silent:true})
+  if(epoch!==projectMutationEpoch||browseRegistry.value?.id!==target.id)return
+  projectDialog.value=false;operationNotice.value={type:'success',message:`${target.name}：已创建${isPublic?'公开':'私有'}项目 ${name}`}
+  projectPage.page=1;await loadProjects({selectProject:name,createdProject:{name,public:isPublic,repoCount:0}})
+ }catch(error){if(epoch===projectMutationEpoch&&browseRegistry.value?.id===target.id){projectUncertain.value=unknownOutcome(error);projectMutationError.value=mutationMessage(error,'创建项目')}}
+ finally{if(epoch===projectMutationEpoch)projectSaving.value=false}
+}
+function openTag(artifact){
+ if(!canUpdateReg.value||tagSaving.value)return
+ const target=pinArtifact(artifact);if(!target)return
+ tagMutationEpoch++;tagTarget.value=target;tagDraft.name='';tagMutationError.value='';tagUncertain.value=false;tagDialog.value=true
+}
+async function submitTag(){
+ if(!canUpdateReg.value||tagSaving.value||tagUncertain.value||!tagDialog.value||!tagTarget.value)return
+ const target=tagTarget.value,epoch=tagMutationEpoch,tag=tagDraft.name.trim()
+ if(!artifactContextMatches(target)){tagDialog.value=false;return}
+ if(!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(tag)){tagMutationError.value='标签使用字母、数字、下划线、点或横线，不能以点或横线开头，最多 128 字符';return}
+ if(target.tags.includes(tag)){tagMutationError.value='此制品已包含该标签，请填写新标签';return}
+ tagSaving.value=true;tagMutationError.value=''
+ try{
+  await api.createRegistryTag(target.registryId,{project:target.project,repository:target.repository,digest:target.digest,tag,expectedUrl:target.registryUrl},{silent:true})
+  if(epoch!==tagMutationEpoch||!artifactContextMatches(target))return
+  tagDialog.value=false;operationNotice.value={type:'success',message:`${target.registryName} / ${target.repository}：已为 ${target.digest} 添加标签 ${tag}`}
+  await loadArtifacts(selectedRepository.value,currentArtifactPage.value?.page||1)
+ }catch(error){if(epoch===tagMutationEpoch&&artifactContextMatches(target)){tagUncertain.value=unknownOutcome(error);tagMutationError.value=mutationMessage(error,'添加标签')}}
+ finally{if(epoch===tagMutationEpoch)tagSaving.value=false}
+}
+function deleteTag(artifact,tag){return deleteImageObject(artifact,tag)}
+function deleteArtifact(artifact){return deleteImageObject(artifact)}
+async function deleteImageObject(artifact,tag){
+ if(!canDeleteReg.value||deleteBusy.value)return
+ const target=pinArtifact(artifact,tag);if(!target)return
+ const epoch=browserEpoch,artifactVersion=artifactEpoch,tagOnly=tag!==undefined,action=tagOnly?'删除标签':'删除制品'
+ const context=`仓库：${target.registryName}（${target.registryId}）\n地址：${target.registryUrl}\n项目：${target.project}\n镜像仓库：${target.repository}\nDigest：${target.digest}\n${tagOnly?`标签：${target.tag}`:`关联标签：${target.tags.join('、')||'无标签'}`}`
+ try{await ElMessageBox.confirm(`${context}\n\n${tagOnly?'仅移除此标签；保留制品和其他标签。':'将删除此 Digest 及其全部标签，之后可能无法拉取。此操作不可在页面撤销。'}`,action,{type:'warning',confirmButtonText:action,confirmButtonClass:'el-button--danger',customClass:'registry-mutation-confirm',dangerouslyUseHTMLString:false})}catch{return}
+ if(epoch!==browserEpoch||artifactVersion!==artifactEpoch||!artifactContextMatches(target)||!canDeleteReg.value)return
+ const request=Symbol();deleteRequest=request;deleteBusy.value=target.digest;operationNotice.value=null
+ const params={project:target.project,repository:target.repository,digest:target.digest,...(tagOnly?{tag:target.tag}:{}),expectedUrl:target.registryUrl}
+ try{
+  if(tagOnly)await api.removeRegistryTag(target.registryId,params,{silent:true});else await api.removeRegistryArtifact(target.registryId,params,{silent:true})
+  if(deleteRequest!==request||!artifactContextMatches(target))return
+  operationNotice.value={type:'success',message:`${target.registryName} / ${target.repository}：已${action} ${tagOnly?target.tag:target.digest}`}
+  await loadArtifacts(selectedRepository.value,currentArtifactPage.value?.page||1)
+ }catch(error){if(deleteRequest===request&&artifactContextMatches(target))operationNotice.value={type:'error',message:`${target.registryName} / ${target.repository} / ${target.digest}${tagOnly?' / '+target.tag:''}：${mutationMessage(error,action)}`}}
+ finally{if(deleteRequest===request){deleteRequest=null;deleteBusy.value=''}}
+}
 
 function healthLabel(health) {
   if (!health.ok) return '连接异常'
@@ -491,7 +627,7 @@ function fmtTime(v) {
   return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-onMounted(load)
+onMounted(async()=>{await load({autoTest:!props.workspace});if(props.workspace&&!registryError.value)await applyWorkspaceRoute()})
 </script>
 
 <style scoped>
@@ -501,6 +637,8 @@ onMounted(load)
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
 .page-head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
 .page-head p { margin: 6px 0 0; font-size: 12px; max-width: 720px; line-height: 1.6; }
+.registry-open-workspace{display:inline-flex;align-items:center;justify-content:center;padding:8px 14px;border:1px solid var(--kp-border-strong);border-radius:8px;color:var(--kp-brand);font-size:14px;white-space:nowrap;background:var(--kp-surface)}.registry-open-workspace:hover{border-color:var(--kp-brand);background:var(--kp-brand-soft)}.registry-row-workspace{color:var(--kp-brand);font-size:13px;margin:0 10px}.registry-workspace{min-height:100vh;background:var(--kp-bg)}.workspace-main{max-width:1500px;padding:30px 36px 60px}.workspace-header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:24px}.workspace-brand{font-size:14px;font-weight:700;color:var(--kp-brand)}.workspace-header h1{font-size:26px;font-weight:650;margin:7px 0}.workspace-header p{font-size:14px;margin:0;line-height:1.6}.workspace-back{color:var(--kp-brand);white-space:nowrap}.workspace-controls{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:22px;padding:18px 20px;border:1px solid var(--kp-border);border-radius:10px;background:var(--kp-surface)}.workspace-controls>.el-select{width:min(360px,100%)}.workspace-content{display:block;border:1px solid var(--kp-border);border-radius:10px;background:var(--kp-surface);padding:24px}.mutation-context{display:flex;flex-direction:column;gap:7px;padding:12px 14px;margin:0 0 20px;border:1px solid var(--kp-border);border-radius:8px;overflow-wrap:anywhere;font-size:13px}.mutation-context>div{display:grid;grid-template-columns:70px minmax(0,1fr);gap:12px}.mutation-context dt{color:var(--kp-muted)}.mutation-context dd{margin:0}.artifact-tag-entry{display:inline-flex;align-items:center;gap:4px;max-width:100%;flex-wrap:wrap}.artifact-actions{display:flex;gap:14px;justify-content:flex-end;border-top:1px solid var(--kp-border);padding-top:12px;margin-top:12px}.registry-workspace a:focus-visible,.registry-open-workspace:focus-visible,.registry-row-workspace:focus-visible{outline:2px solid var(--kp-brand);outline-offset:3px}
+:global(.registry-mutation-confirm .el-message-box__message p){white-space:pre-line;overflow-wrap:anywhere}:global(.registry-mutation-confirm){max-width:calc(100vw - 28px);width:620px}
 .registry-stat { appearance: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 .registry-stat:hover, .registry-stat.selected { border-color: var(--kp-brand); }
 .registry-stat:focus-visible { outline: 2px solid var(--kp-brand); outline-offset: 3px; }
@@ -516,7 +654,7 @@ onMounted(load)
 .browser-section + .browser-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--kp-border); }
 .browser-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 14px; }
 .browser-heading h2 { font-size: 16px; font-weight: 600; margin: 0; }
-.browser-heading > .el-button { margin-left: auto; }
+.browser-heading > .el-button:first-of-type { margin-left: auto; }
 .browser-heading > .kp-muted { overflow-wrap: anywhere; }
 .project-selector { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .project-selector .el-select { width: min(360px, 100%); }
@@ -539,6 +677,7 @@ onMounted(load)
 .artifact-pull .el-button { flex-shrink: 0; margin-top: 2px; }
 @media (max-width: 600px) {
   .plat-main { padding: 18px 14px 32px; }
+  .workspace-header{align-items:flex-start;flex-wrap:wrap}.workspace-header h1{font-size:23px}.workspace-content{padding:16px 12px}.workspace-controls{padding:14px}.workspace-controls>.el-select{flex:1;min-width:170px}.page-head>div:last-child{flex-wrap:wrap}.mutation-context>div{grid-template-columns:1fr;gap:4px}
   .registry-list-head > .kp-muted { flex-basis: 100%; }
   .artifact-item { padding: 12px; }
   .artifact-metadata { gap: 10px; }

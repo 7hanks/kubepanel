@@ -9,6 +9,7 @@ const routes = [
   { path: '/login', name: 'login', component: () => import('../views/Login.vue'), meta: { public: true } },
   { path: '/clusters', name: 'clusters', component: () => import('../views/ClusterList.vue'), meta: { title: '集群列表', perm: ['cluster:list', 'cluster:detail'] } },
   { path: '/registries', name: 'registries', component: () => import('../views/Registries.vue'), meta: { title: '镜像仓库', perm: ['registry:list', 'registry:detail'] } },
+  { path:'/registries/workspace/:registryId?',name:'registry-workspace',component:()=>import('../views/Registries.vue'),props:{workspace:true},meta:{title:'镜像仓库工作区',perm:['registry:list','registry:detail']} },
   { path: '/monitor', name: 'monitor', component: () => import('../views/Monitor.vue'), meta: { title: '监控', perm: ['monitor:list', 'monitor:detail'] } },
   // 用户管理：一级菜单，下面挂「用户」和「角色」两个子页面
   { path: '/users', name: 'users', component: () => import('../views/Users.vue'), meta: { title: '用户', perm: ['user:list', 'user:detail'] } },
@@ -32,7 +33,7 @@ const routes = [
       { path: 'custom-resources', name: 'custom-resources', component: () => import('../views/CustomResources.vue'), meta: { title: '自定义资源' } },
       { path: 'pods/:namespace/:name/logs', name: 'pod-logs', component: () => import('../views/PodLogs.vue'), meta:{perm:['pod:logs']} },
       { path: 'pods/:namespace/:name/terminal', name: 'pod-terminal', component: () => import('../views/PodTerminal.vue'), meta:{perm:['pod:exec']} },
-      { path: 'workbench', name: 'workbench', component: () => import('../views/YamlWorkbench.vue'), meta: { title: 'YAML 工作台' } },
+      { path: 'workbench', name: 'workbench', component: () => import('../views/YamlWorkbench.vue'), meta: { title: 'YAML 生成器' } },
     ],
   },
   { path: '/', redirect: () => landingPath() },

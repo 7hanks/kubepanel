@@ -24,7 +24,9 @@
           <el-tab-pane v-if="coreKind==='Service'" label="高级配置" name="service-advanced"/>
           <el-tab-pane v-if="storage" label="存储配置" name="storage"><StorageForm :model-value="draft" :original="original" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('存储配置',value)"/></el-tab-pane>
           <el-tab-pane v-if="extensionComponent" :label="extensionLabel" name="configuration">
-            <component :is="extensionComponent" :model-value="draft" :original="original" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('专用资源配置',value)"/>
+            <component :is="extensionComponent" :model-value="draft" :original="original" :creating="creating" :disabled="busy"
+              v-bind="formType==='advanced'?{clusterId:target.clusterId,active:activeTab==='configuration'}:{}"
+              @change="touch" @validity="value=>setValidity('专用资源配置',value)"/>
           </el-tab-pane>
           <el-tab-pane v-if="workload&&meta.kind!=='Pod'" name="strategy">
             <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.strategy"/></svg>部署策略</span></template>

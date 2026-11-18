@@ -78,7 +78,7 @@ export const navGroups = [
       R('EndpointSlices', 'EndpointSlice', 'endpointslices', 'discovery.k8s.io', 'v1', true, 'Link', '端点切片'),
     ],
   },
-  { id: 'tools', title: '工具', icon: 'EditPen', items: [{ label: 'YAML 工作台', icon: 'EditPen', path: '/workbench' }] },
+  { id: 'tools', title: '工具', icon: 'EditPen', items: [{ label: 'YAML 生成器', aliases: 'YAML 工作台 Apply', icon: 'EditPen', path: '/workbench' }] },
 ]
 
 // 扁平索引：key = "group/version/plural"，core 组为 "_core"

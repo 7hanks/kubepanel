@@ -4,7 +4,8 @@ import crypto from 'node:crypto'
 import { config } from './config.js'
 
 const MAX_BYTES = 10 * 1024 * 1024
-const fields = ['username','action','clusterId','namespace','resource','name','method','path','status','requestId','durationMs','ip']
+const registryFields = ['registryId','project','repository','digest','tag']
+const fields = ['username','action','clusterId','namespace','resource','name','method','path','status','requestId','durationMs','ip',...registryFields]
 export function writeAudit(event) {
   fs.mkdirSync(config.dataDir, {recursive:true,mode:0o700})
   const file = path.join(config.dataDir,'audit.jsonl')
@@ -32,7 +33,7 @@ export function auditMiddleware(req,res,next) {
   res.setHeader('X-Request-Id',req.requestId)
   if (!['GET','HEAD','OPTIONS'].includes(req.method)) res.on('finish',()=>{
     try {
-      writeAudit({username:req.account?.username||'anonymous',action:`${req.method} ${req.route?.path||req.path}`,method:req.method,path:req.path,clusterId:req.clusterId||req.query.clusterId,namespace:req.params.namespace,resource:req.params.plural,name:req.params.name,status:res.statusCode,requestId:req.requestId,durationMs:Date.now()-started,ip:req.ip})
+      writeAudit({username:req.account?.username||'anonymous',action:`${req.method} ${req.route?.path||req.path}`,method:req.method,path:req.path,clusterId:req.clusterId||req.query.clusterId,namespace:req.params.namespace,resource:req.params.plural,name:req.params.name,status:res.statusCode,requestId:req.requestId,durationMs:Date.now()-started,ip:req.ip,...Object.fromEntries(registryFields.map(field=>[field,req.auditTarget?.[field]]))})
     } catch { console.error('[KubePanel] 审计日志写入失败，请检查数据卷空间与权限') }
   })
   next()

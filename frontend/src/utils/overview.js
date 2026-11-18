@@ -1,4 +1,17 @@
 const compact = n => Number(n.toFixed(2)).toLocaleString('en-US', { maximumFractionDigits: 2 })
+const memoryUnits = {
+  '': 1, n: 1e-9, u: 1e-6, m: 1e-3, k: 1e3, K: 1e3, M: 1e6,
+  G: 1e9, T: 1e12, P: 1e15, E: 1e18,
+  Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4, Pi: 1024 ** 5, Ei: 1024 ** 6,
+}
+
+export function memoryQuantityGi(quantity) {
+  if (typeof quantity !== 'number' && typeof quantity !== 'string') return '—'
+  const match = String(quantity).trim().match(/^([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)([a-zA-Z]*)$/)
+  if (!match || !Object.hasOwn(memoryUnits, match[2])) return '—'
+  const gi = Number(match[1]) * (memoryUnits[match[2]] / 1024 ** 3)
+  return Number.isFinite(gi) ? `${compact(gi)} Gi` : '—'
+}
 
 export function usagePresentation(metric, kind) {
   if (!metric || ![metric.used, metric.allocatable, metric.percent].every(Number.isFinite) || metric.allocatable <= 0) return { value: '—', percent: 0, detail: '指标不可用', available: false }

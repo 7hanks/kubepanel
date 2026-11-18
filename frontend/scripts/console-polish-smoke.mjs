@@ -19,6 +19,7 @@ const resources={services:[svc,{...structuredClone(svc),metadata:metadata('gitla
 const discovery=[['services','Service'],['pods','Pod'],['configmaps','ConfigMap'],['secrets','Secret']].map(([plural,kind])=>({group:'',version:'v1',plural,kind,namespaced:true,verbs:['get','list','create','update','delete']}))
 resources.namespaces=[{apiVersion:'v1',kind:'Namespace',metadata:{name:'default',uid:'ns-1',resourceVersion:'4'},status:{phase:'Active'}}]
 resources.nodes=[{apiVersion:'v1',kind:'Node',metadata:{name:'node-1',uid:'node-1',resourceVersion:'4'},spec:{},status:{conditions:[{type:'Ready',status:'True'}]}}]
+resources.deployments=[{apiVersion:'apps/v1',kind:'Deployment',metadata:metadata('web'),spec:{replicas:3}}]
 resources.serviceaccounts=[{apiVersion:'v1',kind:'ServiceAccount',metadata:metadata('builder'),automountServiceAccountToken:false,imagePullSecrets:[{name:'registry-key'}]}]
 discovery.push(...[['namespaces','Namespace',false],['nodes','Node',false],['serviceaccounts','ServiceAccount',true]].map(([plural,kind,namespaced])=>({group:'',version:'v1',plural,kind,namespaced,verbs:['get','list','create','update','delete']})))
 discovery.push({group:'rbac.authorization.k8s.io',version:'v1',plural:'rolebindings',kind:'RoleBinding',namespaced:true,verbs:['get','list','create','update','delete']})
@@ -31,6 +32,7 @@ await page.route('**/api/**',async route=>{
  if(path==='/v1/auth/profile')return send({username:'admin',role:'admin',permissions:['*'],csrfToken:'fixture',scope:{clusters:['*'],namespaces:['*'],resources:['*']}})
  if(path==='/v1/clusters')return send([{id:'test',name:'dev',healthy:true,createdAt:null,clusterCreatedAt:'2025-12-23T06:54:10Z',createdAtSource:'kube-system'}])
  if(path==='/v1/cluster')return send({name:'dev',version:'v1.33.7',namespaces:['default']})
+ if(path==='/v1/overview')return send({stat:{nodes:1},nodes:[{name:'node-1',ready:true,capacity:{memory:'16385520Ki'},allocatable:{memory:'16283120Ki'}}]})
  if(path==='/v1/resources')return send(discovery)
  if(path==='/v1/users')return send({users:[]})
  if(path==='/v1/roles')return send({objects:OBJECTS,actions:ACTIONS,roles:[{id:'readonly',name:'只读用户',builtin:true,permissions:OBJECTS.flatMap(({key})=>[`${key}:list`,`${key}:detail`])}]})
@@ -172,7 +174,11 @@ try{
  await page.getByRole('heading',{name:'新建自动扩缩容',exact:true}).waitFor()
  await page.getByRole('textbox',{name:'资源名称',exact:true}).fill('web-hpa')
  await page.getByRole('tab',{name:'扩缩容配置',exact:true}).click()
- await page.getByRole('textbox',{name:'扩缩容目标名称',exact:true}).fill('web')
+ await page.getByRole('combobox',{name:'扩缩容目标名称',exact:true}).click()
+ await page.getByRole('option',{name:'web',exact:true}).click()
+ await page.getByRole('spinbutton',{name:'最小副本数',exact:true}).fill('2')
+ await page.getByRole('spinbutton',{name:'最大副本数',exact:true}).fill('5')
+ await page.getByRole('spinbutton',{name:'最大副本数',exact:true}).press('Tab')
  await shot('hpa-create')
  await page.getByRole('button',{name:'服务端预检',exact:true}).click()
  const hpaPreview=page.getByRole('dialog',{name:'创建预览',exact:true})
@@ -180,6 +186,11 @@ try{
  await page.waitForURL('**/horizontalpodautoscalers')
  assert.deepEqual(writes.at(-1).body.spec.scaleTargetRef,{apiVersion:'apps/v1',kind:'Deployment',name:'web'})
  assert.equal(writes.at(-1).body.metadata.name,'web-hpa')
+ assert.equal(writes.at(-1).body.spec.minReplicas,2)
+ assert.equal(writes.at(-1).body.spec.maxReplicas,5)
+ await go('/overview')
+ await page.getByRole('tab',{name:'节点',exact:true}).click()
+ await page.getByRole('cell',{name:'15.63 Gi / 15.53 Gi',exact:true}).waitFor()
  await page.setViewportSize({width:1413,height:871})
  await go('/roles')
  const summary=page.getByRole('button',{name:'查看只读用户的权限明细',exact:true})
@@ -199,5 +210,5 @@ try{
  await go('/r/_core/v1/pods/default/web-pod/edit');await page.getByText('容器组不提供表单编辑，请在所属工作负载中修改容器组模板。',{exact:true}).waitFor()
  await go('/clusters');await page.getByText(/2025[-/]12[-/]23/).waitFor();await shot('cluster-created-time')
  assert.deepEqual(errors,[])
- console.log('PASS: existing console flows, RoleBinding form/YAML paths, HPA preflight and create, role alignment, registry test label, login description. Fixture-only mutations.')
+ console.log('PASS: existing console flows, RoleBinding form/YAML paths, HPA workload selection and create, node memory in Gi, role alignment, registry test label, login description. Fixture-only mutations.')
 }catch(e){await shot('failure');console.error('Runtime errors:',errors);console.error((await page.locator('body').innerText()).slice(-4500));throw e}finally{await browser.close();await vite?.close()}

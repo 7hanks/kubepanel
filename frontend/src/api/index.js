@@ -132,6 +132,10 @@ export const api = {
   registryRepositories: (id, project, options={}) => http.get(`/v1/registries/${encodeURIComponent(id)}/repositories`, { params: { project,...options } }),
   registryArtifacts: (id, project, repository, options={}) =>
     http.get(`/v1/registries/${encodeURIComponent(id)}/artifacts`, { params: { project, repository,...options } }),
+  createRegistryProject:(id,body,config={})=>http.post(`/v1/registries/${encodeURIComponent(id)}/projects`,body,config),
+  createRegistryTag:(id,body,config={})=>http.post(`/v1/registries/${encodeURIComponent(id)}/tags`,body,config),
+  removeRegistryTag:(id,params,config={})=>http.delete(`/v1/registries/${encodeURIComponent(id)}/tags`,{...config,params:{...config.params,...params}}),
+  removeRegistryArtifact:(id,params,config={})=>http.delete(`/v1/registries/${encodeURIComponent(id)}/artifacts`,{...config,params:{...config.params,...params}}),
 
   // ---- 监控（平台级，多 Grafana 实例 + 集群级指标） ----
   monitor: () => http.get('/v1/monitor'),

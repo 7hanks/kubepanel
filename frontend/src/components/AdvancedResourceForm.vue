@@ -5,8 +5,26 @@
       <template v-if="kind === 'HorizontalPodAutoscaler'">
         <el-form-item label="目标类型" required><el-select :model-value="targetRef.kind || ''" filterable allow-create default-first-option aria-label="扩缩容目标类型" @update:model-value="setTargetKind"><el-option v-for="value in targetKinds" :key="value" :label="value" :value="value" /></el-select></el-form-item>
         <el-form-item label="目标 API 版本" required><el-input :model-value="targetRef.apiVersion || ''" aria-label="扩缩容目标 API 版本" placeholder="例如 apps/v1" @update:model-value="value => setTargetRef('apiVersion', value)" /></el-form-item>
-        <el-form-item label="目标名称" required><el-input :model-value="targetRef.name || ''" aria-label="扩缩容目标名称" placeholder="当前命名空间内的工作负载名称" @update:model-value="value => setTargetRef('name', value)" /></el-form-item>
-        <el-form-item label="副本范围" required><div class="inline-fields"><el-input-number :model-value="spec.minReplicas ?? 1" :min="0" :precision="0" controls-position="right" aria-label="最小副本数" @update:model-value="value => setNumber(ensureSpec(), 'minReplicas', value)" /><span>至</span><el-input-number :model-value="spec.maxReplicas" :min="1" :precision="0" controls-position="right" aria-label="最大副本数" @update:model-value="value => setNumber(ensureSpec(), 'maxReplicas', value)" /></div></el-form-item>
+        <el-form-item label="目标名称" required>
+          <div class="target-picker">
+            <el-select :model-value="targetRef.name || ''" filterable allow-create clearable
+              default-first-option :reserve-keyword="false" :loading="targetLoading"
+              aria-label="扩缩容目标名称" placeholder="选择工作负载，或输入名称后按 Enter"
+              :no-data-text="targetEmptyText" @update:model-value="value => setTargetRef('name', value)">
+              <el-option v-for="name in targetNames" :key="name" :label="name" :value="name" />
+            </el-select>
+            <div v-if="targetMessage" class="target-picker-note">
+              <span role="status">{{ targetMessage }}</span>
+              <el-button v-if="targetFailed" link type="primary" @click="targetReload++">重试</el-button>
+            </div>
+          </div>
+        </el-form-item>
+        <el-form-item label="最小副本数" required>
+          <el-input-number :model-value="spec.minReplicas ?? 1" :min="0" :precision="0" controls-position="right" aria-label="最小副本数" @update:model-value="value => setNumber(ensureSpec(), 'minReplicas', value)" />
+        </el-form-item>
+        <el-form-item label="最大副本数" required>
+          <el-input-number :model-value="spec.maxReplicas" :min="1" :precision="0" controls-position="right" aria-label="最大副本数" @update:model-value="value => setNumber(ensureSpec(), 'maxReplicas', value)" />
+        </el-form-item>
         <div class="advanced-section-head"><h3>扩缩容指标</h3><el-button :icon="Plus" :disabled="disabled" @click="addMetric('cpu')">CPU 指标</el-button><el-button :icon="Plus" :disabled="disabled" @click="addMetric('memory')">内存指标</el-button></div>
         <p class="advanced-note">利用率相对于工作负载的资源 requests；平均值可填写 200m、256Mi 等资源数量。</p>
         <article v-for="entry in resourceMetrics" :key="entry.index" class="advanced-item">
@@ -82,14 +100,95 @@
 import {computed,ref,watch} from 'vue'
 import {Plus,Delete} from '@element-plus/icons-vue'
 import {validateAdvancedResource} from '../utils/advanced-resource-form'
+import api from '../api'
+import {store} from '../store'
+import {canResource} from '../utils/perm'
 import KeyValueFields from './KeyValueFields.vue'
 
-const props=defineProps({modelValue:{type:Object,required:true},creating:Boolean,disabled:Boolean})
+const props=defineProps({
+  modelValue:{type:Object,required:true},
+  creating:Boolean,
+  disabled:Boolean,
+  clusterId:String,
+  active:{type:Boolean,default:true},
+})
 const emit=defineEmits(['change','validity'])
 const kind=computed(()=>props.modelValue.kind),spec=computed(()=>props.modelValue.spec||{}),targetRef=computed(()=>spec.value.scaleTargetRef||{})
 const limits=computed(()=>spec.value.limits||[]),subsets=computed(()=>props.modelValue.subsets||[]),sliceEndpoints=computed(()=>props.modelValue.endpoints||[])
 const heading=computed(()=>({HorizontalPodAutoscaler:'自动扩缩容配置',ResourceQuota:'资源配额配置',LimitRange:'资源限制配置',Endpoints:'端点配置',EndpointSlice:'端点切片配置'})[kind.value]||'资源配置')
-const targetKinds=['Deployment','StatefulSet','ReplicaSet','ReplicationController'],protocols=['TCP','UDP','SCTP'],limitTypes=['Container','Pod','PersistentVolumeClaim']
+const workloadTargets = {
+  Deployment: { group:'apps', version:'v1', plural:'deployments' },
+  StatefulSet: { group:'apps', version:'v1', plural:'statefulsets' },
+  ReplicaSet: { group:'apps', version:'v1', plural:'replicasets' },
+  ReplicationController: { group:'', version:'v1', plural:'replicationcontrollers' },
+}
+const targetKinds=Object.keys(workloadTargets),protocols=['TCP','UDP','SCTP'],limitTypes=['Container','Pod','PersistentVolumeClaim']
+const targetNames = ref([])
+const targetLoading = ref(false)
+const targetFailed = ref(false)
+const targetMessage = ref('')
+const targetReload = ref(0)
+const targetNamespace = computed(() => props.modelValue.metadata?.namespace || '')
+const gvkVersion = ({ group, version }) => group ? `${group}/${version}` : version
+const targetResource = computed(() => {
+  const { kind: targetKind, apiVersion } = targetRef.value
+  if (!targetKind || !apiVersion) return null
+  const discovered = store.discovery.find(meta => meta.namespaced && !meta.plural.includes('/')
+    && meta.kind === targetKind && gvkVersion(meta) === apiVersion)
+  if (discovered) return discovered.verbs?.includes('list') ? discovered : null
+  const builtin = Object.hasOwn(workloadTargets, targetKind) && workloadTargets[targetKind]
+  return builtin && gvkVersion(builtin) === apiVersion ? { ...builtin, namespaced: true } : null
+})
+const canReadTargets = computed(() => !!(props.clusterId && targetResource.value
+  && targetNamespace.value !== 'all' && /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/.test(targetNamespace.value)
+  && canResource(targetResource.value, 'list', targetNamespace.value, props.clusterId)))
+const targetEmptyText = computed(() => canReadTargets.value && !targetFailed.value
+  ? '此命名空间没有符合类型的工作负载' : '可手动输入目标名称')
+
+watch([kind, () => props.active, () => props.clusterId, targetNamespace, targetResource, canReadTargets, targetReload],
+  async ([resourceKind, active, clusterId, namespace, resource, allowed], _, onCleanup) => {
+    targetNames.value = []
+    targetLoading.value = false
+    targetFailed.value = false
+    targetMessage.value = ''
+    if (resourceKind !== 'HorizontalPodAutoscaler' || !active || !allowed) return
+    const controller = new AbortController()
+    onCleanup(() => controller.abort())
+    const current = () => !controller.signal.aborted && props.active && props.clusterId === clusterId
+      && targetNamespace.value === namespace && targetResource.value === resource && canReadTargets.value
+    targetLoading.value = true
+    try {
+      const names = new Set()
+      const cursors = new Set()
+      let cursor
+      do {
+        const page = await api.list(resource.group, resource.version, resource.plural,
+          { namespace, clusterId, limit: 200, continue: cursor }, { signal: controller.signal, silent: true })
+        if (!current()) return
+        if (!Array.isArray(page?.items)) throw new Error('工作负载列表格式不正确')
+        for (const { metadata } of page.items) {
+          if (metadata?.namespace === namespace && metadata.name && !metadata.deletionTimestamp) names.add(metadata.name)
+        }
+        cursor = page.metadata?.continue
+        if (cursor && cursors.has(cursor)) throw new Error('分页游标重复')
+        if (cursor) cursors.add(cursor)
+      } while (cursor && cursors.size < 25)
+      targetNames.value = [...names].sort((a, b) => a.localeCompare(b))
+      if (cursor) targetMessage.value = '已加载前 5000 条工作负载，可手动输入其他名称。'
+    } catch {
+      if (current()) {
+        targetFailed.value = true
+        targetMessage.value = '目标列表加载失败，可以重试或手动输入名称。'
+      }
+    } finally {
+      if (current()) targetLoading.value = false
+    }
+  }, { immediate:true })
+
+watch([() => props.modelValue, targetNamespace], ([resource, namespace], [previous, oldNamespace]) => {
+  if (props.creating && kind.value === 'HorizontalPodAutoscaler' && resource === previous
+    && namespace !== oldNamespace && targetRef.value.name) setTargetRef('name', '')
+}, { flush:'sync' })
 const quotaScopes=['Terminating','NotTerminating','BestEffort','NotBestEffort','PriorityClass','CrossNamespacePodAffinity']
 const limitFields=[{key:'default',label:'默认限制'},{key:'defaultRequest',label:'默认请求'},{key:'min',label:'最小限制'},{key:'max',label:'最大限制'},{key:'maxLimitRequestRatio',label:'最大限制请求比'}]
 const resourceMetrics=computed(()=>(spec.value.metrics||[]).map((metric,index)=>({metric,index})).filter(({metric})=>metric.type==='Resource'&&['cpu','memory'].includes(metric.resource?.name)))
@@ -103,8 +202,24 @@ function changed(){touched.value=true;emit('change')}
 function ensureSpec(){return props.modelValue.spec||=( {})}
 function setValue(target,key,value){if(props.disabled)return;target[key]=value;changed()}
 function setNumber(target,key,value){if(props.disabled)return;if(value===undefined||value===null||value==='')delete target[key];else target[key]=value;changed()}
-function setTargetRef(key,value){if(props.disabled)return;const spec=ensureSpec();spec.scaleTargetRef||={};spec.scaleTargetRef[key]=value;changed()}
-function setTargetKind(value){if(props.disabled)return;const defaults={Deployment:'apps/v1',StatefulSet:'apps/v1',ReplicaSet:'apps/v1',ReplicationController:'v1'};const prior=targetRef.value.kind,version=targetRef.value.apiVersion;setTargetRef('kind',value);if(defaults[value]&&(!version||version===defaults[prior]))setTargetRef('apiVersion',defaults[value])}
+function setTargetRef(key, value) {
+  if (props.disabled || value === targetRef.value[key]) return
+  const target = ensureSpec().scaleTargetRef ||= {}
+  target[key] = value || ''
+  if (key === 'apiVersion') target.name = ''
+  changed()
+}
+function setTargetKind(value) {
+  if (props.disabled || value === targetRef.value.kind) return
+  const target = ensureSpec().scaleTargetRef ||= {}
+  const builtin = Object.hasOwn(workloadTargets, value) && workloadTargets[value]
+  const discovered = store.discovery.find(meta => meta.kind === value && meta.namespaced
+    && meta.preferred !== false && meta.verbs?.includes('list') && !meta.plural.includes('/'))
+  target.kind = value || ''
+  target.apiVersion = builtin ? gvkVersion(builtin) : discovered ? gvkVersion(discovered) : ''
+  target.name = ''
+  changed()
+}
 function addMetric(name){if(props.disabled||!['cpu','memory'].includes(name))return;const spec=ensureSpec();spec.metrics||=[];spec.metrics.push({type:'Resource',resource:{name,target:{type:'Utilization',averageUtilization:80}}});changed()}
 function removeMetric(index){if(props.disabled)return;ensureSpec().metrics?.splice(index,1);changed()}
 function setMetricTargetType(metric,value){if(props.disabled||!['Utilization','AverageValue'].includes(value))return;metric.resource||={};const target=metric.resource.target||=( {});if(target.type===value)return;delete target.averageUtilization;delete target.averageValue;delete target.value;target.type=value;if(value==='Utilization')target.averageUtilization=80;else target.averageValue='';changed()}
@@ -138,6 +253,8 @@ function removeSliceAddress(endpoint,index){if(props.disabled)return;endpoint.ad
 </script>
 
 <style scoped>
+.target-picker{width:100%;max-width:520px;min-width:0}
+.target-picker-note{display:flex;align-items:center;gap:8px;margin-top:5px;color:var(--kp-muted);font-size:12px;line-height:1.6}
 .advanced-resource-form{min-width:0}.advanced-resource-form h2{font-size:16px;font-weight:600;margin:0 0 24px}.advanced-resource-form h3{font-size:14px;font-weight:600;margin:0}.advanced-resource-form :deep(.el-form-item){margin-bottom:18px}.advanced-resource-form :deep(.el-form-item__content){min-width:0}.advanced-resource-form :deep(.el-select){min-width:170px;width:100%;max-width:520px}.advanced-resource-form :deep(.el-input){max-width:680px}.inline-fields,.advanced-section-head,.advanced-item-head,.endpoint-address-row,.endpoint-port-row{display:flex;align-items:center;gap:12px}.inline-fields{flex-wrap:wrap}.advanced-section-head{margin:24px 0 12px}.advanced-section-head h3{flex:1}.advanced-section-head .el-button+.el-button{margin-left:0}.advanced-item{border:1px solid var(--kp-border);border-radius:8px;padding:16px;margin-bottom:16px;background:var(--kp-surface)}.advanced-item-head{justify-content:space-between;margin-bottom:16px;font-size:13px}.advanced-item-head>div{display:flex;gap:8px;align-items:center}.advanced-note{font-size:12px;line-height:1.7;color:var(--kp-muted);margin:8px 0 16px}.advanced-error{font-size:13px;line-height:1.6;color:var(--el-color-danger);margin:16px 0 0}.endpoint-address-row,.endpoint-port-row{margin:10px 0}.endpoint-address-row>.el-input{flex:1;min-width:160px}.endpoint-port-row>.el-input{flex:1;min-width:130px}.endpoint-port-row>.el-input-number{width:150px;flex:none}.endpoint-port-row>.el-select{width:105px;min-width:100px;flex:none}.advanced-resource-form .ready-select{width:110px;min-width:110px}.slice-address-row{gap:6px}.advanced-resource-form :deep(.kv-field-row){border:0;border-radius:0;background:transparent;padding:0;margin-bottom:10px}.advanced-resource-form :deep(.kv-equals){background:transparent;color:var(--kp-muted)}.advanced-resource-form :deep(.kv-field-row .el-input__wrapper){box-shadow:0 0 0 1px var(--kp-border) inset}.advanced-resource-form :deep(.kv-add){border-radius:6px;background:transparent}
 @media(max-width:700px){.advanced-resource-form :deep(.el-form-item){display:block}.advanced-resource-form :deep(.el-form-item__label){float:none;width:auto!important;text-align:left;justify-content:flex-start}.advanced-resource-form :deep(.el-form-item__content){margin-left:0!important}.endpoint-port-row{flex-wrap:wrap}.endpoint-port-row>.el-input{flex-basis:100%}.endpoint-address-row{gap:8px}.advanced-item{padding:12px}.advanced-section-head{flex-wrap:wrap}}
 </style>
