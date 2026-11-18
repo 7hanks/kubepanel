@@ -1,11 +1,22 @@
 import { load, dump } from 'js-yaml'
 import { yamlTemplate } from '../config/columns.js'
 import { importYamlDraft } from './yaml-import.js'
-import {STORAGE_KINDS,validateStorageResource} from './storage-form.js'
+import {validateStorageResource} from './storage-form.js'
+import {resourceFormType} from './resource-form-types.js'
+import {rbacDraftFields, validateRbacResource} from './rbac-form.js'
+import {advancedDraftFields, validateAdvancedResource} from './advanced-resource-form.js'
+import {networkDraftFields, validateNetworkResource} from './network-resource-form.js'
+import {crdDraftFields, validateCrdResource} from './crd-resource-form.js'
 
-export const WORKLOAD_KINDS = ['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob']
+export {WORKLOAD_KINDS, resourceFormType} from './resource-form-types.js'
 export const cloneResource = value => JSON.parse(JSON.stringify(value))
-export const apiVersionOf = meta => meta.group ? `${meta.group}/${meta.version}` : meta.version
+export const apiVersionOf = meta => meta.group && meta.group !== '_core' ? `${meta.group}/${meta.version}` : meta.version
+const dedicatedForms = {
+  rbac: { defaults: rbacDraftFields, validate: validateRbacResource },
+  advanced: { defaults: advancedDraftFields, validate: validateAdvancedResource },
+  network: { defaults: networkDraftFields, validate: validateNetworkResource },
+  crd: { defaults: crdDraftFields, validate: validateCrdResource },
+}
 export function mergeFormFields(source, reserved, fields) {
   return Object.fromEntries([
     ...Object.entries(source).filter(([key]) => reserved.includes(key)),
@@ -17,12 +28,20 @@ export function podTemplate(resource) {
   return resource.kind === 'CronJob' ? resource.spec?.jobTemplate?.spec?.template : resource.spec?.template
 }
 export const podSpec = resource => podTemplate(resource)?.spec
-export function newResourceDraft(meta, namespace) {
-  const resource = load(yamlTemplate(meta, namespace))
+export function newResourceDraft(meta, namespace = 'default') {
+  const type = resourceFormType(meta)
+  const definition = dedicatedForms[type]
+  const resource = definition || type === 'generic'
+    ? {
+        kind: meta.kind,
+        metadata: { name: '', ...(meta.namespaced ? { namespace } : {}) },
+        ...definition?.defaults(meta.kind, namespace),
+      }
+    : load(yamlTemplate(meta, namespace))
   resource.apiVersion = apiVersionOf(meta)
   resource.metadata.labels ||= {}
   resource.metadata.annotations ||= {}
-  if (WORKLOAD_KINDS.includes(meta.kind)) {
+  if (type === 'workload') {
     const job = ['Job','CronJob'].includes(meta.kind)
     const template = { metadata: { labels: job ? {} : { app: '' } }, spec: { containers: [{ name: 'app', image: '' }], restartPolicy: job ? 'OnFailure' : 'Always' } }
     if (meta.kind === 'Pod') resource.spec = template.spec
@@ -34,9 +53,12 @@ export function newResourceDraft(meta, namespace) {
       if (meta.kind === 'StatefulSet') resource.spec.serviceName = ''
     }
   }
-  if (meta.kind === 'ConfigMap') resource.data = {}
-  if (meta.kind === 'PersistentVolume') {resource.spec.csi = {driver:'',volumeHandle:''};delete resource.spec.storageClassName}
-  if (meta.kind === 'StorageClass') resource.provisioner = ''
+  if (type === 'core' && meta.kind === 'ConfigMap') resource.data = {}
+  if (type === 'storage' && meta.kind === 'PersistentVolume') {
+    resource.spec.csi = { driver: '', volumeHandle: '' }
+    delete resource.spec.storageClassName
+  }
+  if (type === 'storage' && meta.kind === 'StorageClass') resource.provisioner = ''
   return resource
 }
 export function rowsToMap(rows) {
@@ -81,6 +103,7 @@ function validateService(body){
 export function resourceBody(draft, {meta, creating, original, validate = true}) {
   const body = cloneResource(draft)
   if (!body || Array.isArray(body) || body.kind !== meta.kind || body.apiVersion !== apiVersionOf(meta)) throw new Error('资源类型 kind / apiVersion 与当前目标不一致')
+  const type = resourceFormType(meta)
   body.metadata ||= {}
   if (!creating) {
     if (body.metadata.name !== original?.metadata?.name || body.metadata.namespace !== original?.metadata?.namespace) throw new Error('不能更改资源名称或命名空间身份')
@@ -96,16 +119,19 @@ export function resourceBody(draft, {meta, creating, original, validate = true})
   delete body.metadata.managedFields
   if (creating) {
     for (const key of ['uid','resourceVersion','creationTimestamp','generation','deletionTimestamp']) delete body.metadata[key]
-    if (['Deployment','StatefulSet','DaemonSet','ReplicaSet'].includes(body.kind)) {
+    if (type === 'workload' && ['Deployment','StatefulSet','DaemonSet','ReplicaSet'].includes(body.kind)) {
       const labels = body.spec?.selector?.matchLabels
       const template = podTemplate(body)
       if (labels && labels.app === '') labels.app = body.metadata.name
       if (template?.metadata?.labels?.app === '') template.metadata.labels.app = labels?.app || body.metadata.name
     }
   }
-  if (validate && WORKLOAD_KINDS.includes(body.kind)) validateWorkload(body)
-  if (validate && STORAGE_KINDS.includes(body.kind) && (['','_core'].includes(meta.group||'') || meta.group==='storage.k8s.io')) validateStorageResource(body,{creating,original})
-  if(body.kind==='Service'){
+  if (validate) {
+    if (type === 'workload') validateWorkload(body)
+    if (type === 'storage') validateStorageResource(body, { creating, original })
+    dedicatedForms[type]?.validate(body, { creating, original })
+  }
+  if(type==='core' && body.kind==='Service'){
     const type=body.spec?.type||'ClusterIP'
     if((body.spec?.sessionAffinity||'None')==='None'&&body.spec)delete body.spec.sessionAffinityConfig
     if(body.spec&&(type==='ExternalName'||!['NodePort','LoadBalancer'].includes(type)&&!body.spec.externalIPs?.length))delete body.spec.externalTrafficPolicy
@@ -116,7 +142,7 @@ export function resourceBody(draft, {meta, creating, original, validate = true})
     if(['ClusterIP','ExternalName'].includes(type)){for(const port of body.spec?.ports||[])delete port.nodePort;delete body.spec?.healthCheckNodePort;delete body.spec?.allocateLoadBalancerNodePorts}
     if(validate)validateService(body)
   }
-  for (const field of ['data','stringData']) if (body[field] && ['ConfigMap','Secret'].includes(body.kind)) {
+  for (const field of ['data','stringData']) if (type === 'core' && body[field] && ['ConfigMap','Secret'].includes(body.kind)) {
     if (Object.values(body[field]).some(value => typeof value !== 'string')) throw new Error(`${field} 的值必须是文本`)
   }
   return body

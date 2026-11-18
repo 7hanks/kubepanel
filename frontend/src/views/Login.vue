@@ -4,6 +4,7 @@
       <div class="login-brand"><span class="mark">K</span><span>KubePanel</span></div>
       <div class="login-headline">
         <h1>多集群，<br />尽在掌握<span>。</span></h1>
+        <p>Kubernetes 多集群管理平台<br />集中管理集群资源、工作负载与访问权限。</p>
       </div>
       <div class="login-art" aria-hidden="true">
         <svg viewBox="0 0 640 440" fill="none" xmlns="http://www.w3.org/2000/svg">

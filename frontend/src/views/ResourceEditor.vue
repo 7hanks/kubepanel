@@ -1,9 +1,9 @@
 <template>
-  <div class="resource-editor" :class="{'service-editor':meta.kind==='Service'}" v-loading="loading">
+  <div class="resource-editor" :class="{'service-editor':coreKind==='Service'}" v-loading="loading">
     <template v-if="uiMode==='form'">
     <header class="editor-hero"><div><nav class="editor-context" aria-label="当前位置"><RouterLink :to="cpath('/overview',store.currentClusterId)" aria-label="返回集群概览">{{store.currentCluster?.name||store.currentClusterId}}</RouterLink><span aria-hidden="true">/</span><a :href="listPath()" :aria-label="`返回${resourceTitle(meta)}列表`" @click="backToList">{{draft?.metadata?.namespace||'集群范围'}}</a></nav><h1>{{creating?'新建':'编辑'}}{{resourceTitle(meta)}}<span v-if="!creating" class="hero-resource-name">{{route.params.name}}</span></h1></div><div class="editor-heading-actions"><el-button :disabled="busy" @click="cancel">取消</el-button><el-button type="primary" :disabled="!canSave" :loading="saving" @click="save">{{creating?'创建':'保存'}}</el-button></div></header>
     <div v-if="error" ref="errorRef" class="editor-error" role="alert" tabindex="-1"><span class="editor-error-icon" aria-hidden="true">!</span><div><strong>请检查以下问题</strong><p>{{error}}</p></div><div class="editor-error-actions"><el-button :disabled="busy" @click="reread">重新读取</el-button><el-button v-if="draft" :disabled="busy" @click="exportYaml">导出草稿</el-button></div></div>
-    <el-alert v-if="!authorized&&!loading" type="warning" :closable="false" show-icon :title="meta.kind==='Secret'&&!creating&&!can('secret:read')?'编辑 Secret 需要独立的读取 Secret 权限，避免覆盖未读取的密文。':'当前账号没有此目标资源的编辑权限。'"/>
+    <el-alert v-if="!authorized&&!loading" type="warning" :closable="false" show-icon :title="coreKind==='Secret'&&!creating&&!can('secret:read')?'编辑 Secret 需要独立的读取 Secret 权限，避免覆盖未读取的密文。':'当前账号没有此目标资源的编辑权限。'"/>
 
 
     <template v-if="draft&&!loadFailed&&authorized">
@@ -16,33 +16,39 @@
               <el-form-item label="名称" required><el-input v-model="draft.metadata.name" :disabled="!creating||busy" aria-label="资源名称" :class="{'editor-static-field':!creating}" placeholder="请输入资源名称"/></el-form-item>
               <el-form-item label="注解"><KeyValueFields v-model="draft.metadata.annotations" label="注解" add-label="添加注解" :disabled="busy" @change="touch" @validity="value=>setValidity('注解',value)"/></el-form-item>
               <el-form-item label="标签"><KeyValueFields v-model="draft.metadata.labels" label="标签" add-label="添加标签" :disabled="busy" @change="touch" @validity="value=>setValidity('标签',value)"/></el-form-item>
-              <el-form-item v-if="['ConfigMap','Secret'].includes(meta.kind)" label="不可变"><el-switch v-model="draft.immutable" :disabled="busy||(!creating&&original?.immutable===true)" aria-label="不可变配置"/></el-form-item>
-              <el-form-item v-if="meta.kind==='Secret'" label="Secret 类型"><el-select v-model="draft.type" :disabled="busy||!creating" filterable allow-create default-first-option aria-label="Secret 类型"><el-option v-for="type in ['Opaque','kubernetes.io/tls','kubernetes.io/dockerconfigjson','kubernetes.io/basic-auth']" :key="type" :label="type" :value="type"/></el-select></el-form-item>
+              <el-form-item v-if="['ConfigMap','Secret'].includes(coreKind)" label="不可变"><el-switch v-model="draft.immutable" :disabled="busy||(!creating&&original?.immutable===true)" aria-label="不可变配置"/></el-form-item>
+              <el-form-item v-if="coreKind==='Secret'" label="Secret 类型"><el-select v-model="draft.type" :disabled="busy||!creating" filterable allow-create default-first-option aria-label="Secret 类型"><el-option v-for="type in ['Opaque','kubernetes.io/tls','kubernetes.io/dockerconfigjson','kubernetes.io/basic-auth']" :key="type" :label="type" :value="type"/></el-select></el-form-item>
             </el-form>
           </el-tab-pane>
-          <el-tab-pane v-if="meta.kind==='Service'" label="基本配置" name="service-config"/>
-          <el-tab-pane v-if="meta.kind==='Service'" label="高级配置" name="service-advanced"/>
+          <el-tab-pane v-if="coreKind==='Service'" label="基本配置" name="service-config"/>
+          <el-tab-pane v-if="coreKind==='Service'" label="高级配置" name="service-advanced"/>
           <el-tab-pane v-if="storage" label="存储配置" name="storage"><StorageForm :model-value="draft" :original="original" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('存储配置',value)"/></el-tab-pane>
+          <el-tab-pane v-if="extensionComponent" :label="extensionLabel" name="configuration">
+            <component :is="extensionComponent" :model-value="draft" :original="original" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('专用资源配置',value)"/>
+          </el-tab-pane>
           <el-tab-pane v-if="workload&&meta.kind!=='Pod'" name="strategy">
             <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.strategy"/></svg>部署策略</span></template>
             <el-form label-width="105px" :disabled="busy"><WorkloadForm :model-value="draft" section="strategy" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('部署策略',value)"/></el-form>
           </el-tab-pane>
           <el-tab-pane v-if="workload" :label="meta.kind==='Pod'?'容器组配置':'容器组模板'" name="template"><div class="template-workspace"><nav class="template-nav" aria-label="容器组配置导航"><button v-for="item in templateSections" :key="item.key" type="button" :class="{active:templateSection===item.key}" @click="templateSection=item.key">{{item.label}}</button></nav><section class="template-content"><el-form label-width="100px" :disabled="busy"><template v-if="templateSection==='basic'"><el-form-item label="容器组标签"><KeyValueFields :model-value="templateMetadata.labels" label="容器组标签" :disabled="busy" @update:model-value="value=>setTemplateMetadata('labels',value)" @change="touch" @validity="value=>setValidity('容器组标签',value)"/></el-form-item><el-form-item label="容器组注解"><KeyValueFields :model-value="templateMetadata.annotations" label="容器组注解" :disabled="busy" @update:model-value="value=>setTemplateMetadata('annotations',value)" @change="touch" @validity="value=>setValidity('容器组注解',value)"/></el-form-item></template><WorkloadForm v-else :model-value="draft" :section="templateSection" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('容器组设置',value)"/></el-form></section></div></el-tab-pane>
-          <el-tab-pane v-if="['ConfigMap','Secret'].includes(meta.kind)" name="entries">
+          <el-tab-pane v-if="['ConfigMap','Secret'].includes(coreKind)" name="entries">
             <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.entries"/></svg>条目模式</span></template>
           </el-tab-pane>
-          <el-tab-pane v-if="['ConfigMap','Secret'].includes(meta.kind)" name="files">
+          <el-tab-pane v-if="['ConfigMap','Secret'].includes(coreKind)" name="files">
             <template #label><span class="tab-inner"><svg aria-hidden="true" viewBox="0 0 24 24"><path :d="tabIcons.files"/></svg>标签页模式</span></template>
           </el-tab-pane>
-          <el-tab-pane v-if="!storage&&meta.kind!=='Service'&&(!['ConfigMap','Secret'].includes(meta.kind)&&!workload||Object.keys(extraFields).length)" :label="workload||storage||['ConfigMap','Secret'].includes(meta.kind)?'其他字段':'资源配置'" name="fields"><StructuredFields :model-value="extraFields" :reserved-keys="excluded" :disabled="busy" path="resource" @update:model-value="setExtraFields"/></el-tab-pane>
+          <el-tab-pane v-if="showExtraFields" :label="formType==='generic'?'资源配置':'其他字段'" name="fields">
+            <p v-if="formType==='generic'" class="kp-muted">根据资源定义添加字段并选择类型，例如将 spec 添加为对象。</p>
+            <StructuredFields :model-value="extraFields" :reserved-keys="excluded" :disabled="busy" path="resource" @update:model-value="setExtraFields"/>
+          </el-tab-pane>
         </el-tabs>
-        <ServiceForm v-if="meta.kind==='Service'" v-show="['service-config','service-advanced'].includes(activeTab)" :model-value="draft" :section="activeTab==='service-advanced'?'advanced':'config'" :namespace="draft.metadata.namespace" :cluster-id="target.clusterId" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('选择器',value)"/>
-        <details v-if="meta.kind==='Service'&&Object.keys(extraFields).length" v-show="activeTab==='service-advanced'" class="service-root-fields"><summary>其他资源字段</summary><StructuredFields :model-value="extraFields" :reserved-keys="excluded" :disabled="busy" path="resource" @update:model-value="setExtraFields"/></details>
-        <el-form v-if="meta.kind==='Secret'" v-show="['entries','files'].includes(activeTab)" label-position="top" class="secret-entry-editor" :disabled="busy||(!creating&&original?.immutable===true)">
+        <ServiceForm v-if="coreKind==='Service'" v-show="['service-config','service-advanced'].includes(activeTab)" :model-value="draft" :section="activeTab==='service-advanced'?'advanced':'config'" :namespace="draft.metadata.namespace" :cluster-id="target.clusterId" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('选择器',value)"/>
+        <details v-if="coreKind==='Service'&&Object.keys(extraFields).length" v-show="activeTab==='service-advanced'" class="service-root-fields"><summary>其他资源字段</summary><StructuredFields :model-value="extraFields" :reserved-keys="excluded" :disabled="busy" path="resource" @update:model-value="setExtraFields"/></details>
+        <el-form v-if="coreKind==='Secret'" v-show="['entries','files'].includes(activeTab)" label-position="top" class="secret-entry-editor" :disabled="busy||(!creating&&original?.immutable===true)">
           <el-form-item label="文本数据（stringData）"><KeyValueFields v-model="draft.stringData" :mode="activeTab==='files'?'tabs':'rows'" multiline label="文本数据" :disabled="busy||(!creating&&original?.immutable===true)" @change="touch" @validity="value=>setValidity('文本数据',value)"/></el-form-item>
           <el-form-item label="Base64 数据（data）"><KeyValueFields v-model="draft.data" :mode="activeTab==='files'?'tabs':'rows'" multiline label="Base64 数据" :disabled="busy||(!creating&&original?.immutable===true)" @change="touch" @validity="value=>setValidity('Base64 数据',value)"/></el-form-item>
         </el-form>
-        <div v-if="meta.kind==='ConfigMap'" v-show="['entries','files'].includes(activeTab)" class="configmap-editor">
+        <div v-if="coreKind==='ConfigMap'" v-show="['entries','files'].includes(activeTab)" class="configmap-editor">
           <div class="cm-toolbar">
             <span class="cm-toolbar-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h7l5 5v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z M14 3v5h5"/></svg></span>
             <div class="cm-toolbar-copy"><h2>配置条目</h2><p>{{activeTab==='files'?'左侧切换文件，右侧编辑内容 · 适合多文件配置':'文件名作为键，配置内容作为值 · 支持多行文本'}}</p></div>
@@ -73,7 +79,7 @@ import {metaFromRoute} from '../config/resources'
 import {can,canResource} from '../utils/perm'
 import {cpath,nsPath} from '../utils/path'
 import {registerUnsavedGuard} from '../utils/navigation'
-import {WORKLOAD_KINDS,newResourceDraft,resourceBody,cloneResource,podTemplate,mergeFormFields} from '../utils/resource-form'
+import {resourceFormType,newResourceDraft,resourceBody,cloneResource,podTemplate,mergeFormFields} from '../utils/resource-form'
 import KeyValueFields from '../components/KeyValueFields.vue'
 import StructuredFields from '../components/StructuredFields.vue'
 import WorkloadForm from '../components/WorkloadForm.vue'
@@ -81,23 +87,56 @@ import YamlDiff from '../components/YamlDiff.vue'
 import ServiceForm from '../components/ServiceForm.vue'
 import StorageForm from '../components/StorageForm.vue'
 import SimpleResourceDialog from '../components/SimpleResourceDialog.vue'
+import RbacResourceForm from '../components/RbacResourceForm.vue'
+import AdvancedResourceForm from '../components/AdvancedResourceForm.vue'
+import NetworkResourceForm from '../components/NetworkResourceForm.vue'
+import CrdResourceForm from '../components/CrdResourceForm.vue'
 import {resourceUiPolicy} from '../utils/resource-policy'
 import {resourceTitle} from '../utils/resource-ui'
 
 const route=useRoute(),router=useRouter(),meta=computed(()=>metaFromRoute(route.params,store.discovery))
-const creating=computed(()=>route.name==='resource-create'),workload=computed(()=>WORKLOAD_KINDS.includes(meta.value.kind))
-const storage=computed(()=>['','_core'].includes(meta.value.group||'')&&['PersistentVolumeClaim','PersistentVolume'].includes(meta.value.kind)||meta.value.group==='storage.k8s.io'&&meta.value.kind==='StorageClass')
+const creating=computed(()=>route.name==='resource-create')
+const formType=computed(()=>resourceFormType(meta.value))
+const coreKind=computed(()=>formType.value==='core'?meta.value.kind:'')
+const workload=computed(()=>formType.value==='workload')
+const storage=computed(()=>formType.value==='storage')
+const extensionComponent=computed(()=>({
+  rbac: RbacResourceForm,
+  advanced: AdvancedResourceForm,
+  network: NetworkResourceForm,
+  crd: CrdResourceForm,
+})[formType.value])
+const extensionLabel=computed(()=>({
+  rbac: '权限配置',
+  network: '网络配置',
+  crd: '资源定义',
+  advanced: meta.value.kind==='HorizontalPodAutoscaler'?'扩缩容配置':'资源配置',
+})[formType.value])
 const policy=computed(()=>resourceUiPolicy(meta.value)),uiMode=computed(()=>creating.value?policy.value.create:policy.value.edit)
 const draft=ref(null),original=ref(null),baseline=ref(''),target=ref(null),loading=ref(false),loadFailed=ref(false),error=ref(''),errorRef=ref(null)
 const activeTab=ref('basic'),templateSection=ref('containers'),fieldErrors=ref({}),touched=ref(false),formKey=ref(0)
 const saving=ref(false),checking=ref(false),checked=ref(null),previewOpen=ref(false),previewYaml=ref(''),errorSource=ref('local')
 const busy=computed(()=>saving.value||checking.value||loading.value)
 const namespaces=computed(()=>store.namespaces||[])
-const authorized=computed(()=>canResource(meta.value,creating.value?'create':'update',draft.value?.metadata?.namespace,store.currentClusterId)&&(creating.value||meta.value.kind!=='Secret'||can('secret:read')))
+const authorized=computed(()=>canResource(meta.value,creating.value?'create':'update',draft.value?.metadata?.namespace,store.currentClusterId)&&(creating.value||coreKind.value!=='Secret'||can('secret:read')))
 const templateMetadata=computed(()=>podTemplate(draft.value)?.metadata||{})
 const templateSections=[{key:'basic',label:'基本信息'},{key:'containers',label:'容器信息'},{key:'volumes',label:'数据卷'},{key:'pod',label:'容器组'}]
-const excluded=computed(()=>['apiVersion','kind','metadata','status',...(workload.value||meta.value.kind==='Service'||storage.value&&meta.value.kind!=='StorageClass'?['spec']:[]),...(storage.value&&meta.value.kind==='StorageClass'?['provisioner','parameters','reclaimPolicy','volumeBindingMode','allowVolumeExpansion','mountOptions','allowedTopologies']:[]),...(['ConfigMap','Secret'].includes(meta.value.kind)?['data','stringData','type','immutable']:[])])
+const excluded=computed(()=>{
+  const fields=['apiVersion','kind','metadata','status']
+  if (workload.value || coreKind.value==='Service' || storage.value && meta.value.kind!=='StorageClass') fields.push('spec')
+  if (formType.value==='rbac') fields.push('rules','roleRef','subjects')
+  if (['network','crd'].includes(formType.value)) fields.push('spec')
+  if (formType.value==='advanced') {
+    if (meta.value.kind==='Endpoints') fields.push('subsets')
+    else if (meta.value.kind==='EndpointSlice') fields.push('addressType','ports','endpoints')
+    else fields.push('spec')
+  }
+  if (storage.value && meta.value.kind==='StorageClass') fields.push('provisioner','parameters','reclaimPolicy','volumeBindingMode','allowVolumeExpansion','mountOptions','allowedTopologies')
+  if (['ConfigMap','Secret'].includes(coreKind.value)) fields.push('data','stringData','type','immutable')
+  return fields
+})
 const extraFields=computed(()=>Object.fromEntries(Object.entries(draft.value||{}).filter(([key])=>!excluded.value.includes(key))))
+const showExtraFields=computed(()=>!storage.value && coreKind.value!=='Service' && (formType.value==='generic'||Object.keys(extraFields.value).length>0))
 const tabIcons={
   basic:'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z M12 11v6 M12 7h.01',
   strategy:'M4 19V9 M10 19V5 M16 19v-7 M22 19V7',
@@ -111,14 +150,14 @@ const signature=computed(()=>{try{return JSON.stringify(currentBody())}catch{ret
 const targetKey=computed(()=>JSON.stringify([route.fullPath,store.currentClusterId]))
 const canSave=computed(()=>!busy.value&&authorized.value&&!!signature.value&&checked.value===signature.value)
 const dirty=computed(()=>touched.value||!!draft.value&&JSON.stringify(draft.value)!==baseline.value)
-const entryMap=computed(()=>{const d=draft.value||{};return ['ConfigMap','Secret'].includes(meta.value.kind)?{...(d.data||{}),...(d.stringData||{})}:{}})
+const entryMap=computed(()=>{const d=draft.value||{};return ['ConfigMap','Secret'].includes(coreKind.value)?{...(d.data||{}),...(d.stringData||{})}:{}})
 const entryCount=computed(()=>Object.keys(entryMap.value).length)
 const contentBytes=computed(()=>Object.values(entryMap.value).reduce((sum,value)=>sum+new TextEncoder().encode(String(value??'')).length,0))
 function formatBytes(bytes){if(bytes<1024)return `${bytes} B`;if(bytes<1024*1024)return `${(bytes/1024).toFixed(1)} KB`;return `${(bytes/1024/1024).toFixed(2)} MB`}
 let generation=0,leavingAfterSave=false
 const removeGuard=registerUnsavedGuard(async()=>{if(leavingAfterSave)return true;if(busy.value)return false;if(!dirty.value)return true;try{await ElMessageBox.confirm('表单内容尚未保存，确定放弃修改？','未保存的修改',{type:'warning',confirmButtonText:'放弃修改'});draft.value=cloneResource(original.value);baseline.value=JSON.stringify(draft.value);touched.value=false;fieldErrors.value={};checked.value=null;formKey.value++;return true}catch{return false}})
 function touch(){touched.value=true}
-function setValidity(key,value){fieldErrors.value={...fieldErrors.value,[key]:value}}
+function setValidity(key,value){if(fieldErrors.value[key]!==value)fieldErrors.value={...fieldErrors.value,[key]:value}}
 function setTemplateMetadata(key,value){const template=podTemplate(draft.value);if(template){template.metadata||={};template.metadata[key]=value}}
 function setExtraFields(value){draft.value=mergeFormFields(draft.value,excluded.value,value)}
 async function showError(message,source='local'){errorSource.value=source;error.value=message;await nextTick();errorRef.value?.focus()}
@@ -129,17 +168,23 @@ async function load(){
  target.value={meta:m,clusterId,creating:isCreate,namespace:nsPath(route.params.namespace),name:route.params.name,key:targetKey.value}
  try{
   if(uiMode.value!=='form'){loading.value=false;if(uiMode.value==='yaml')await router.replace(listPath());return}
-  if(!canResource(m,isCreate?'create':'update',isCreate?initialNamespace:route.params.namespace,clusterId)||!isCreate&&m.kind==='Secret'&&!can('secret:read'))return
+  if (isCreate && m.verbs && !m.verbs.includes('create')) {
+    loadFailed.value=true
+    await showError('集群不支持创建此资源')
+    return
+  }
+  const namespace=m.namespaced?(isCreate?initialNamespace:route.params.namespace):undefined
+  if(!canResource(m,isCreate?'create':'update',namespace,clusterId)||!isCreate&&coreKind.value==='Secret'&&!can('secret:read'))return
   const value=isCreate?newResourceDraft(m,initialNamespace):await api.get(m.group,m.version,m.plural,target.value.namespace,target.value.name)
   if(epoch!==generation)return
-  value.metadata||={};if(m.kind==='Service')value.spec||={};if(WORKLOAD_KINDS.includes(m.kind)&&podTemplate(value))podTemplate(value).metadata||={}
-  original.value=cloneResource(value);draft.value=cloneResource(value);baseline.value=JSON.stringify(draft.value);activeTab.value=m.kind==='Service'&&!isCreate?'service-config':storage.value&&!isCreate?'storage':'basic';templateSection.value='containers';formKey.value++
+  value.metadata||={};if(coreKind.value==='Service')value.spec||={};if(workload.value&&podTemplate(value))podTemplate(value).metadata||={}
+  original.value=cloneResource(value);draft.value=cloneResource(value);baseline.value=JSON.stringify(draft.value);activeTab.value=coreKind.value==='Service'&&!isCreate?'service-config':storage.value&&!isCreate?'storage':extensionLabel.value&&!isCreate?'configuration':'basic';templateSection.value='containers';formKey.value++
  }catch(e){if(epoch===generation){loadFailed.value=true;await showError(e.message||'资源读取失败','server')}}finally{if(epoch===generation)loading.value=false}
 }
 async function changeTab(){
  if(busy.value)return false
  try{
-  const invalid=Object.values(fieldErrors.value).find(Boolean);if(invalid)throw new Error('请先修正表单条目：'+invalid)
+  const invalid=Object.entries(fieldErrors.value).find(([key,value])=>key!=='专用资源配置'&&value)?.[1];if(invalid)throw new Error('请先修正表单条目：'+invalid)
   return true
  }catch(e){await showError(e.message);return false}
 }
@@ -180,7 +225,7 @@ function beforeUnload(event){if(dirty.value){event.preventDefault();event.return
 function exportYaml(){const content=dump(draft.value,{noRefs:true,lineWidth:120});const url=URL.createObjectURL(new Blob([content],{type:'application/yaml;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=`${draft.value.metadata?.name||meta.value.kind}.yaml`;a.click();URL.revokeObjectURL(url)}
 watch(()=>[route.fullPath,store.currentClusterId],load)
 watch(()=>store.namespace,()=>{if(!dirty.value&&!busy.value)load()})
-watch([()=>JSON.stringify(draft.value),fieldErrors],()=>{if(errorSource.value==='local')error.value=''}, {deep:true})
+watch([()=>JSON.stringify(draft.value),fieldErrors],()=>{if(errorSource.value==='local')error.value=''}, {flush:'sync'})
 onMounted(()=>{load();window.addEventListener('beforeunload',beforeUnload)})
 onUnmounted(()=>{generation++;removeGuard();window.removeEventListener('beforeunload',beforeUnload)})
 </script>

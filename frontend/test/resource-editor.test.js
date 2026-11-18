@@ -17,7 +17,7 @@ function fixture({creating=false,request,permission=true,original,resourceMeta=m
  const api={get:async()=>structuredClone(resource),create:(...args)=>invoke('create',args),update:(...args)=>invoke('update',args)}
  const {descriptor}=parse(fs.readFileSync(new URL('../src/views/ResourceEditor.vue',import.meta.url),'utf8'))
  const source=compileScript(descriptor,{id:'resource-editor-test'}).content.replace(/^import[\s\S]*?from\s+['"][^'"]+['"]\s*\r?\n/gm,'').replace('export default','return')
- const bindings={resourceUiPolicy,SimpleResourceDialog:{},StorageForm:{},ref,computed,watch,nextTick,onMounted(){},onUnmounted:fn=>cleanups.push(fn),useRoute:()=>route,useRouter:()=>({push:path=>routes.push(path),replace:async path=>{if(!guards[0]||await guards[0]())routes.push(path)}}),ElMessage:{success(){}},ElMessageBox:{confirm:async()=>{}},dump,api,store,metaFromRoute:()=>resourceMeta,can:()=>permission,canResource:()=>permission,cpath:path=>'/c/dev'+path,nsPath:ns=>ns||'_all',registerUnsavedGuard:fn=>{guards.push(fn);return()=>{}},...forms,resourceTitle,ServiceForm:{},EditorInsights:{},KeyValueFields:{},StructuredFields:{},WorkloadForm:{},YamlDiff:{},window:{removeEventListener(){},addEventListener(){}}}
+ const bindings={resourceUiPolicy,SimpleResourceDialog:{},StorageForm:{},AdvancedResourceForm:{},RbacResourceForm:{},NetworkResourceForm:{},CrdResourceForm:{},ref,computed,watch,nextTick,onMounted(){},onUnmounted:fn=>cleanups.push(fn),useRoute:()=>route,useRouter:()=>({push:path=>routes.push(path),replace:async path=>{if(!guards[0]||await guards[0]())routes.push(path)}}),ElMessage:{success(){}},ElMessageBox:{confirm:async()=>{}},dump,api,store,metaFromRoute:()=>resourceMeta,can:()=>permission,canResource:()=>permission,cpath:path=>'/c/dev'+path,nsPath:ns=>ns||'_all',registerUnsavedGuard:fn=>{guards.push(fn);return()=>{}},...forms,resourceTitle,ServiceForm:{},EditorInsights:{},KeyValueFields:{},StructuredFields:{},WorkloadForm:{},YamlDiff:{},window:{removeEventListener(){},addEventListener(){}}}
  const definition=Function(...Object.keys(bindings),source)(...Object.values(bindings))
  const state=scope.run(()=>definition.setup({}, {expose(){}}))
  return {state,calls,routes,guards,route,store,destroy(){cleanups.forEach(fn=>fn());scope.stop()}}
@@ -90,7 +90,33 @@ test('saving rechecks the actual body even if a draft change bypassed reactive c
  }finally{view.destroy()}
 })
 
-test('direct routes without a dedicated form can leave through the editor navigation guard',async()=>{
- const view=fixture({creating:true,resourceMeta:{kind:'Role',group:'rbac.authorization.k8s.io',version:'v1',plural:'roles',namespaced:true}})
+test('direct edit routes without a dedicated form can leave through the editor navigation guard',async()=>{
+ const view=fixture({creating:false,resourceMeta:{kind:'Widget',group:'example.com',version:'v1',plural:'widgets',namespaced:true}})
  try{await view.state.load();assert.equal(view.routes.length,1);assert.equal(view.state.loading.value,false)}finally{view.destroy()}
+})
+
+test('HPA creation preflights the form payload and invalidates stale checks before submit',async()=>{
+ const hpa={kind:'HorizontalPodAutoscaler',group:'autoscaling',version:'v2',plural:'horizontalpodautoscalers',namespaced:true}
+ const view=fixture({creating:true,resourceMeta:hpa})
+ try{
+  await view.state.load()
+  const draft=view.state.draft.value
+  draft.metadata.name='web-hpa'
+  await view.state.check()
+  assert.equal(view.calls.length,0)
+  assert.match(view.state.error.value,/目标/)
+  draft.spec.scaleTargetRef.name='web'
+  await view.state.check()
+  assert.equal(view.state.canSave.value,true)
+  assert.deepEqual(view.calls[0].args.slice(0,4),['autoscaling','v2','horizontalpodautoscalers','team'])
+  assert.equal(view.calls[0].args[4].spec.scaleTargetRef.name,'web')
+  assert.equal(view.calls[0].args[5].dryRun,true)
+  draft.spec.maxReplicas=5
+  await view.state.save()
+  assert.equal(view.calls.length,1)
+  await view.state.check()
+  await view.state.save()
+  assert.equal(view.calls[2].args[4].spec.maxReplicas,5)
+  assert.equal(view.calls[2].args[5].dryRun,false)
+ }finally{view.destroy()}
 })

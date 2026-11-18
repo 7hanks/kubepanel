@@ -40,7 +40,15 @@
       <span class="spacer" />
       <el-tooltip :content="nextContinue ? `已加载 ${items.length} 项；当前筛选仅覆盖已加载资源，可继续加载。标签选择器由 Kubernetes 服务端执行。` : `已加载 ${items.length} 项；标签选择器由 Kubernetes 服务端执行，其他条件筛选已加载资源。`"><span class="resource-count">{{ filtered.length }} 项<span v-if="nextContinue"> · 已加载 {{ items.length }}</span></span></el-tooltip>
       <el-tooltip content="切换列表密度"><el-button aria-label="切换列表密度" @click="compactRows=!compactRows"><el-icon><component :is="'Operation'"/></el-icon></el-button></el-tooltip>
-      <el-button v-if="canCreateRes" type="primary" :icon="Plus" @click="openCreate">新建</el-button>
+      <el-dropdown v-if="canCreateRes" split-button type="primary" trigger="click" @click="openCreate('form')" @command="openCreate">
+        <el-icon aria-hidden="true"><Plus /></el-icon><span style="margin-left:5px">新建</span>
+        <template #dropdown>
+          <el-dropdown-menu>
+            <el-dropdown-item command="form">从表单创建</el-dropdown-item>
+            <el-dropdown-item command="yaml">从 YAML 创建</el-dropdown-item>
+          </el-dropdown-menu>
+        </template>
+      </el-dropdown>
       <el-button v-if="canBulkRestart" type="warning" plain :disabled="!selected.length" @click="openBulkRestart">批量重启 ({{ selected.length }})</el-button>
       <el-button v-if="canDeleteRes" type="danger" plain :disabled="!selected.length" @click="batchDelete">删除 ({{ selected.length }})</el-button>
     </div>
@@ -176,7 +184,7 @@ const loading = ref(false)
 const saving = ref(false)
 const actionBusy=ref(false)
 const removeContextGuard=registerUnsavedGuard(()=>{if(saving.value || scaleSaving.value || actionBusy.value){ElMessage.warning('操作进行中，请稍后切换上下文');return false}return true})
-const canCreateRes = computed(() => policy.value.create!=='none'&&(!meta.value.verbs||meta.value.verbs.includes('create'))&&canResource(meta.value,'create',store.namespace))
+const canCreateRes = computed(() => policy.value.create!=='none'&&(!meta.value.verbs||meta.value.verbs.includes('create'))&&canResource(meta.value,'create',store.namespace,store.currentClusterId))
 const canUpdateRes = computed(() => canResource(meta.value,'update',store.namespace))
 const canDeleteRes = computed(() => canResource(meta.value,'delete',store.namespace))
 const canBulkRestart = computed(() => meta.value.kind === 'Pod' && canUpdateRes.value && canDeleteRes.value)
@@ -295,7 +303,33 @@ function openDetail(row) { router.push(detailPath(row)) }
 function goLogs(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/logs`)) }
 function goTerminal(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/terminal`)) }
 
-function openCreate() { if(!canCreateRes.value)return;yamlReadEpoch++;yamlReadController?.abort();if(policy.value.create==='simple'){simpleTarget.value=null;simpleVisible.value=true;return}if(policy.value.create==='yaml'){yamlContext.value={context:bulkContextKey.value,clusterId:store.currentClusterId,clusterName:store.currentCluster?.name||store.currentClusterId,meta:{...meta.value},namespace:nsParam(),creating:true};yamlMode.value='create';yamlDialogMode.value='edit';yamlTitle.value='新建 '+resourceTitle(meta.value);yamlText.value=yamlTemplate(meta.value,nsParam());editingRow.value=null;yamlVisible.value=true;return}router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/new`)) }
+function openCreate(mode) {
+  if (!canCreateRes.value) return
+  yamlReadEpoch++
+  yamlReadController?.abort()
+  if (mode === 'yaml') {
+    const namespace = nsParam()
+    yamlContext.value = {
+      context: bulkContextKey.value,
+      clusterId: store.currentClusterId,
+      clusterName: store.currentCluster?.name || store.currentClusterId,
+      meta: { ...meta.value }, namespace, creating: true,
+    }
+    yamlMode.value = 'create'
+    yamlDialogMode.value = 'edit'
+    yamlTitle.value = '新建 ' + resourceTitle(meta.value)
+    yamlText.value = yamlTemplate(meta.value, namespace)
+    editingRow.value = null
+    yamlVisible.value = true
+    return
+  }
+  if (policy.value.create === 'simple') {
+    simpleTarget.value = null
+    simpleVisible.value = true
+    return
+  }
+  router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/new`))
+}
 function editForm(row) { if(policy.value.edit==='none'||!canUpdateRes.value)return;if(policy.value.edit!=='yaml'){yamlReadEpoch++;yamlReadController?.abort()}if(policy.value.edit==='simple'){simpleTarget.value={namespace:nsPath(row.namespace),name:row.name};simpleVisible.value=true;return}if(policy.value.edit==='yaml')return openYaml(row,'edit');router.push(cpath(`/r/${route.params.group}/${route.params.version}/${route.params.plural}/${encodeURIComponent(row.namespace==='-'?'_all':row.namespace)}/${encodeURIComponent(row.name)}/edit`)) }
 
 /** 点「YAML」默认只读查看；要改必须再点弹窗里的「编辑」 */

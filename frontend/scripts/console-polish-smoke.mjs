@@ -2,6 +2,7 @@
 import {createRequire} from 'node:module'
 import assert from 'node:assert/strict'
 import {createServer} from '../node_modules/vite/dist/node/index.js'
+import {OBJECTS, ACTIONS} from '../../server/src/permissions.js'
 const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright')
 const baseURL=process.env.SMOKE_BASE_URL||'http://127.0.0.1:5189'
 const vite=process.env.SMOKE_BASE_URL?null:await createServer({root:new URL('../',import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1'),server:{host:'127.0.0.1',port:5189,strictPort:true}})
@@ -21,6 +22,7 @@ resources.nodes=[{apiVersion:'v1',kind:'Node',metadata:{name:'node-1',uid:'node-
 resources.serviceaccounts=[{apiVersion:'v1',kind:'ServiceAccount',metadata:metadata('builder'),automountServiceAccountToken:false,imagePullSecrets:[{name:'registry-key'}]}]
 discovery.push(...[['namespaces','Namespace',false],['nodes','Node',false],['serviceaccounts','ServiceAccount',true]].map(([plural,kind,namespaced])=>({group:'',version:'v1',plural,kind,namespaced,verbs:['get','list','create','update','delete']})))
 discovery.push({group:'rbac.authorization.k8s.io',version:'v1',plural:'rolebindings',kind:'RoleBinding',namespaced:true,verbs:['get','list','create','update','delete']})
+discovery.push({group:'autoscaling',version:'v2',plural:'horizontalpodautoscalers',kind:'HorizontalPodAutoscaler',namespaced:true,verbs:['get','list','create','update','delete']})
 let replicas=3
 await page.route('**/api/**',async route=>{
  const req=route.request(),url=new URL(req.url()),path=url.pathname.replace(/^\/api/,'')
@@ -31,8 +33,8 @@ await page.route('**/api/**',async route=>{
  if(path==='/v1/cluster')return send({name:'dev',version:'v1.33.7',namespaces:['default']})
  if(path==='/v1/resources')return send(discovery)
  if(path==='/v1/users')return send({users:[]})
- if(path==='/v1/roles')return send({roles:[],permissions:[]})
- if(path==='/v1/registries')return send([])
+ if(path==='/v1/roles')return send({objects:OBJECTS,actions:ACTIONS,roles:[{id:'readonly',name:'只读用户',builtin:true,permissions:OBJECTS.flatMap(({key})=>[`${key}:list`,`${key}:detail`])}]})
+ if(path==='/v1/registries')return send([{id:'harbor',name:'Harbor',type:'harbor',url:'https://harbor.example.test',health:{ok:true,authenticated:true}}])
  if(path==='/v1/audit')return send({items:[]})
  if(path==='/v1/pods/default/web-pod/scale-target'){
   assert.equal(url.searchParams.get('uid'),'web-pod-uid');assert.equal(url.searchParams.get('clusterId'),'test')
@@ -157,9 +159,45 @@ try{
  await go('/r/_core/v1/namespaces/new');await page.getByRole('dialog',{name:'创建命名空间',exact:true}).waitFor()
  await page.getByRole('dialog',{name:'创建命名空间',exact:true}).getByRole('button',{name:'取消',exact:true}).click();await page.waitForURL('**/namespaces')
  await go('/r/rbac.authorization.k8s.io/v1/rolebindings');await page.getByRole('button',{name:'新建',exact:true}).click()
- await page.getByRole('dialog').waitFor();assert.equal(await page.locator('.editor-hero').count(),0)
+ await page.getByRole('heading',{name:'新建角色绑定',exact:true}).waitFor()
+ await page.getByRole('tab',{name:'权限配置',exact:true}).click()
+ await page.getByRole('textbox',{name:'引用角色名称',exact:true}).waitFor()
+ await page.getByRole('button',{name:'取消',exact:true}).click()
+ await page.waitForURL('**/rolebindings')
+ await page.locator('.resource-toolbar .el-dropdown__caret-button').click()
+ await page.getByRole('menuitem',{name:'从 YAML 创建',exact:true}).click()
+ await page.getByRole('dialog').waitFor()
+ await go('/r/autoscaling/v2/horizontalpodautoscalers')
+ await page.getByRole('button',{name:'新建',exact:true}).click()
+ await page.getByRole('heading',{name:'新建自动扩缩容',exact:true}).waitFor()
+ await page.getByRole('textbox',{name:'资源名称',exact:true}).fill('web-hpa')
+ await page.getByRole('tab',{name:'扩缩容配置',exact:true}).click()
+ await page.getByRole('textbox',{name:'扩缩容目标名称',exact:true}).fill('web')
+ await shot('hpa-create')
+ await page.getByRole('button',{name:'服务端预检',exact:true}).click()
+ const hpaPreview=page.getByRole('dialog',{name:'创建预览',exact:true})
+ await hpaPreview.getByRole('button',{name:'确认创建',exact:true}).click()
+ await page.waitForURL('**/horizontalpodautoscalers')
+ assert.deepEqual(writes.at(-1).body.spec.scaleTargetRef,{apiVersion:'apps/v1',kind:'Deployment',name:'web'})
+ assert.equal(writes.at(-1).body.metadata.name,'web-hpa')
+ await page.setViewportSize({width:1413,height:871})
+ await go('/roles')
+ const summary=page.getByRole('button',{name:'查看只读用户的权限明细',exact:true})
+ await summary.waitFor()
+ assert.ok(await summary.evaluate(el=>{
+  const midpoint=node=>{const {top,height}=node.getBoundingClientRect();return top+height/2}
+  const scope=el.closest('tr').querySelector('.scope-summary')
+  return Math.abs(midpoint(el)-midpoint(scope))<=2&&Math.abs(midpoint(el.querySelector('.summary-chevron'))-midpoint(el))<=2
+ }))
+ await shot('role-alignment')
+ await go('/registries')
+ await page.getByText('测试通过',{exact:true}).waitFor()
+ await shot('registry-test-status')
+ await page.goto(baseURL+'/login')
+ await page.locator('.login-headline').getByText('Kubernetes 多集群管理平台',{exact:false}).waitFor()
+ await shot('login-description')
  await go('/r/_core/v1/pods/default/web-pod/edit');await page.getByText('容器组不提供表单编辑，请在所属工作负载中修改容器组模板。',{exact:true}).waitFor()
  await go('/clusters');await page.getByText(/2025[-/]12[-/]23/).waitFor();await shot('cluster-created-time')
  assert.deepEqual(errors,[])
- console.log('PASS: Service-specific basic/advanced tabs, Pod selector import, compact port/appProtocol controls, full multiport display, ConfigMap/Secret modes with no YAML tab, mobile layout, Pod image column and bound scaling, embedded platform navigation, recovered creation time. Fixture-only mutations.')
+ console.log('PASS: existing console flows, RoleBinding form/YAML paths, HPA preflight and create, role alignment, registry test label, login description. Fixture-only mutations.')
 }catch(e){await shot('failure');console.error('Runtime errors:',errors);console.error((await page.locator('body').innerText()).slice(-4500));throw e}finally{await browser.close();await vite?.close()}

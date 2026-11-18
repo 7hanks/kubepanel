@@ -465,7 +465,7 @@ onUnmounted(resetBrowser)
 
 function healthLabel(health) {
   if (!health.ok) return '连接异常'
-  if (health.authenticated === true) return '认证通过'
+  if (health.authenticated === true) return '测试通过'
   if (health.authenticated === false) return '匿名访问可用'
   return '可连接（请重新测试认证）'
 }

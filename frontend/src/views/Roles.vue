@@ -43,9 +43,9 @@
               <el-popover v-else trigger="click" placement="bottom-start" :width="400" :popper-style="{ maxWidth: 'calc(100vw - 32px)' }">
                 <template #reference>
                   <button type="button" class="summary-button permission-summary" :aria-label="`查看${row.name}的权限明细`">
-                    <span v-for="group in row.groups" :key="group.key" class="permission-group-summary">
+                    <span class="permission-group-list"><span v-for="group in row.groups" :key="group.key" class="permission-group-summary">
                       {{ group.label }}<span class="summary-separator">·</span>{{ group.access ? accessLabels[group.access] : `${group.permissions.length} 项` }}
-                    </span>
+                    </span></span>
                     <el-icon class="summary-chevron"><ArrowDown /></el-icon>
                   </button>
                 </template>
@@ -382,7 +382,8 @@ onMounted(load)
 .summary-button { border: 0; background: transparent; font: inherit; color: #475467; text-align: left; padding: 3px 0; cursor: pointer; line-height: 1.8; }
 .summary-button:hover { color: var(--el-color-primary); }
 .summary-button:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 3px; border-radius: 3px; }
-.permission-summary { display: flex; align-items: center; gap: 3px 12px; flex-wrap: wrap; }
+.permission-summary { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 0; font-size: 12px; line-height: 1.8; vertical-align: middle; }
+.permission-group-list { display: flex; align-items: center; gap: 3px 8px; flex-wrap: wrap; min-width: 0; }
 .permission-group-summary { white-space: nowrap; }
 .summary-separator { padding: 0 4px; color: #b0b8c4; }
 .summary-chevron { flex: none; font-size: 10px; color: #98a2b3; }

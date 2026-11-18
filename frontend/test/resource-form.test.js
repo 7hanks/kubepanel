@@ -2,6 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 const form = await import('../src/utils/resource-form.js').catch(()=>({}))
 const meta = (kind,group='',plural=kind.toLowerCase()+'s')=>({kind,group,plural,version:'v1',namespaced:kind!=='Namespace'})
+test('a custom resource with a built-in kind keeps its own fields and receives no built-in defaults',()=>{
+ const m=meta('PersistentVolume','example.com','persistentvolumes')
+ const draft=form.newResourceDraft(m,'team')
+ assert.equal(draft.spec,undefined)
+ draft.metadata.name='example'
+ draft.spec={csi:'custom shape'}
+ assert.deepEqual(form.resourceBody(draft,{meta:m,creating:true}).spec,{csi:'custom shape'})
+})
 test('workload creation produces the correct pod template and matching labels for each kind',()=>{
  for(const kind of ['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob']){
   const m=meta(kind,['Job','CronJob'].includes(kind)?'batch':kind==='Pod'?'':'apps')

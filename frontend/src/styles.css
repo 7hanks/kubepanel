@@ -131,6 +131,7 @@ a { text-decoration: none; }
   letter-spacing: -.045em; color: #203555;
 }
 .login-headline h1 span { color: var(--kp-brand); }
+.login-headline p { margin: 18px 0 0; max-width: 380px; color: #62738b; font-size: 14px; line-height: 1.85; }
 .login-art { position: relative; z-index: 1; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; margin: 18px -30px 0; }
 .login-art svg { display: block; width: 100%; max-width: 680px; height: 100%; max-height: 480px; }
 
@@ -172,6 +173,7 @@ a { text-decoration: none; }
 }
 @media (max-height: 720px) {
   .login-headline { margin-top: 40px; }
+  .login-headline p { margin-top: 12px; font-size: 13px; }
   .login-visual { padding: 34px 44px 24px; }
 }
 
