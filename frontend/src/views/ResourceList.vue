@@ -57,13 +57,16 @@
     <div class="kp-card" style="padding:0">
       <el-table
         ref="tableRef" v-loading="loading" :data="paged" border stripe :size="compactRows?'small':'default'" row-key="uid"
-        :expand-row-keys="isDeployment ? visibleDeploymentExpandedUids : undefined" :row-class-name="isDeployment ? 'deployment-expandable-row' : ''"
+        :expand-row-keys="showPodActions ? visibleExpandedUids : undefined" :row-class-name="showPodActions ? 'resource-expandable-row' : ''"
         style="width:100%" @sort-change="v => sort = v" @selection-change="v => selected = v"
-        @row-click="toggleDeploymentDetails" @row-dblclick="openDetail" @expand-change="onDeploymentExpandChange"
+        @row-click="toggleRowDetails" @row-dblclick="openDetail" @expand-change="onRowExpandChange"
       >
         <el-table-column type="selection" width="42" />
-        <el-table-column v-if="isDeployment" type="expand" width="36" class-name="deployment-expand-column">
-          <template #default="{ row }"><DeploymentRowDetails :resource="row._raw"/></template>
+        <el-table-column v-if="showPodActions" type="expand" width="36" class-name="resource-expand-column">
+          <template #default="{ row }">
+            <PodRowDetails v-if="isPod" :pod="row._raw" />
+            <DeploymentRowDetails v-else :resource="row._raw" />
+          </template>
         </el-table-column>
         <el-table-column
           v-for="col in columns" :key="col.key" :prop="col.key" :label="col.label"
@@ -83,7 +86,9 @@
             <div class="kp-list-actions">
               <ResourceActionButton @click="viewYaml(row)">YAML</ResourceActionButton>
               <ResourceActionButton v-if="canEditRes" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm(row)">编辑</ResourceActionButton>
-              <ResourceActionButton v-if="podActionLabel(row.namespace)"
+              <PodQuickActions v-if="isPod" :key="`${bulkContextKey}/${row.uid}`" :pod="row._raw"
+                :cluster-id="store.currentClusterId" :context-key="bulkContextKey" />
+              <ResourceActionButton v-else-if="podActionLabel(row.namespace)"
                 :class="{'pod-actions-combined': podActionLabel(row.namespace).length > 2}"
                 @click="openRowPodAction(row)">{{ podActionLabel(row.namespace) }}</ResourceActionButton>
               <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
@@ -173,6 +178,8 @@ import {resourceUiPolicy} from '../utils/resource-policy'
 import PodScaleDialog from '../components/PodScaleDialog.vue'
 import DeploymentImageDialog from '../components/DeploymentImageDialog.vue'
 import WorkloadPodPicker from '../components/WorkloadPodPicker.vue'
+import PodQuickActions from '../components/PodQuickActions.vue'
+import PodRowDetails from '../components/PodRowDetails.vue'
 import DeploymentRowDetails from '../components/DeploymentRowDetails.vue'
 import {resourceTitle,filterResourceRows,servicePortLabel,podScaleAvailability} from '../utils/resource-ui'
 
@@ -207,6 +214,7 @@ const actionWidth = computed(() => showPodActions.value
   ? 132 + (canEditRes.value ? 56 : 0) + podActionWidth.value
   : canUpdateRes.value ? 200 : 135)
 const podActionWidth = computed(() => {
+  if (isPod.value) return showPodLogs.value || showPodTerminal.value || can('pod:files:read') ? 88 : 0
   if (showPodLogs.value && showPodTerminal.value || imageUpdateSupported.value && can('cluster:update')) return 88
   return showPodLogs.value || showPodTerminal.value ? 56 : 0
 })
@@ -271,22 +279,22 @@ const editingRow = shallowRef(null)
 const rows = computed(() => items.value.map(i => normalizeRow(meta.value.kind, i)))
 const filtered = computed(() => sortRows(filterResourceRows(filterRows(rows.value, {...filters,keyword:keyword.value}),{type:serviceType.value,createdRange:createdRange.value}),sort.value.prop,sort.value.order))
 const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
-const deploymentExpandedUids = ref([])
-const visibleDeploymentExpandedUids = computed(() => paged.value.filter(row => deploymentExpandedUids.value.includes(row.uid)).map(row => row.uid))
+const expandedUids = ref([])
+const visibleExpandedUids = computed(() => paged.value.filter(row => expandedUids.value.includes(row.uid)).map(row => row.uid))
 
-function onDeploymentExpandChange(row, expandedRows) {
-  if (!isDeployment.value || !Array.isArray(expandedRows)) return
-  const expanded = new Set(deploymentExpandedUids.value)
+function onRowExpandChange(row, expandedRows) {
+  if (!showPodActions.value || !Array.isArray(expandedRows)) return
+  const expanded = new Set(expandedUids.value)
   if (expandedRows.some(item => item.uid === row.uid)) expanded.add(row.uid)
   else expanded.delete(row.uid)
-  deploymentExpandedUids.value = [...expanded]
+  expandedUids.value = [...expanded]
 }
-function toggleDeploymentDetails(row, column, event) {
-  if (!isDeployment.value || loading.value || !row.uid || ['selection','expand'].includes(column?.type)) return
-  if (event?.target?.closest?.('a,button,input,select,textarea,label,[role="button"],[role="checkbox"],.el-dropdown,.kp-list-actions,.el-checkbox')) return
-  tableRef.value?.toggleRowExpansion(row, !deploymentExpandedUids.value.includes(row.uid))
+function toggleRowDetails(row, column, event) {
+  if (!showPodActions.value || loading.value || !row.uid || ['selection','expand'].includes(column?.type)) return
+  if (event?.target?.closest?.('a,button,input,select,textarea,label,[role="button"],[role="checkbox"],.el-dropdown,.kp-list-actions,.el-checkbox,.el-table__expanded-cell')) return
+  tableRef.value?.toggleRowExpansion(row, !expandedUids.value.includes(row.uid))
 }
-watch(bulkContextKey, () => { deploymentExpandedUids.value = [] }, { flush: 'sync' })
+watch(bulkContextKey, () => { expandedUids.value = [] }, { flush: 'sync' })
 
 function display(v) {
   if (v === undefined || v === null || v === '') return '-'
@@ -340,9 +348,9 @@ async function fetchList(append=false) {
     const data=await api.list(m.group,m.version,m.plural,params,{signal:controller.signal})
     if (!gate.current(request)) return
     items.value=append ? [...items.value,...(data.items || [])] : data.items || []
-    if (isDeployment.value) {
+    if (showPodActions.value) {
       const existing = new Set(rows.value.map(row => row.uid))
-      deploymentExpandedUids.value = deploymentExpandedUids.value.filter(uid => existing.has(uid))
+      expandedUids.value = expandedUids.value.filter(uid => existing.has(uid))
     }
     nextContinue.value=data.metadata?.continue || data.continue || ''
   } catch(e) {
@@ -360,8 +368,8 @@ function openDetail(row) { router.push(detailPath(row)) }
 const podMeta = { group: '', plural: 'pods', namespaced: true }
 const replicaSetMeta = { group: 'apps', plural: 'replicasets', namespaced: true }
 function canOpenPodView(mode, namespace, clusterId = store.currentClusterId) {
-  return showPodActions.value && can(mode === 'terminal' ? 'pod:exec' : 'pod:logs') && canResource(podMeta, 'detail', namespace, clusterId)
-    && (!isDeployment.value || canResource(replicaSetMeta, 'list', namespace, clusterId))
+  return isDeployment.value && can(mode === 'terminal' ? 'pod:exec' : 'pod:logs') && canResource(podMeta, 'detail', namespace, clusterId)
+    && canResource(replicaSetMeta, 'list', namespace, clusterId)
 }
 function podActionLabel(namespace) {
   const labels = [canOpenPodView('logs', namespace) && '日志', canOpenPodView('terminal', namespace) && '终端'].filter(Boolean)
@@ -377,7 +385,7 @@ function openPodView(mode, { clusterId, namespace, name, uid, container, shell }
   })
 }
 function openRowPodAction(row) {
-  if (!showPodActions.value) return
+  if (!isDeployment.value) return
   const { uid, name, namespace } = row._raw?.metadata || {}
   const clusterId = route.params.clusterId
   if (clusterId !== store.currentClusterId || route.path !== listPath) return
@@ -388,7 +396,7 @@ function openRowPodAction(row) {
   if (!logs && !terminal && !imageUpdate) return ElMessage.warning('当前账号没有可用的容器操作权限')
   workloadPodTarget.value = Object.freeze({ uid, name, namespace, clusterId, logs, terminal, imageUpdate,
     clusterName: store.currentCluster?.name || clusterId,
-    kind: isPod.value ? 'Pod' : 'Deployment', context: bulkContextKey.value })
+    kind: 'Deployment', context: bulkContextKey.value })
 }
 function openWorkloadPod({ mode, ...pod }) {
   const selected = workloadPodTarget.value
@@ -597,10 +605,10 @@ onUnmounted(() => { yamlReadEpoch++;yamlReadController?.abort();clearTimeout(que
 </script>
 
 <style scoped>
-.resource-table-panel :deep(.deployment-expandable-row) { cursor: pointer; }
-.resource-table-panel :deep(.deployment-expand-column .cell) { padding: 0; text-align: center; }
-.resource-table-panel :deep(.deployment-expand-column .el-table__expand-icon) { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin: 0; color: var(--kp-muted); }
-.resource-table-panel :deep(.deployment-expand-column .el-table__expand-icon:focus-visible) { outline: 2px solid var(--kp-brand); outline-offset: 1px; border-radius: 4px; }
+.resource-table-panel :deep(.resource-expandable-row) { cursor: pointer; }
+.resource-table-panel :deep(.resource-expand-column .cell) { padding: 0; text-align: center; }
+.resource-table-panel :deep(.resource-expand-column .el-table__expand-icon) { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin: 0; color: var(--kp-muted); }
+.resource-table-panel :deep(.resource-expand-column .el-table__expand-icon:focus-visible) { outline: 2px solid var(--kp-brand); outline-offset: 1px; border-radius: 4px; }
 .resource-table-panel :deep(td.el-table__expanded-cell) { padding: 0!important; cursor: default; }
 .pod-actions-combined.kp-resource-action { inline-size: 80px }
 .resource-toolbar { flex-wrap:nowrap; }

@@ -38,6 +38,7 @@
           <DeploymentOverview v-if="obj.metadata" :resource="obj"
             :cluster-name="store.currentCluster?.name || store.currentClusterId"
             :events="events" :events-loading="eventsLoading" :events-error="eventsError" @show-events="tab='events'" />
+          <AssociatedPodTable v-if="tab==='overview' && obj.metadata" class="deployment-associated-pods" :pods="childPods" :loading="podsLoading" :loaded="podsLoaded" :error="podsError" :cluster-id="store.currentClusterId" :context-key="podContextKey" @open-pod="openPod" @refresh="load" />
         </template>
         <StorageDetails v-else-if="isStorage&&obj.metadata" :resource="obj" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :events="events" :events-loading="eventsLoading" :events-error="eventsError"/>
         <div v-else class="kp-card" style="border:0">
@@ -114,17 +115,8 @@
 
       <!-- 关联 Pod -->
       <el-tab-pane v-if="hasSelector" label="关联 Pod" name="pods">
-        <el-table :data="childPods" size="small" border stripe v-loading="podsLoading" @row-dblclick="p => openPod(p)">
-          <el-table-column prop="metadata.name" label="名称" min-width="220">
-            <template #default="{ row: p }"><el-link type="primary" underline="never" @click="openPod(p)">{{ p.metadata.name }}</el-link></template>
-          </el-table-column>
-          <el-table-column label="状态" width="130">
-            <template #default="{ row: p }"><el-tag disable-transitions :type="statusTag(phaseOf('Pod', p))" size="small">{{ phaseOf('Pod', p) }}</el-tag></template>
-          </el-table-column>
-          <el-table-column prop="status.podIP" label="Pod IP" width="140" />
-          <el-table-column prop="spec.nodeName" label="节点" width="160" />
-          <el-table-column label="创建时间" width="110"><template #default="{ row: p }">{{ ago(p.metadata.creationTimestamp) }}</template></el-table-column>
-        </el-table>
+        <template #label><span>关联 Pod<span v-if="podsLoaded && !podsError">（{{ childPods.length }}）</span></span></template>
+        <AssociatedPodTable v-if="tab==='pods'" :pods="childPods" :loading="podsLoading" :loaded="podsLoaded" :error="podsError" :cluster-id="store.currentClusterId" :context-key="podContextKey" @open-pod="openPod" @refresh="load" />
       </el-tab-pane>
 
       <!-- Secret / ConfigMap 数据 -->
@@ -166,13 +158,14 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import * as yaml from 'js-yaml'
 import api from '../api'
 import { metaFromRoute, statusTag, CORE } from '../config/resources'
-import { normalizeRow, phaseOf, ago, fmtTime } from '../config/columns'
+import { normalizeRow, ago, fmtTime } from '../config/columns'
 import { cpath, nsPath } from '../utils/path'
 import { can, canResource, canUpdate, canDelete } from '../utils/perm'
 import { store } from '../store'
 import { relatedPods, createRequestGate, targetDescription } from '../utils/resource'
 import ResourceOperations from '../components/ResourceOperations.vue'
 import DeploymentOverview from '../components/DeploymentOverview.vue'
+import AssociatedPodTable from '../components/AssociatedPodTable.vue'
 import ContainerFilePicker from '../components/ContainerFilePicker.vue'
 import SimpleResourceDialog from '../components/SimpleResourceDialog.vue'
 import {resourceUiPolicy} from '../utils/resource-policy'
@@ -216,6 +209,9 @@ const events = ref([])
 const eventsLoading = ref(false)
 const childPods = ref([])
 const podsLoading = ref(false)
+const podsLoaded = ref(false)
+const podsError = ref('')
+const podContextKey = computed(() => JSON.stringify([store.currentClusterId, route.fullPath, obj.value.metadata?.uid || '']))
 
 const row = computed(() => normalizeRow(meta.value.kind, obj.value))
 const containers = computed(() => {
@@ -262,6 +258,7 @@ async function load() {
   const request=gate.next()
   loading.value = true
   loadError.value = ''; obj.value={}; secretRevealed.value=false; childPods.value=[]; events.value=[]
+  podsLoaded.value=false; podsError.value=''; podsLoading.value=false
   try {
     const data = await api.get(meta.value.group, meta.value.version, meta.value.plural, apiNs(), name.value)
     if (!gate.current(request)) return
@@ -297,7 +294,7 @@ async function listAll(group,version,plural,params) {
   return items
 }
 async function loadPods(request) {
-  podsLoading.value=true
+  podsLoading.value=true; podsLoaded.value=false; podsError.value=''
   const resource=obj.value
   try {
     const params={namespace:resource.metadata?.namespace,clusterId:store.currentClusterId}
@@ -305,7 +302,8 @@ async function loadPods(request) {
     const replicas=resource.kind==='Deployment' ? await listAll('apps','v1','replicasets',params) : []
     if (!gate.current(request)) return
     childPods.value=relatedPods(resource,pods,replicas)
-  } catch(e) { if (gate.current(request)) { childPods.value=[]; ElMessage.error('关联 Pod 加载失败：'+e.message) } }
+    podsLoaded.value=true
+  } catch(e) { if (gate.current(request)) { childPods.value=[]; podsError.value='关联 Pod 加载失败：'+(e.message||'读取失败'); ElMessage.error(podsError.value) } }
   finally { if (gate.current(request)) podsLoading.value=false }
 }
 async function preflightYaml(text) {
@@ -402,6 +400,7 @@ onUnmounted(()=>gate.invalidate())
 .deployment-detail-heading h1 { margin: 2px 0 0; color: var(--kp-text); font-size: 23px; font-weight: 650; overflow-wrap: anywhere; }
 .deployment-detail-page :deep(.el-tabs--border-card) { border-radius: var(--kp-r); overflow: hidden; }
 .deployment-detail-page :deep(.el-tabs__content) { background: var(--kp-bg); }
+.deployment-associated-pods { margin-top:16px; }
 @media (max-width: 760px) {
   .deployment-detail-toolbar .spacer { flex-basis: 100%; height: 0; }
   .deployment-detail-heading h1 { font-size: 19px; }

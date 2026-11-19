@@ -66,7 +66,7 @@
                 <el-button v-if="target.terminal" size="small" color="#a35412" plain
                   :disabled="!running(pod,container)||!container.startedAt" @click="openBatch(pod,container)">批量执行</el-button>
                 <el-button v-if="target.logs" size="small" color="#6d40b7" plain
-                  :loading="downloads.has(container.key)" @click="downloadLogs(container)">下载日志</el-button>
+                  :loading="downloads.has(container.key)" @click="downloadLogs(container, target.clusterId)">下载日志</el-button>
                 <el-button v-if="target.logs" size="small" plain type="primary" :aria-label="`追踪 ${pod.metadata.name} / ${container.name} 的日志`" @click="select('logs', pod, container)">追踪日志</el-button>
                 <el-dropdown v-if="target.terminal" split-button size="small" type="primary" :disabled="!running(pod,container)"
                   @click="select('terminal',pod,container,'/bin/sh')" @command="shell=>select('terminal',pod,container,shell)">
@@ -91,12 +91,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, shallowReactive, shallowRef, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { Box, Clock, Connection, CopyDocument } from '@element-plus/icons-vue'
 import api from '../api'
 import { copyText } from '../utils/clipboard'
 import { ownedPods, podContainers } from '../utils/container-targets'
+import { useContainerLogDownload } from '../utils/container-log-download'
 import { readResourcePages } from '../utils/resource'
 import { can } from '../utils/perm'
 import ContainerFilesDialog from './ContainerFilesDialog.vue'
@@ -112,9 +113,8 @@ const incomplete = ref(false)
 const filesVisible = ref(false)
 const fileTarget = shallowRef(null)
 const batchTarget = shallowRef(null)
-const downloads = shallowReactive(new Map())
+const { downloads, downloadLogs } = useContainerLogDownload(() => props.target.logs && can('pod:logs'))
 let controller
-let logTailLines = '2000'
 
 const statusLabels = {
   Running: '运行中',
@@ -213,39 +213,6 @@ function openBatch(pod, container) {
   const entries = groups.value.flatMap(group=>group.containers.filter(item=>running(group.pod,item)&&item.startedAt))
   batchTarget.value = {key:container.key,entries}
 }
-async function downloadLogs(container) {
-  if (!props.target.logs||!can('pod:logs')||downloads.has(container.key)) return
-  const request = new AbortController()
-  downloads.set(container.key,request)
-  try {
-    const destination = { ...container, clusterId: props.target.clusterId }
-    const { value } = await ElMessageBox.prompt('输入要下载的日志行数，单次最多 5 MiB。', '下载日志', {
-      inputValue: logTailLines,
-      inputPlaceholder: '日志行数',
-      inputValidator: value => /^[1-9]\d*$/.test(value) && Number(value) <= 20000 || '请输入 1–20000 的整数',
-      confirmButtonText: '下载',
-      cancelButtonText: '取消',
-    })
-    if (request.signal.aborted || !can('pod:logs')) return
-    logTailLines = value
-    const blob = await api.containerLogsDownload({...destination,tailLines:Number(value)},{signal:request.signal})
-    if (request.signal.aborted) return
-    const link = document.createElement('a')
-    const url = URL.createObjectURL(blob)
-    link.href = url
-    link.download = `${container.pod}-${container.name}.log`
-    document.body.appendChild(link)
-    try { link.click() } finally { link.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000) }
-  } catch (cause) {
-    if (request.signal.aborted || cause === 'cancel' || cause === 'close') return
-    let message = cause.message||'日志下载失败'
-    const body = cause.raw?.response?.data
-    if (body instanceof Blob) {
-      try { message = JSON.parse(await body.text()).message||message } catch { /* Keep the original error. */ }
-    }
-    if (!request.signal.aborted) ElMessage.error(message)
-  } finally { downloads.delete(container.key) }
-}
 function select(mode, pod, container, shell) {
   if (loading.value) return
   if (mode === 'logs' ? !props.target.logs : !props.target.terminal || !running(pod,container)) return
@@ -255,7 +222,7 @@ function select(mode, pod, container, shell) {
 
 watch(() => props.contextKey, () => emit('close'))
 onMounted(load)
-onUnmounted(() => { controller?.abort(); for (const request of downloads.values()) request.abort() })
+onUnmounted(() => controller?.abort())
 </script>
 
 <style scoped>

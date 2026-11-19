@@ -288,7 +288,7 @@ try{
  assert.ok(reads.some(r=>r.path==='/v1/resources/_core/v1/pods'&&r.params.namespace==='app'))
  containerMode=true
  await page.locator('tr').filter({hasText:'api-broken'}).getByRole('button',{name:'日志 / 终端',exact:true}).click()
- await page.getByRole('dialog',{name:'容器操作'}).getByRole('button',{name:'打开终端',exact:true}).click()
+ await page.getByRole('dialog',{name:'api-broken 的容器快捷操作',exact:true}).getByRole('button',{name:'终端',exact:true}).click()
  await page.getByText('已连接',{exact:true}).waitFor()
  assert.equal((await page.evaluate(()=>window.__terminalConnections)).length,1)
  assert.equal(await page.getByRole('button',{name:'连接',exact:true}).isDisabled(),true)
