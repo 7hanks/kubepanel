@@ -89,8 +89,11 @@
         </el-table>
       </div>
 
+     </template>
+
       <!-- 添加 / 编辑 -->
-      <el-dialog v-model="formVisible" :title="editingId ? '编辑镜像仓库' : '添加镜像仓库'" width="560px" top="10vh">
+      <el-dialog v-model="formVisible" :title="workspace ? (editingId ? '编辑 Harbor 连接' : '添加 Harbor 连接') : (editingId ? '编辑镜像仓库' : '添加镜像仓库')" width="min(560px, 94vw)" top="10vh">
+        <p class="connection-help">保存 Harbor 实例的地址和登录方式。项目是在 Harbor 实例内创建的，不会出现在连接列表中。</p>
         <el-form label-position="top">
           <el-form-item label="名称">
             <el-input v-model="form.name" placeholder="例如 harbor（留空则用地址）" />
@@ -118,6 +121,7 @@
         </template>
       </el-dialog>
 
+     <template v-if="!workspace">
       <!-- 从集群发现 -->
       <el-dialog v-model="discoverVisible" title="从集群发现镜像仓库" width="620px" top="10vh">
         <el-alert type="info" :closable="false" style="margin-bottom:12px">
@@ -145,7 +149,7 @@
      </template>
      <template v-else>
       <header class="workspace-header"><div><span class="workspace-brand">KubePanel</span><h1>镜像仓库工作区</h1><p class="kp-muted">管理已保存仓库中的项目、镜像制品与标签</p></div><router-link to="/registries" class="workspace-back">返回仓库配置</router-link></header>
-      <div class="workspace-controls"><label for="workspace-registry">当前仓库</label><el-select id="workspace-registry" :model-value="browseRegistry?.id||''" :loading="loading" aria-label="工作区镜像仓库" @update:model-value="switchWorkspace"><el-option v-for="row in registries" :key="row.id" :label="row.name" :value="row.id"/></el-select><el-button :loading="loading" @click="refreshWorkspace">刷新仓库配置</el-button></div>
+      <div class="workspace-controls"><label for="workspace-registry">Harbor 连接</label><el-select id="workspace-registry" :model-value="browseRegistry?.id||''" :loading="loading" aria-label="工作区镜像仓库" placeholder="选择已保存的 Harbor 实例" @visible-change="open=>{if(open)syncConnections({fresh:true})}" @update:model-value="switchWorkspace"><el-option v-for="row in registries" :key="row.id" :label="row.name" :value="row.id"/></el-select><el-button :loading="loading" @click="refreshWorkspace">刷新连接</el-button><el-button v-if="canCreateReg" :icon="Plus" @click="openAdd">添加 Harbor 连接</el-button><span class="workspace-connection-hint">切换 Harbor 实例；实例内的项目在下方选择。</span></div>
       <el-alert v-if="registryError||workspaceError" type="error" :title="registryError||workspaceError" :closable="false" class="registry-alert"/>
       <div v-if="!loading&&!registryError&&!workspaceError&&!registries.length" class="browser-empty">尚未保存镜像仓库，请返回仓库配置添加连接。</div>
      </template>
@@ -156,17 +160,18 @@
           <div class="browser-address kp-muted"><strong v-if="workspace">{{ browseRegistry?.name }} · </strong>{{ browseRegistry?.url }}</div>
           <el-alert v-if="operationNotice" :type="operationNotice.type" :title="operationNotice.message" :closable="false" class="registry-alert"/>
           <section class="browser-section" aria-labelledby="registry-projects-heading" v-loading="projectsLoading">
-            <div class="browser-heading"><h2 id="registry-projects-heading">项目</h2><span class="kp-muted">共 {{ projectPage.total }} 个</span><el-button v-if="canCreateReg" type="primary" :disabled="projectSaving" @click="openCreateProject">创建项目</el-button><el-button link type="primary" :disabled="projectsLoading" @click="loadProjects">刷新项目</el-button></div>
+            <div class="browser-heading"><h2 id="registry-projects-heading">Harbor 项目</h2><span class="kp-muted">列表共 {{ projectPage.total }} 个</span><el-button v-if="canCreateReg" type="primary" :disabled="projectSaving" @click="openCreateProject">创建项目</el-button><el-button link type="primary" :disabled="projectsLoading" @click="loadProjects">刷新项目</el-button></div>
             <el-alert v-if="projectError" type="error" :title="projectError" :closable="false" class="registry-alert"><el-button link type="primary" @click="loadProjects">重试</el-button></el-alert>
-            <div v-else-if="projects.length" class="project-selector">
-              <el-select v-model="project" aria-label="选择项目" @change="changeProject">
-                <el-option v-for="p in projects" :key="p.name" :label="`${p.name}（${p.repoCount} 个仓库）`" :value="p.name" />
+            <div v-if="projectOptions.length" class="project-selector">
+              <span class="project-select-label">当前项目</span><el-select v-model="project" aria-label="选择项目" @visible-change="open=>{if(open)loadProjects({preserveDetails:true})}" @change="changeProject">
+                <el-option v-for="p in projectOptions" :key="p.name" :label="projectOptionLabel(p)" :value="p.name" />
               </el-select>
               <el-tag v-if="currentProject" disable-transitions :type="currentProject.public ? 'success' : 'info'" effect="plain">{{ currentProject.public ? '公开项目' : '私有项目' }}</el-tag>
               <span v-if="currentProject" class="kp-muted">{{ currentProject.repoCount }} 个镜像仓库</span>
             </div>
-            <div v-else-if="!projectsLoading" class="browser-empty">当前账号没有可见项目。请检查 Harbor 中的项目和账号权限，或编辑仓库认证信息后重试。</div>
-            <el-pagination v-if="projectPage.total > projectPage.pageSize" v-model:current-page="projectPage.page" :page-size="projectPage.pageSize" :total="projectPage.total" layout="total, prev, pager, next" size="small" aria-label="项目分页" @current-change="loadProjects" />
+            <p v-if="currentProject?.pendingList" class="project-sync-note" role="status">项目“{{currentProject.name}}”已创建，Harbor 列表暂未返回此项目，已保留在选择器中。可继续浏览，或稍后刷新项目。</p>
+            <div v-else-if="!projectOptions.length&&!projectsLoading&&!projectError" class="browser-empty">当前账号没有可见项目。请检查 Harbor 中的项目和账号权限，或编辑仓库认证信息后重试。</div>
+            <el-pagination v-if="projectPage.total > projectPage.pageSize" :current-page="projectPage.page" :page-size="projectPage.pageSize" :total="projectPage.total" layout="total, prev, pager, next" size="small" aria-label="项目分页" @update:current-page="changeProjectPage" />
           </section>
 
           <section v-if="project" class="browser-section" aria-labelledby="registry-repositories-heading" v-loading="reposLoading">
@@ -260,6 +265,7 @@ const reposLoading = ref(false)
 const browseRegistry = ref(null)
 const projects = ref([])
 const project = ref('')
+const confirmedProjects=reactive(new Map()),selectedProjectRecord=ref(null)
 const repos = ref([])
 const repoFilter = ref('')
 const selectedRepository = ref(null)
@@ -276,14 +282,21 @@ const workspaceError=ref(''),operationNotice=ref(null)
 const projectDialog=ref(false),projectTarget=ref(null),projectDraft=reactive({name:'',public:false}),projectSaving=ref(false),projectMutationError=ref(''),projectUncertain=ref(false)
 const tagDialog=ref(false),tagTarget=ref(null),tagDraft=reactive({name:''}),tagSaving=ref(false),tagMutationError=ref(''),tagUncertain=ref(false),deleteBusy=ref('')
 const projectGate=createRequestGate(),repoGate=createRequestGate(),listGate=createRequestGate()
-let artifactEpoch=0,browserEpoch=0,projectMutationEpoch=0,tagMutationEpoch=0,deleteRequest=null
+let artifactEpoch=0,browserEpoch=0,projectMutationEpoch=0,tagMutationEpoch=0,deleteRequest=null,connectionSync=null,connectionSyncAgain=false,projectSelectionVersion=0,disposed=false
+const connectionChangeKey='kp_registry_connections_changed'
 const artifactRequests=new Map()
 
 const okCount = computed(() => registries.value.filter(r => r.health?.ok).length)
 const badCount = computed(() => registries.value.filter(r => r.health && !r.health.ok).length)
 const registryFilterLabel = computed(() => ({ all: '全部仓库配置', ok: '连接正常的仓库', bad: '连接异常的仓库' })[registryFilter.value])
 const filteredRegistries = computed(() => registries.value.filter(r => registryFilter.value === 'all' || (registryFilter.value === 'ok' ? r.health?.ok : r.health && !r.health.ok)))
-const currentProject = computed(() => projects.value.find(p => p.name === project.value))
+const projectOptions=computed(()=>{
+ const options=new Map(projects.value.map(item=>[item.name,item]))
+ for(const [name,item] of confirmedProjects)if(!options.has(name))options.set(name,item)
+ if(selectedProjectRecord.value&&!options.has(selectedProjectRecord.value.name))options.set(selectedProjectRecord.value.name,selectedProjectRecord.value)
+ return [...options.values()]
+})
+const currentProject = computed(() => projectOptions.value.find(p => p.name === project.value))
 const currentArtifacts = computed(() => artifacts[selectedRepository.value?.name] || [])
 const currentArtifactPage = computed(() => artifactPages[selectedRepository.value?.name])
 const filteredRepos = computed(() => {
@@ -330,7 +343,8 @@ async function submitForm() {
       : await api.addRegistry({ ...form,...(!form.ca.trim() ? {ca:undefined} : {}) })
     ElMessage.success(editingId.value ? '已保存' : '已添加')
     formVisible.value = false
-    await load({ autoTest: false })
+    notifyConnectionsChanged()
+    if(props.workspace)await syncConnections({fresh:true});else await load({ autoTest: false })
     if (saved?.id) await test(saved)
   } catch (e) { /* 拦截器已提示 */ }
   finally { saving.value = false }
@@ -353,6 +367,7 @@ async function remove(row) {
       { type: 'warning', confirmButtonText: '确定移除', confirmButtonClass: 'el-button--danger' })
     await api.removeRegistry(row.id)
     ElMessage.success('已移除')
+    notifyConnectionsChanged()
     await load()
   } catch (e) { /* 取消 */ }
 }
@@ -409,6 +424,8 @@ function resetBrowser() {
   browseRegistry.value = null
   projects.value = []
   project.value = ''
+  confirmedProjects.clear()
+  selectedProjectRecord.value=null
   repos.value = []
   repoFilter.value = ''
   projectPage.page = 1
@@ -430,29 +447,29 @@ async function browse(row) {
 async function loadProjects(options={}) {
   const request = projectGate.next(), registryId = browseRegistry.value?.id
   if (!registryId) return
-  repoGate.invalidate()
-  resetArtifacts()
-  projects.value = []
-  repos.value = []
-  project.value = ''
-  repoFilter.value = ''
-  repoPage.total = 0
-  repoPage.page = 1
+  const previous=project.value,selectionVersion=projectSelectionVersion,preserveDetails=options?.preserveDetails===true,desired=options?.selectProject||(!options?.replaceSelection?previous:'')
+  if(currentProject.value)selectedProjectRecord.value={...currentProject.value}
+  if(options?.replaceSelection)selectedProjectRecord.value=null
+  if(!preserveDetails){
+   repoGate.invalidate();resetArtifacts();projects.value=[];repos.value=[]
+   project.value=desired;repoFilter.value='';repoPage.total=0;repoPage.page=1
+  }
   projectsLoading.value = true
-  reposLoading.value = false
+  if(!preserveDetails)reposLoading.value = false
   projectError.value = ''
-  repoError.value = ''
+  if(!preserveDetails)repoError.value = ''
   try {
     const data = normalizePage(await api.registryProjects(registryId, { page: projectPage.page, pageSize: projectPage.pageSize }), projectPage)
     if (!projectGate.current(request)) return
     projects.value = data.items
-    if(options?.createdProject&&!projects.value.some(item=>item.name===options.createdProject.name))projects.value=[...projects.value,options.createdProject]
+    for(const item of data.items)if(confirmedProjects.has(item.name))confirmedProjects.set(item.name,{...item,pendingList:false})
     Object.assign(projectPage, { page: data.page, pageSize: data.pageSize, total: data.total })
     projectsLoading.value = false
-    if (projects.value.length) {
-      project.value = projects.value.some(item=>item.name===options?.selectProject)?options.selectProject:projects.value[0].name
-      await loadRepos()
-    }
+    const selectionChanged=selectionVersion!==projectSelectionVersion,preferred=selectionChanged?project.value:desired
+    const next=projectOptions.value.some(item=>item.name===preferred)?preferred:projects.value[0]?.name||projectOptions.value[0]?.name||''
+    project.value=next
+    selectedProjectRecord.value=currentProject.value?{...currentProject.value}:null
+    if(next&&!selectionChanged&&(!preserveDetails||next!==previous))await loadRepos()
   } catch (e) {
     if (projectGate.current(request)) projectError.value = e.message || '项目加载失败'
   } finally {
@@ -460,10 +477,13 @@ async function loadProjects(options={}) {
   }
 }
 function changeProject() {
+  projectSelectionVersion++
+  selectedProjectRecord.value=currentProject.value?{...currentProject.value}:null
   repoPage.page = 1
   repoFilter.value = ''
   return loadRepos()
 }
+function changeProjectPage(page){if(page===projectPage.page)return;projectPage.page=page;return loadProjects({replaceSelection:true})}
 async function loadRepos() {
   if (!project.value || !browseRegistry.value) return
   const request = repoGate.next(), registryId = browseRegistry.value.id, projectName = project.value
@@ -516,8 +536,8 @@ async function loadArtifacts(row,page=1) {
   }
 }
 watch(browseVisible, visible => { if (!visible) resetBrowser() }, { flush: 'sync' })
-watch(()=>route.params.registryId,()=>{if(props.workspace&&!loading.value)applyWorkspaceRoute()})
-onUnmounted(()=>{listGate.invalidate();resetBrowser()})
+watch(()=>route.params.registryId,()=>{if(props.workspace)applyWorkspaceRoute()})
+onUnmounted(()=>{disposed=true;if(typeof window!=='undefined'){window.removeEventListener('focus',onWorkspaceReturn);window.removeEventListener('storage',onConnectionsChanged);document.removeEventListener('visibilitychange',onWorkspaceVisibility)}listGate.invalidate();resetBrowser()})
 
 function workspaceHref(row){return router.resolve({name:'registry-workspace',params:{...(row?.id?{registryId:row.id}:{})}}).href}
 async function switchWorkspace(id){const row=registries.value.find(item=>item.id===id);if(row)await router.replace(workspaceHref(row))}
@@ -529,7 +549,32 @@ async function applyWorkspaceRoute(){
  if(!row){resetBrowser();if(id)workspaceError.value='指定的镜像仓库不存在或当前账号不可用，请选择其他已保存仓库';return}
  await browse(row)
 }
-async function refreshWorkspace(){await load({autoTest:false});if(!registryError.value)await applyWorkspaceRoute()}
+async function refreshWorkspace(){await syncConnections({fresh:true})}
+function connectionIdentity(row){return JSON.stringify([row?.url,row?.username||'',row?.insecure===true,row?.hasCa===true,row?.hasPassword===true])}
+async function syncConnections({fresh=false}={}){
+ if(disposed)return
+ if(connectionSync){if(fresh)connectionSyncAgain=true;return connectionSync}
+ connectionSync=(async()=>{
+  do{
+   connectionSyncAgain=false
+   const epoch=browserEpoch,current=browseRegistry.value
+   await load({autoTest:false})
+   if(registryError.value||epoch!==browserEpoch)continue
+   if(!current){await applyWorkspaceRoute();continue}
+   const updated=registries.value.find(item=>item.id===current.id)
+   if(!updated){resetBrowser();workspaceError.value='当前 Harbor 连接已被移除或不再可用，请在上方选择其他连接';continue}
+   if(connectionIdentity(updated)!==connectionIdentity(current)){await browse(updated);continue}
+   browseRegistry.value=updated
+  }while(connectionSyncAgain&&!disposed)
+ })().finally(()=>{connectionSync=null})
+ return connectionSync
+}
+function notifyConnectionsChanged(){try{localStorage.setItem(connectionChangeKey,`${Date.now()}-${Math.random()}`)}catch{ /* The dropdown and return-to-tab refresh remain available when storage is blocked. */ }}
+function onWorkspaceReturn(){if(props.workspace&&document.visibilityState!=='hidden')syncConnections({fresh:true})}
+function onWorkspaceVisibility(){if(document.visibilityState==='visible')onWorkspaceReturn()}
+function onConnectionsChanged(event){if(props.workspace&&event.key===connectionChangeKey)syncConnections({fresh:true})}
+function rememberCreatedProject(record){confirmedProjects.set(record.name,{...record,pendingList:true});selectedProjectRecord.value={...record,pendingList:true}}
+function projectOptionLabel(record){return `${record.name}（${record.repoCount??0} 个仓库）${record.pendingList?' · 刚创建':!projects.value.some(item=>item.name===record.name)?' · 当前页外':''}`}
 function pinArtifact(artifact,tag){
  if(!browseRegistry.value||!project.value||!selectedRepository.value||!artifact?.digest)return null
  return Object.freeze({registryId:browseRegistry.value.id,registryName:browseRegistry.value.name,registryUrl:browseRegistry.value.url,project:project.value,repository:selectedRepository.value.name,digest:artifact.digest,...(tag!==undefined?{tag}:{}),tags:[...(artifact.tags||[])]})
@@ -555,7 +600,8 @@ async function submitProject(){
   await api.createRegistryProject(target.id,{name,public:isPublic,expectedUrl:target.url},{silent:true})
   if(epoch!==projectMutationEpoch||browseRegistry.value?.id!==target.id)return
   projectDialog.value=false;operationNotice.value={type:'success',message:`${target.name}：已创建${isPublic?'公开':'私有'}项目 ${name}`}
-  projectPage.page=1;await loadProjects({selectProject:name,createdProject:{name,public:isPublic,repoCount:0}})
+  rememberCreatedProject({name,public:isPublic,repoCount:0});project.value=name
+  projectPage.page=1;await loadProjects({selectProject:name})
  }catch(error){if(epoch===projectMutationEpoch&&browseRegistry.value?.id===target.id){projectUncertain.value=unknownOutcome(error);projectMutationError.value=mutationMessage(error,'创建项目')}}
  finally{if(epoch===projectMutationEpoch)projectSaving.value=false}
 }
@@ -627,7 +673,7 @@ function fmtTime(v) {
   return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-onMounted(async()=>{await load({autoTest:!props.workspace});if(props.workspace&&!registryError.value)await applyWorkspaceRoute()})
+onMounted(async()=>{if(props.workspace){window.addEventListener('focus',onWorkspaceReturn);window.addEventListener('storage',onConnectionsChanged);document.addEventListener('visibilitychange',onWorkspaceVisibility)}await load({autoTest:!props.workspace});if(!disposed&&props.workspace&&!registryError.value)await applyWorkspaceRoute()})
 </script>
 
 <style scoped>
@@ -637,6 +683,7 @@ onMounted(async()=>{await load({autoTest:!props.workspace});if(props.workspace&&
 .page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
 .page-head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
 .page-head p { margin: 6px 0 0; font-size: 12px; max-width: 720px; line-height: 1.6; }
+.connection-help,.workspace-connection-hint,.project-sync-note{font-size:13px;line-height:1.65;color:var(--kp-muted)}.connection-help{margin:0 0 18px}.workspace-connection-hint{flex-basis:100%}.project-sync-note{margin:12px 0 0;color:var(--kp-brand)}.project-select-label{font-size:13px;color:var(--kp-text-2)}
 .registry-open-workspace{display:inline-flex;align-items:center;justify-content:center;padding:8px 14px;border:1px solid var(--kp-border-strong);border-radius:8px;color:var(--kp-brand);font-size:14px;white-space:nowrap;background:var(--kp-surface)}.registry-open-workspace:hover{border-color:var(--kp-brand);background:var(--kp-brand-soft)}.registry-row-workspace{color:var(--kp-brand);font-size:13px;margin:0 10px}.registry-workspace{min-height:100vh;background:var(--kp-bg)}.workspace-main{max-width:1500px;padding:30px 36px 60px}.workspace-header{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:24px}.workspace-brand{font-size:14px;font-weight:700;color:var(--kp-brand)}.workspace-header h1{font-size:26px;font-weight:650;margin:7px 0}.workspace-header p{font-size:14px;margin:0;line-height:1.6}.workspace-back{color:var(--kp-brand);white-space:nowrap}.workspace-controls{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:22px;padding:18px 20px;border:1px solid var(--kp-border);border-radius:10px;background:var(--kp-surface)}.workspace-controls>.el-select{width:min(360px,100%)}.workspace-content{display:block;border:1px solid var(--kp-border);border-radius:10px;background:var(--kp-surface);padding:24px}.mutation-context{display:flex;flex-direction:column;gap:7px;padding:12px 14px;margin:0 0 20px;border:1px solid var(--kp-border);border-radius:8px;overflow-wrap:anywhere;font-size:13px}.mutation-context>div{display:grid;grid-template-columns:70px minmax(0,1fr);gap:12px}.mutation-context dt{color:var(--kp-muted)}.mutation-context dd{margin:0}.artifact-tag-entry{display:inline-flex;align-items:center;gap:4px;max-width:100%;flex-wrap:wrap}.artifact-actions{display:flex;gap:14px;justify-content:flex-end;border-top:1px solid var(--kp-border);padding-top:12px;margin-top:12px}.registry-workspace a:focus-visible,.registry-open-workspace:focus-visible,.registry-row-workspace:focus-visible{outline:2px solid var(--kp-brand);outline-offset:3px}
 :global(.registry-mutation-confirm .el-message-box__message p){white-space:pre-line;overflow-wrap:anywhere}:global(.registry-mutation-confirm){max-width:calc(100vw - 28px);width:620px}
 .registry-stat { appearance: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
