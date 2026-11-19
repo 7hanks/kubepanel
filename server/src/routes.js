@@ -1,6 +1,7 @@
 import express from 'express'
 import { authMiddleware, login, logout, profile, changePassword, issueStreamTicket, activeStreamAccount } from './auth.js'
 import { containerTools } from './containerTools.js'
+import { containerActions } from './containerActions.js'
 import { createDownloadTickets, transferSize } from './fileTransfer.js'
 import {
   kubeRequest, resRequest, KUBE_HEADERS, KubeError,
@@ -327,6 +328,11 @@ const transferContext=(req,res)=>{
   res.setHeader('Referrer-Policy','no-referrer')
   return {signal:controller.signal,live:()=>{const account=activeStreamAccount(initial);if(!account)throw Object.assign(new Error('会话已失效'),{status:401});return account},cleanup:()=>res.off('close',close)}
 }
+router.post('/v1/container/batch-exec',requirePerm('pod:exec'),wrap(async(req,res)=>{
+  const options=transferContext(req,res)
+  try{res.json(await containerActions.batchExec(req.account,req.clusterId,req.body||{},options))}
+  finally{options.cleanup()}
+}))
 router.post('/v1/container/files/upload',wrap(async(req,res)=>{
   const options=transferContext(req,res)
   try{
@@ -480,6 +486,18 @@ router.post('/v1/nodes/:name/cordon', requireAll('cluster:update', 'node:maintai
 }))
 
 // ---------------- Pod 日志 / 事件 / 指标 ----------------
+router.get('/v1/pods/:namespace/:name/logs/download',requirePerm('pod:logs'),wrap(async(req,res)=>{
+  const options=transferContext(req,res)
+  try{
+    const result=await containerActions.downloadLogs(req.account,req.clusterId,{namespace:req.params.namespace,pod:req.params.name,uid:req.query.uid,container:req.query.container,...(req.query.startedAt!==undefined?{startedAt:req.query.startedAt}:{}),...(req.query.containerID!==undefined?{containerID:req.query.containerID}:{})},req.query,options)
+    res.setHeader('Content-Type','text/plain; charset=utf-8')
+    res.setHeader('Content-Length',String(result.buffer.length))
+    res.setHeader('Content-Disposition',`attachment; filename="${result.filename}"`)
+    res.setHeader('X-Content-Type-Options','nosniff')
+    res.setHeader('X-Log-Tail-Lines',String(result.tailLines))
+    res.end(result.buffer)
+  }finally{options.cleanup()}
+}))
 router.get('/v1/pods/:namespace/:name/logs', requirePerm('pod:logs'), wrap(async (req, res) => {
   assertResourceAccess(req.account, { clusterId: req.clusterId, group: '', plural: 'pods', namespace: req.params.namespace, verb: 'get' })
   return streamPodLogs(req, res)

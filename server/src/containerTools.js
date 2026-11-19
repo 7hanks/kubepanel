@@ -9,6 +9,23 @@ import { createTransferExecutor, transferCommand, transferSize } from './fileTra
 const fail=(status,message)=>{throw Object.assign(new Error(message),{status})}
 const FILE_LIMIT=1024*1024
 const identity=value=>typeof value==='string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,252}$/.test(value)
+export function authorizeContainerTarget(account,clusterId,t,permission){
+ if(!can(account,permission))fail(403,'缺少独立的容器操作权限')
+ if(![t?.namespace,t?.pod,t?.container].every(identity)||!identity(clusterId)||!identity(t?.uid))fail(400,'缺少合法的 Pod / 容器身份')
+ assertResourceAccess(account,{clusterId,namespace:t.namespace,group:'',plural:'pods',verb:'get'})
+}
+export function verifyContainerTarget(pod,t,{requireRunning=true,pinRuntime=false}={}){
+ if(pod?.metadata?.uid!==t.uid||pod.metadata?.deletionTimestamp)fail(409,'Pod 已重新创建或正在删除，请刷新后重新选择')
+ if(![...(pod.spec?.containers||[]),...(pod.spec?.initContainers||[]),...(pod.spec?.ephemeralContainers||[])].some(c=>c.name===t.container))fail(400,'容器不存在')
+ const status=[...(pod.status?.containerStatuses||[]),...(pod.status?.initContainerStatuses||[]),...(pod.status?.ephemeralContainerStatuses||[])].find(c=>c.name===t.container)
+ if(requireRunning&&!status?.state?.running)fail(409,'容器当前未运行')
+ if(pinRuntime){
+  const startedAt=status?.state?.running?.startedAt||status?.state?.terminated?.startedAt
+  if(t.startedAt&&startedAt!==t.startedAt||t.containerID&&status?.containerID!==t.containerID)fail(409,'容器已重新启动，请刷新后重新选择')
+  if(requireRunning&&startedAt&&!t.startedAt&&!t.containerID)fail(400,'缺少容器运行实例身份，请刷新后重新选择')
+ }
+ return status
+}
 export function safeContainerPath(value) {
  if(typeof value!=='string'||!value.startsWith('/')||value.length>4096||/[\x00-\x1f\x7f]/.test(value)||value.split('/').some(x=>x==='..')) fail(400,'路径必须是容器内的绝对路径，不能包含 .. 或控制字符')
  return value.replace(/\/+$/,'') || '/'
@@ -54,17 +71,11 @@ export function createExecRunner(connect) { return function execute(target,comma
 export const executeContainer=createExecRunner((target,command,stdout,stderr,stdin,callback)=>new Exec(getKubeConfig(target.clusterId)).exec(target.namespace,target.pod,target.container,command,stdout,stderr,stdin,false,callback))
 const active=new Map()
 export function createContainerTools({readPod=async t=>(await resRequest('GET',{group:'',version:'v1',plural:'pods'},{clusterId:t.clusterId,namespace:t.namespace,name:t.pod,timeout:4000})).data,execute=executeContainer,transfer=createTransferExecutor(),audit=writeAudit}={}) {
- const authorize=(account,clusterId,t,permission)=>{
-  if(!can(account,permission))fail(403,'缺少独立的容器操作权限')
-  if(![t.namespace,t.pod,t.container].every(identity)||!identity(clusterId)||!identity(t.uid))fail(400,'缺少合法的 Pod / 容器身份')
-  assertResourceAccess(account,{clusterId,namespace:t.namespace,group:'',plural:'pods',verb:'get'})
- }
+ const authorize=authorizeContainerTarget
  async function run(account,clusterId,t,permission,command,options,live=()=>account,executor=execute) {
   const check=()=>authorize(live(),clusterId,t,permission)
   check();const target={...t,clusterId};const pod=await readPod(target);check()
-  if(pod.metadata?.uid!==t.uid)fail(409,'Pod 已重新创建，请刷新后重新选择')
-  if(![...(pod.spec?.containers||[]),...(pod.spec?.initContainers||[]),...(pod.spec?.ephemeralContainers||[])].some(c=>c.name===t.container))fail(400,'容器不存在')
-  if(![...(pod.status?.containerStatuses||[]),...(pod.status?.initContainerStatuses||[]),...(pod.status?.ephemeralContainerStatuses||[])].some(c=>c.name===t.container&&c.state?.running))fail(409,'容器当前未运行')
+  verifyContainerTarget(pod,t)
   audit({username:account.username,action:permission,clusterId,namespace:t.namespace,resource:'pods/exec',name:t.pod,status:200})
   const result=await executor(target,command,{...options,authorize:check});check();return result
  }

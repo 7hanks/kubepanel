@@ -57,9 +57,14 @@
     <div class="kp-card" style="padding:0">
       <el-table
         ref="tableRef" v-loading="loading" :data="paged" border stripe :size="compactRows?'small':'default'" row-key="uid"
-        style="width:100%" @sort-change="v => sort = v" @selection-change="v => selected = v" @row-dblclick="openDetail"
+        :expand-row-keys="isDeployment ? visibleDeploymentExpandedUids : undefined" :row-class-name="isDeployment ? 'deployment-expandable-row' : ''"
+        style="width:100%" @sort-change="v => sort = v" @selection-change="v => selected = v"
+        @row-click="toggleDeploymentDetails" @row-dblclick="openDetail" @expand-change="onDeploymentExpandChange"
       >
         <el-table-column type="selection" width="42" />
+        <el-table-column v-if="isDeployment" type="expand" width="36" class-name="deployment-expand-column">
+          <template #default="{ row }"><DeploymentRowDetails :resource="row._raw"/></template>
+        </el-table-column>
         <el-table-column
           v-for="col in columns" :key="col.key" :prop="col.key" :label="col.label"
           :width="col.width" :min-width="col.minWidth" :class-name="col.key==='ports'&&meta.kind==='Service'?'resource-ports-column':''" sortable="custom" :show-overflow-tooltip="col.key!=='ports'&&col.key!=='images'"
@@ -169,6 +174,7 @@ import {resourceUiPolicy} from '../utils/resource-policy'
 import PodScaleDialog from '../components/PodScaleDialog.vue'
 import DeploymentImageDialog from '../components/DeploymentImageDialog.vue'
 import WorkloadPodPicker from '../components/WorkloadPodPicker.vue'
+import DeploymentRowDetails from '../components/DeploymentRowDetails.vue'
 import {resourceTitle,filterResourceRows,servicePortLabel,podScaleAvailability} from '../utils/resource-ui'
 
 const route = useRoute()
@@ -264,6 +270,22 @@ const editingRow = shallowRef(null)
 const rows = computed(() => items.value.map(i => normalizeRow(meta.value.kind, i)))
 const filtered = computed(() => sortRows(filterResourceRows(filterRows(rows.value, {...filters,keyword:keyword.value}),{type:serviceType.value,createdRange:createdRange.value}),sort.value.prop,sort.value.order))
 const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
+const deploymentExpandedUids = ref([])
+const visibleDeploymentExpandedUids = computed(() => paged.value.filter(row => deploymentExpandedUids.value.includes(row.uid)).map(row => row.uid))
+
+function onDeploymentExpandChange(row, expandedRows) {
+  if (!isDeployment.value || !Array.isArray(expandedRows)) return
+  const expanded = new Set(deploymentExpandedUids.value)
+  if (expandedRows.some(item => item.uid === row.uid)) expanded.add(row.uid)
+  else expanded.delete(row.uid)
+  deploymentExpandedUids.value = [...expanded]
+}
+function toggleDeploymentDetails(row, column, event) {
+  if (!isDeployment.value || loading.value || !row.uid || ['selection','expand'].includes(column?.type)) return
+  if (event?.target?.closest?.('a,button,input,select,textarea,label,[role="button"],[role="checkbox"],.el-dropdown,.kp-list-actions,.el-checkbox')) return
+  tableRef.value?.toggleRowExpansion(row, !deploymentExpandedUids.value.includes(row.uid))
+}
+watch(bulkContextKey, () => { deploymentExpandedUids.value = [] }, { flush: 'sync' })
 
 function display(v) {
   if (v === undefined || v === null || v === '') return '-'
@@ -317,6 +339,10 @@ async function fetchList(append=false) {
     const data=await api.list(m.group,m.version,m.plural,params,{signal:controller.signal})
     if (!gate.current(request)) return
     items.value=append ? [...items.value,...(data.items || [])] : data.items || []
+    if (isDeployment.value) {
+      const existing = new Set(rows.value.map(row => row.uid))
+      deploymentExpandedUids.value = deploymentExpandedUids.value.filter(uid => existing.has(uid))
+    }
     nextContinue.value=data.metadata?.continue || data.continue || ''
   } catch(e) {
     if (gate.current(request) && !e.cancelled) loadError.value=e.status===403 ? '没有权限读取当前范围，请选择已授权命名空间。' : (e.message || '资源加载失败')
@@ -336,12 +362,12 @@ function canOpenPodView(mode, namespace, clusterId = store.currentClusterId) {
   return can(mode === 'terminal' ? 'pod:exec' : 'pod:logs') && canResource(podMeta, 'detail', namespace, clusterId)
     && (!isDeployment.value || canResource(replicaSetMeta, 'list', namespace, clusterId))
 }
-function openPodView(mode, { clusterId, namespace, name, uid, container }) {
+function openPodView(mode, { clusterId, namespace, name, uid, container, shell }) {
   if (clusterId !== store.currentClusterId || !canOpenPodView(mode, namespace, clusterId)) return
   return router.push({
     name: mode === 'terminal' ? 'pod-terminal' : 'pod-logs',
     params: { clusterId, namespace, name },
-    query: { uid, ...(container ? { container } : {}) },
+    query: { uid, ...(container ? { container } : {}), ...(mode === 'terminal' && ['/bin/sh','/bin/bash'].includes(shell) ? { shell } : {}) },
   })
 }
 function openRowPodAction(row) {
@@ -564,6 +590,11 @@ onUnmounted(() => { yamlReadEpoch++;yamlReadController?.abort();clearTimeout(que
 </script>
 
 <style scoped>
+.resource-table-panel :deep(.deployment-expandable-row) { cursor: pointer; }
+.resource-table-panel :deep(.deployment-expand-column .cell) { padding: 0; text-align: center; }
+.resource-table-panel :deep(.deployment-expand-column .el-table__expand-icon) { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin: 0; color: var(--kp-muted); }
+.resource-table-panel :deep(.deployment-expand-column .el-table__expand-icon:focus-visible) { outline: 2px solid var(--kp-brand); outline-offset: 1px; border-radius: 4px; }
+.resource-table-panel :deep(td.el-table__expanded-cell) { padding: 0!important; cursor: default; }
 .pod-actions-combined.kp-resource-action { inline-size: 80px }
 .resource-toolbar { flex-wrap:nowrap; }
 .resource-search { width:240px; min-width:130px; flex-shrink:1; }

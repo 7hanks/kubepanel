@@ -50,6 +50,13 @@ export function resPath(group, version, plural, namespace, name) {
 
 export const api = {
   containerFile: (body,config={}) => http.post('/v1/container/files',body,{timeout:20000,...config}),
+  containerBatchExec: (clusterId, body, config = {}) => http.post('/v1/container/batch-exec', body, {
+    timeout: 70000, silent: true, ...config, params: { clusterId },
+  }),
+  containerLogsDownload: ({ clusterId, namespace, pod, uid, container, tailLines }, config = {}) => http.get(
+    `/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs/download`, {
+      ...config, responseType: 'blob', silent: true, params: { clusterId, uid, container, tailLines },
+    }),
   containerUpload: (target,file,config={}) => uploadFile(http,target,file,config),
   containerDownloadTicket: (body,config={}) => http.post('/v1/container/files/download-ticket',body,{timeout:20000,...config,params:{...config.params,clusterId:body.clusterId}}),
   streamTicket: body => http.post('/v1/auth/stream-ticket', body),

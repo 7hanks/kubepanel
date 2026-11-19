@@ -221,7 +221,7 @@ export async function kubeRequest(method, pathWithQuery, { body, headers = {}, t
 }
 
 /** 流式 REST 请求，返回 IncomingMessage（用于日志 follow / 大响应） */
-export async function kubeStream(method, pathWithQuery, { headers = {}, timeout, clusterId } = {}) {
+export async function kubeStream(method, pathWithQuery, { headers = {}, timeout, clusterId, signal } = {}) {
   const c = getCluster(clusterId)
   const opts = await buildOptions(c, method, pathWithQuery, headers, timeout)
   return new Promise((resolve, reject) => {
@@ -239,7 +239,12 @@ export async function kubeStream(method, pathWithQuery, { headers = {}, timeout,
       }
       resolve(res)
     })
-    req.on('error', err => reject(new KubeError(502, `连接 API Server 失败：${err.message}`)))
+    const abort=()=>req.destroy(signal?.reason instanceof Error?signal.reason:new KubeError(499,'请求已取消'))
+    req.on('timeout',()=>req.destroy(new KubeError(504,`请求 API Server 超时 (${opts.timeout}ms)`)))
+    req.on('error', err => reject(err instanceof KubeError?err:new KubeError(502, `连接 API Server 失败：${err.message}`)))
+    req.on('close',()=>signal?.removeEventListener('abort',abort))
+    if(signal?.aborted){abort();return}
+    signal?.addEventListener('abort',abort,{once:true})
     req.end()
   })
 }

@@ -9,6 +9,6 @@ export function ownedPods(resource,pods,intermediates=[]) {
 export function podContainers(pod) {
  return ['containers','initContainers','ephemeralContainers'].flatMap((field,index)=>(pod.spec?.[field]||[]).map(c=>{
   const status=pod.status?.[['containerStatuses','initContainerStatuses','ephemeralContainerStatuses'][index]]?.find(s=>s.name===c.name)
-  return {...c,type:['Container','Init','Ephemeral'][index],running:!!status?.state?.running,state:status?.state?.running?'Running':status?.state?.waiting?.reason||status?.state?.terminated?.reason||'Unknown',startedAt:status?.state?.running?.startedAt||status?.state?.terminated?.startedAt||'',namespace:pod.metadata.namespace,pod:pod.metadata.name,uid:pod.metadata.uid,container:c.name,key:pod.metadata.uid+'/'+c.name}
+  return {...c,type:['Container','Init','Ephemeral'][index],running:!!status?.state?.running,state:status?.state?.running?'Running':status?.state?.waiting?.reason||status?.state?.terminated?.reason||'Unknown',startedAt:status?.state?.running?.startedAt||status?.state?.terminated?.startedAt||'',containerID:status?.containerID||'',namespace:pod.metadata.namespace,pod:pod.metadata.name,uid:pod.metadata.uid,container:c.name,key:pod.metadata.uid+'/'+c.name}
  }))
 }
