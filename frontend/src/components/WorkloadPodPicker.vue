@@ -5,6 +5,8 @@
     <div class="pod-picker-context">
       <span class="pod-picker-scope">命名空间 <strong>{{ target.namespace }}</strong></span>
       <span v-if="target.kind==='Deployment'" class="pod-picker-workload">部署 <strong>{{ target.name }}</strong></span>
+      <el-button v-if="showTemplateImageAction" class="pod-template-image-action" size="small" type="primary" plain
+        @click="emit('update-image')">更新镜像</el-button>
     </div>
     <p v-if="loading" class="kp-muted" role="status">正在读取容器组…</p>
     <el-alert v-else-if="error" :title="error" type="error" show-icon :closable="false" />
@@ -36,12 +38,17 @@
                       {{ statusLabel(container.state) }}
                     </el-tag>
                   </div>
-                  <div v-if="container.image" class="pod-image">
-                    <code>{{ container.image }}</code>
-                    <button type="button" class="pod-image-copy" title="复制镜像地址" :aria-label="`复制 ${container.name} 的镜像地址`"
-                      @click="copyImage(container.image)">
-                      <el-icon aria-hidden="true"><CopyDocument /></el-icon>
-                    </button>
+                  <div v-if="container.image" class="pod-image-tools">
+                    <div class="pod-image">
+                      <code>{{ container.image }}</code>
+                      <button type="button" class="pod-image-copy" title="复制镜像地址" :aria-label="`复制 ${container.name} 的镜像地址`"
+                        @click="copyImage(container.image)">
+                        <el-icon aria-hidden="true"><CopyDocument /></el-icon>
+                      </button>
+                    </div>
+                    <el-button v-if="canEditImage(container)" size="small" type="primary" link
+                      :title="`更新部署模板中 ${container.name} 的镜像`"
+                      @click="emit('update-image', { name: container.name, field: imageFields[container.type] })">更新镜像</el-button>
                   </div>
                   <div v-if="container.startedAt || container.restartCount > 0" class="pod-runtime">
                     <span v-if="container.startedAt"><el-icon aria-hidden="true"><Clock /></el-icon>
@@ -54,9 +61,12 @@
                 </div>
               </div>
               <div class="pod-container-actions">
-                <el-button v-if="can('pod:files:read')" size="small" :disabled="!running(pod,container)" @click="openFiles(pod,container)">文件浏览器</el-button>
-                <el-button v-if="target.terminal" size="small" :disabled="!running(pod,container)||!container.startedAt" @click="openBatch(pod,container)">批量执行</el-button>
-                <el-button v-if="target.logs" size="small" :loading="downloads.has(container.key)" @click="downloadLogs(container)">下载日志</el-button>
+                <el-button v-if="can('pod:files:read')" size="small" color="#147564" plain
+                  :disabled="!running(pod,container)" @click="openFiles(pod,container)">文件浏览器</el-button>
+                <el-button v-if="target.terminal" size="small" color="#a35412" plain
+                  :disabled="!running(pod,container)||!container.startedAt" @click="openBatch(pod,container)">批量执行</el-button>
+                <el-button v-if="target.logs" size="small" color="#6d40b7" plain
+                  :loading="downloads.has(container.key)" @click="downloadLogs(container)">下载日志</el-button>
                 <el-button v-if="target.logs" size="small" plain type="primary" :aria-label="`追踪 ${pod.metadata.name} / ${container.name} 的日志`" @click="select('logs', pod, container)">追踪日志</el-button>
                 <el-dropdown v-if="target.terminal" split-button size="small" type="primary" :disabled="!running(pod,container)"
                   @click="select('terminal',pod,container,'/bin/sh')" @command="shell=>select('terminal',pod,container,shell)">
@@ -69,7 +79,7 @@
           <p v-else class="kp-muted pod-empty">该容器组没有可用容器</p>
         </details>
       </div>
-      <p v-else class="kp-muted">当前部署没有所属容器组</p>
+      <p v-else-if="target.logs || target.terminal" class="kp-muted">当前部署没有所属容器组</p>
     </template>
     <template #footer>
       <el-button v-if="!loading" @click="load">刷新</el-button>
@@ -93,8 +103,9 @@ import ContainerFilesDialog from './ContainerFilesDialog.vue'
 import ContainerBatchDialog from './ContainerBatchDialog.vue'
 
 const props = defineProps({ target: { type: Object, required: true }, contextKey: String })
-const emit = defineEmits(['close', 'select'])
+const emit = defineEmits(['close', 'select', 'update-image'])
 const pods = ref([])
+const deploymentTemplate = shallowRef(null)
 const error = ref('')
 const loading = ref(true)
 const incomplete = ref(false)
@@ -130,6 +141,12 @@ const groups = computed(() => pods.value.map(pod => ({
   phase: pod.metadata.deletionTimestamp ? 'Terminating' : (pod.status?.phase || 'Unknown'),
   containers: podContainers(pod),
 })))
+const imageFields = { Container: 'containers', Init: 'initContainers' }
+function canEditImage(container) {
+  return !!container.image && !!deploymentTemplate.value?.[imageFields[container.type]]?.some(item => item.name === container.name)
+}
+const showTemplateImageAction = computed(() => !loading.value && !!deploymentTemplate.value
+  && !groups.value.some(({ containers }) => containers.some(canEditImage)))
 
 async function load() {
   controller?.abort()
@@ -142,6 +159,7 @@ async function load() {
   error.value = ''
   incomplete.value = false
   pods.value = []
+  deploymentTemplate.value = null
   try {
     const resource = await api.get(singlePod ? '' : 'apps', 'v1', singlePod ? 'pods' : 'deployments',
       namespace, name, { ...config, params: { clusterId } })
@@ -150,6 +168,10 @@ async function load() {
       throw new Error('资源已被替换，请关闭后刷新列表')
     }
     if (singlePod) { pods.value = [resource]; return }
+    if (props.target.imageUpdate && !resource.metadata.deletionTimestamp) {
+      deploymentTemplate.value = resource.spec?.template?.spec || null
+    }
+    if (!props.target.logs && !props.target.terminal) return
     const list = (group, plural) => readResourcePages(cursor => api.list(group, 'v1', plural,
       { clusterId, namespace, limit: 200, continue: cursor }, config), request.signal)
     const [related, replicas] = await Promise.all([list('', 'pods'), list('apps', 'replicasets')])
@@ -309,6 +331,9 @@ onUnmounted(() => { controller?.abort(); for (const request of downloads.values(
 .pod-container-info { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .pod-container-content { display: grid; gap: 5px; min-width: 0; }
 .pod-container-heading, .pod-runtime { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; }
+.pod-image-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
+.pod-image-tools .el-button { margin: 0; }
+.pod-template-image-action { margin-inline-start: auto; }
 .pod-image {
   display: flex;
   align-items: center;

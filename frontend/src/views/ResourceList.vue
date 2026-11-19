@@ -83,9 +83,9 @@
             <div class="kp-list-actions">
               <ResourceActionButton @click="viewYaml(row)">YAML</ResourceActionButton>
               <ResourceActionButton v-if="canEditRes" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm(row)">编辑</ResourceActionButton>
-              <ResourceActionButton v-if="podActionLabel" :class="{'pod-actions-combined': showPodLogs&&showPodTerminal}"
-                :disabled="!canOpenPodView('logs', row.namespace)&&!canOpenPodView('terminal', row.namespace)"
-                @click="openRowPodAction(row)">{{ podActionLabel }}</ResourceActionButton>
+              <ResourceActionButton v-if="podActionLabel(row.namespace)"
+                :class="{'pod-actions-combined': podActionLabel(row.namespace).length > 2}"
+                @click="openRowPodAction(row)">{{ podActionLabel(row.namespace) }}</ResourceActionButton>
               <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
               <el-dropdown
                 trigger="click" placement="bottom-end" :teleported="true" popper-class="kp-row-actions"
@@ -96,7 +96,6 @@
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item v-if="fileSupported&&can('pod:files:read')" command="files">文件浏览器</el-dropdown-item>
-                    <el-dropdown-item v-if="isDeployment" command="updateImages" :disabled="!canUpdateImages(row)">调整镜像版本</el-dropdown-item>
                     <el-dropdown-item v-if="isPod&&can('cluster:update')" command="scalePod" :disabled="!!podScaleAvailability(row)" :title="podScaleAvailability(row)">扩缩容</el-dropdown-item>
                     <el-dropdown-item v-if="scalable" command="scale" :disabled="!canUpdateRes">扩缩容</el-dropdown-item>
                     <el-dropdown-item v-if="restartable" command="restart" :disabled="!canUpdateRes">重启工作负载</el-dropdown-item>
@@ -128,10 +127,10 @@
 
     <SimpleResourceDialog v-model="simpleVisible" :meta="meta" :cluster-id="store.currentClusterId" :namespace="store.namespace==='all'?(store.namespaces[0]||'default'):store.namespace" :namespaces="store.namespaces" :target="simpleTarget" @saved="load"/>
     <PodScaleDialog v-model="podScaleVisible" :target="podScaleTarget" :context-key="bulkContextKey" @saved="load"/>
-    <DeploymentImageDialog v-if="imageTarget" :target="imageTarget" :context-key="bulkContextKey"
-      @close="imageTarget=null" @saved="imageTarget=null; load()" />
     <WorkloadPodPicker v-if="workloadPodTarget" :target="workloadPodTarget"
-      :context-key="bulkContextKey" @close="workloadPodTarget=null" @select="openWorkloadPod" />
+      :context-key="bulkContextKey" @close="workloadPodTarget=null" @select="openWorkloadPod" @update-image="openImageUpdate" />
+    <DeploymentImageDialog v-if="imageTarget" :target="imageTarget" :context-key="bulkContextKey"
+      @close="imageTarget=null" @saved="imageTarget=null; workloadPodTarget=null; load()" />
     <ContainerFilePicker v-model="filesVisible" :resource="filesResource" />
     <BulkPodRestartDialog v-model="bulkRestartVisible" :targets="bulkRestartTargets" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :context-key="bulkContextKey" :can-restart="canRestartTarget" @submitted="load" />
     </div>
@@ -189,26 +188,28 @@ const isPod = computed(() => !meta.value.group && meta.value.version === 'v1' &&
 const showPodActions = computed(() => isPod.value || isDeployment.value)
 const showPodLogs = computed(() => showPodActions.value && can('pod:logs'))
 const showPodTerminal = computed(() => showPodActions.value && can('pod:exec'))
-const podActionLabel = computed(() => [showPodLogs.value && '日志', showPodTerminal.value && '终端'].filter(Boolean).join(' / '))
+const imageUpdateSupported = computed(() => isDeployment.value && (!meta.value.verbs || meta.value.verbs.includes('patch')))
 const imageTarget = shallowRef(null)
 const workloadPodTarget = shallowRef(null)
-function canUpdateImages(row) {
-  return isDeployment.value && (!meta.value.verbs || meta.value.verbs.includes('patch'))
-    && canResource(meta.value, 'update', row.namespace, store.currentClusterId)
+function canUpdateImages(namespace, clusterId = store.currentClusterId) {
+  return imageUpdateSupported.value && canResource(meta.value, 'update', namespace, clusterId)
 }
-function openImageUpdate(row) {
-  if (!canUpdateImages(row)) return
-  const { uid, name, namespace } = row._raw?.metadata || {}
-  const clusterId = store.currentClusterId
-  if (!uid || !name || !namespace || !clusterId) return ElMessage.warning('部署信息不完整，请刷新列表后重试')
-  imageTarget.value = Object.freeze({ uid, name, namespace, clusterId, clusterName: store.currentCluster?.name || clusterId })
+function openImageUpdate(container) {
+  const selected = workloadPodTarget.value
+  if (!selected?.imageUpdate || selected.context !== bulkContextKey.value || !canUpdateImages(selected.namespace, selected.clusterId)) return
+  const { uid, name, namespace, clusterId, clusterName } = selected
+  imageTarget.value = Object.freeze({ uid, name, namespace, clusterId, clusterName, container })
 }
 const fileSupported=computed(()=>['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.value.kind))
 const filesVisible=ref(false),filesResource=shallowRef(null)
 function openFiles(row){if(!can('pod:files:read'))return;const m=meta.value;filesResource.value={...row._raw,kind:m.kind,apiVersion:m.group?`${m.group}/${m.version}`:m.version};filesVisible.value=true}
 const actionWidth = computed(() => showPodActions.value
-  ? 132 + (canEditRes.value ? 56 : 0) + (showPodLogs.value && showPodTerminal.value ? 88 : podActionLabel.value ? 56 : 0)
+  ? 132 + (canEditRes.value ? 56 : 0) + podActionWidth.value
   : canUpdateRes.value ? 200 : 135)
+const podActionWidth = computed(() => {
+  if (showPodLogs.value && showPodTerminal.value || imageUpdateSupported.value && can('cluster:update')) return 88
+  return showPodLogs.value || showPodTerminal.value ? 56 : 0
+})
 const createdRange=ref([]),serviceType=ref(''),compactRows=ref(true),podScaleVisible=ref(false),podScaleTarget=shallowRef(null)
 const serviceTypes=['ClusterIP','NodePort','LoadBalancer','ExternalName']
 function openPodScale(row){if(!can('cluster:update')||podScaleAvailability(row))return;const md=row._raw?.metadata;if(!md?.uid)return ElMessage.warning('缺少 Pod UID，请刷新后重试');podScaleTarget.value={clusterId:store.currentClusterId,namespace:md.namespace,name:md.name,uid:md.uid};podScaleVisible.value=true}
@@ -359,8 +360,13 @@ function openDetail(row) { router.push(detailPath(row)) }
 const podMeta = { group: '', plural: 'pods', namespaced: true }
 const replicaSetMeta = { group: 'apps', plural: 'replicasets', namespaced: true }
 function canOpenPodView(mode, namespace, clusterId = store.currentClusterId) {
-  return can(mode === 'terminal' ? 'pod:exec' : 'pod:logs') && canResource(podMeta, 'detail', namespace, clusterId)
+  return showPodActions.value && can(mode === 'terminal' ? 'pod:exec' : 'pod:logs') && canResource(podMeta, 'detail', namespace, clusterId)
     && (!isDeployment.value || canResource(replicaSetMeta, 'list', namespace, clusterId))
+}
+function podActionLabel(namespace) {
+  const labels = [canOpenPodView('logs', namespace) && '日志', canOpenPodView('terminal', namespace) && '终端'].filter(Boolean)
+  if (labels.length) return labels.join(' / ')
+  return canUpdateImages(namespace) ? '更新镜像' : ''
 }
 function openPodView(mode, { clusterId, namespace, name, uid, container, shell }) {
   if (clusterId !== store.currentClusterId || !canOpenPodView(mode, namespace, clusterId)) return
@@ -378,8 +384,10 @@ function openRowPodAction(row) {
   if (!uid || !name || !namespace || !clusterId) return ElMessage.warning('资源信息不完整，请刷新列表后重试')
   const logs = canOpenPodView('logs', namespace, clusterId)
   const terminal = canOpenPodView('terminal', namespace, clusterId)
-  if (!logs && !terminal) return ElMessage.warning('当前账号没有访问该容器的权限')
-  workloadPodTarget.value = Object.freeze({ uid, name, namespace, clusterId, logs, terminal,
+  const imageUpdate = canUpdateImages(namespace, clusterId)
+  if (!logs && !terminal && !imageUpdate) return ElMessage.warning('当前账号没有可用的容器操作权限')
+  workloadPodTarget.value = Object.freeze({ uid, name, namespace, clusterId, logs, terminal, imageUpdate,
+    clusterName: store.currentCluster?.name || clusterId,
     kind: isPod.value ? 'Pod' : 'Deployment', context: bulkContextKey.value })
 }
 function openWorkloadPod({ mode, ...pod }) {
@@ -475,7 +483,6 @@ async function saveScale(replicas) {
 }
 
 async function onCommand(cmd, row) {
-  if(cmd==='updateImages')return openImageUpdate(row)
   if(cmd==='files')return openFiles(row)
   if(cmd==='scalePod')return openPodScale(row)
   const m = meta.value

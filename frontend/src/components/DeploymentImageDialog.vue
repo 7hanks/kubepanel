@@ -105,7 +105,13 @@ async function load() {
     if (!active() || request.signal.aborted) return
     if (!matchesTarget(current)) throw new Error('部署已被替换，请刷新列表并重新选择')
     if (current.metadata.deletionTimestamp) throw new Error('部署正在删除，请刷新列表后核对')
-    rows.value = deploymentImageRows(current).map(row => ({ ...row, input: row.version }))
+    const containers = deploymentImageRows(current)
+    if (target.container) {
+      const selected = containers.findIndex(row => row.field === target.container.field && row.name === target.container.name)
+      if (selected < 0) throw new Error('所选容器已从部署模板移除，请返回容器操作并刷新')
+      if (selected > 0) containers.unshift(...containers.splice(selected, 1))
+    }
+    rows.value = containers.map(row => ({ ...row, input: row.version }))
     generation = current.metadata.generation
     paused.value = current.spec?.paused === true
   } catch (cause) {
