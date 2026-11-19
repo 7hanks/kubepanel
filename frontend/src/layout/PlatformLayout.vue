@@ -46,11 +46,12 @@
 
     <div class="plat-body">
       <header class="plat-top">
-        <div class="plat-crumb">
-          <span class="kp-muted">平台</span>
-          <span class="ps-sep">/</span>
-          <span>{{ currentLabel }}</span>
-        </div>
+        <nav class="plat-crumb" aria-label="面包屑">
+          <router-link v-if="platformEntry" :to="platformEntry" class="plat-parent">平台</router-link>
+          <span v-else class="kp-muted">平台</span>
+          <span class="ps-sep" aria-hidden="true">/</span>
+          <span aria-current="page">{{ currentLabel }}</span>
+        </nav>
         <div class="plat-right">
           <slot name="actions" />
           <span class="ps-divider" />
@@ -131,6 +132,19 @@ const allLabels = computed(() => {
   return out
 })
 const currentLabel = computed(() => allLabels.value[props.active] || '平台')
+const platformEntry = computed(() => {
+  void tick.value
+  const clusterId = store.currentClusterId
+  let entry = null
+  if (can('cluster:list') || can('cluster:detail')) {
+    entry = clusterId ? { name: 'cluster-management', params: { clusterId } } : { name: 'clusters' }
+  }
+  if (!entry) for (const [object, name] of [['registry', 'registries'], ['user', 'users'], ['monitor', 'monitor']]) {
+    if (can(`${object}:list`) || can(`${object}:detail`)) { entry = { name }; break }
+  }
+  if (!entry && can('audit:list')) entry = { name: 'audit' }
+  return entry?.name === router.currentRoute.value.name ? null : entry
+})
 
 function isGroupActive(n) {
   return (n.children || []).some(c => c.key === props.active)
@@ -179,6 +193,7 @@ onMounted(async () => {
   display: flex; align-items: center; justify-content: space-between; padding: 0 22px;
 }
 .plat-crumb { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--kp-text); }
+.plat-parent{color:var(--kp-text-2);border-radius:3px}.plat-parent:hover{color:var(--kp-brand);text-decoration:underline}.plat-parent:focus-visible{outline:2px solid var(--kp-brand);outline-offset:3px}
 .ps-sep { color: var(--kp-faint); }
 .plat-right { display: flex; align-items: center; gap: 10px; }
 .ps-divider { width: 1px; height: 18px; background: var(--kp-border); }

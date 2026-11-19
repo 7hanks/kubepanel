@@ -1,13 +1,15 @@
 <template>
   <el-dialog
-    :model-value="true" title="调整镜像版本" width="min(880px, 94vw)" top="12vh" append-to-body
+    :model-value="true" title="调整镜像版本" class="image-version-dialog" width="min(880px, 94vw)" top="12vh" append-to-body
     :show-close="!saving" :close-on-press-escape="!saving" :close-on-click-modal="false"
     @update:model-value="open => { if (!open && !saving) emit('close') }"
   >
     <div class="image-context">
       <strong>{{ target.name }}</strong>
-      <span>集群 {{ target.clusterName }}</span>
-      <span>命名空间 {{ target.namespace }}</span>
+      <div class="image-context-meta">
+        <span>集群 <b>{{ target.clusterName }}</b></span>
+        <span>命名空间 <b>{{ target.namespace }}</b></span>
+      </div>
     </div>
 
     <p v-if="loading" class="kp-muted" role="status">正在读取部署的镜像…</p>
@@ -25,8 +27,12 @@
           <strong>{{ row.name }}</strong>
           <span>{{ row.field === 'initContainers' ? '初始化容器' : '工作容器' }}</span>
         </div>
-        <code class="image-reference">{{ row.image }}</code>
+        <div class="image-current">
+          <span class="image-mobile-label">当前镜像</span>
+          <code class="image-reference">{{ row.image }}</code>
+        </div>
         <div class="image-version">
+          <span class="image-mobile-label">新版本</span>
           <el-input v-model="row.input" :disabled="saving || reloadRequired"
             :aria-label="`${row.name} 的新镜像版本`" :aria-invalid="!image" placeholder="输入标签或摘要" />
           <span v-if="!image" class="image-format-error">请输入有效的镜像标签或 SHA 摘要</span>
@@ -178,25 +184,41 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.image-context{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 16px;margin:0 0 18px;font-size:13px;color:var(--kp-muted)}
-.image-context strong{color:var(--kp-text);font-size:15px;overflow-wrap:anywhere}
-.image-fields{border:1px solid var(--kp-border);border-radius:8px;overflow:hidden}
-.image-field-row{display:grid;grid-template-columns:minmax(105px,.9fr) minmax(0,1.9fr) minmax(170px,1.35fr);gap:16px;align-items:start;padding:14px}
-.image-field-heading{background:var(--kp-surface-2);font-size:12px;font-weight:600;color:var(--kp-text-2);padding-block:10px}
+.image-context{display:grid;gap:7px;margin:0 0 22px;font-size:13px;line-height:1.6;color:var(--kp-muted);min-width:0}
+.image-context>strong{color:var(--kp-text);font-size:16px;font-weight:600;line-height:1.45;overflow-wrap:anywhere}
+.image-context-meta{display:flex;flex-wrap:wrap;gap:5px 20px;min-width:0}
+.image-context-meta>span{min-width:0;overflow-wrap:anywhere}
+.image-context-meta b{font-weight:500;color:var(--kp-text-2)}
+.image-fields{border:1px solid var(--kp-border);border-radius:10px;overflow:hidden}
+.image-field-row{display:grid;grid-template-columns:minmax(105px,.85fr) minmax(0,1.8fr) minmax(190px,1.35fr);gap:18px;align-items:start;padding:18px 16px}
+.image-field-heading{background:var(--kp-surface-2);font-size:13px;font-weight:600;line-height:1.5;color:var(--kp-text-2);padding-block:11px}
 .image-container{border-top:1px solid var(--kp-border)}
-.image-container-name{display:flex;flex-direction:column;gap:5px;min-width:0;overflow-wrap:anywhere}
-.image-container-name span,.image-strategy{font-size:12px;color:var(--kp-muted)}
-.image-reference{font:12px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--kp-text-2);overflow-wrap:anywhere}
-.image-reference-next,.image-format-error{display:block;margin-top:6px}
+.image-container-name{display:flex;flex-direction:column;gap:6px;min-width:0;overflow-wrap:anywhere}
+.image-container-name strong{font-size:15px;font-weight:600;line-height:1.45;color:var(--kp-text)}
+.image-container-name span,.image-strategy{font-size:13px;line-height:1.6;color:var(--kp-muted)}
+.image-current,.image-version{min-width:0}
+.image-reference{display:block;min-width:0;max-width:100%;font:13px/1.75 'Cascadia Mono',Consolas,ui-monospace,monospace;color:var(--kp-text-2);white-space:normal;overflow-wrap:anywhere}
+.image-mobile-label{display:none}
+.image-version :deep(.el-input__wrapper){min-height:36px;padding:2px 11px;box-sizing:border-box}
+.image-version :deep(.el-input__inner){font-family:'Cascadia Mono',Consolas,ui-monospace,monospace;font-size:13px}
+.image-reference-next,.image-format-error{display:block;margin-top:9px}
 .image-reference-next{color:var(--kp-brand)}
-.image-format-error{color:var(--el-color-danger);font-size:12px}
-.image-error{margin-bottom:14px}
-.image-error .el-button{margin-top:6px}
-.image-strategy{margin:12px 0 0;line-height:1.6}
-@media(max-width:660px){
+.image-format-error{color:var(--el-color-danger);font-size:13px;line-height:1.6}
+.image-error{margin-bottom:18px}
+.image-error .el-button{margin-top:8px}
+.image-strategy{margin:16px 0 0;line-height:1.75}
+:global(.image-version-dialog .el-dialog__body){max-height:calc(100dvh - 210px);overflow-y:auto}
+@media(max-width:760px){
   .image-field-heading{display:none}
-  .image-field-row{grid-template-columns:1fr;gap:8px}
+  .image-field-row{grid-template-columns:minmax(0,1fr);gap:14px;padding:16px}
   .image-field-heading+.image-container{border-top:0}
-  .image-container-name{flex-direction:row;align-items:baseline;flex-wrap:wrap;gap:5px 12px}
+  .image-container-name{flex-direction:row;align-items:baseline;flex-wrap:wrap;gap:5px 12px;margin-bottom:1px}
+  .image-mobile-label{display:block;margin-bottom:6px;color:var(--kp-text-2);font-size:13px;font-weight:600;line-height:1.5}
+  .image-context{margin-bottom:18px}
+  .image-context-meta{gap:4px 14px}
+}
+@media(max-width:420px){
+  .image-field-row{padding:14px 12px}
+  .image-reference{font-size:12px}
 }
 </style>

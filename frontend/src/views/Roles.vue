@@ -366,40 +366,46 @@ onMounted(load)
 </script>
 
 <style scoped>
-.plat-main { max-width: 1280px; margin: 0 auto; padding: 24px 22px 48px; }
+.plat-main { max-width: 1280px; margin: 0 auto; padding: 24px 22px 48px; color: var(--kp-text); font-size: 14px; }
 .plat-main.platform-embedded-main { max-width: none; margin: 0; padding: 0; }
 .page-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
-.page-head h1 { margin: 0; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
+.page-head h1 { margin: 0; color: var(--kp-text); font-size: 22px; line-height: 1.35; font-weight: 650; letter-spacing: -.01em; }
 .page-title { display: flex; align-items: center; gap: 7px; }
-.help-button { color: #98a2b3; }
-.role-help { font-size: 12px; line-height: 1.7; }
+.help-button { color: var(--kp-muted); font-size: 15px; }
+.role-help { color: var(--kp-text-2); font-size: 13px; line-height: 1.75; }
+.role-help > strong { color: var(--kp-text); font-weight: 600; }
 .role-help p { margin: 8px 0 0; }
-.roles-table :deep(.el-table__cell) { padding: 15px 0; }
+.roles-table { --el-table-header-bg-color: var(--kp-surface-2); --el-table-header-text-color: var(--kp-text-2); --el-table-text-color: var(--kp-text-2); }
+.roles-table :deep(.el-table__cell) { padding: 16px 0; vertical-align: middle; }
+.roles-table :deep(th.el-table__cell) { padding: 12px 0; }
+.roles-table :deep(.cell) { padding: 0 12px; font-size: 13px; line-height: 1.6; }
+.roles-table :deep(th .cell) { font-weight: 600; }
+.roles-table :deep(.el-button.is-link) { min-height: 28px; font-family: inherit; font-size: 13px; font-weight: 500; }
 .role-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.role-name strong { overflow-wrap: anywhere; }
-.builtin-label { flex: none; font-size: 11px; color: #98a2b3; }
-.role-description { margin-top: 4px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.summary-button { border: 0; background: transparent; font: inherit; color: #475467; text-align: left; padding: 3px 0; cursor: pointer; line-height: 1.8; }
+.role-name strong { color: var(--kp-text); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.builtin-label { flex: none; font-size: 12px; font-weight: 400; color: var(--kp-muted); }
+.role-description { margin-top: 3px; font-size: 13px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.summary-button { border: 0; background: transparent; font: inherit; color: var(--kp-text-2); text-align: left; padding: 0; cursor: pointer; line-height: 1.65; }
 .summary-button:hover { color: var(--el-color-primary); }
 .summary-button:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 3px; border-radius: 3px; }
-.permission-summary { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 0; font-size: 12px; line-height: 1.8; vertical-align: middle; }
+.permission-summary { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; font-size: 13px; line-height: 1.65; vertical-align: middle; }
 .permission-group-list { display: flex; align-items: center; gap: 3px 8px; flex-wrap: wrap; min-width: 0; }
 .permission-group-summary { white-space: nowrap; }
-.summary-separator { padding: 0 4px; color: #b0b8c4; }
-.summary-chevron { flex: none; font-size: 10px; color: #98a2b3; }
-.scope-summary { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; }
-.permission-details, .scope-details { max-height: min(480px, 65vh); overflow-y: auto; font-size: 12px; }
-.detail-heading { display: flex; align-items: center; gap: 8px; color: #344054; font-weight: 600; padding-bottom: 10px; }
-.detail-heading .kp-muted { font-weight: 400; }
-.permission-detail-group + .permission-detail-group { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eef1f5; }
-.permission-detail-group > strong, .scope-detail-field > strong { display: block; margin-bottom: 5px; font-weight: 600; color: #475467; }
-.permission-detail-item { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 3px 0; }
-.permission-detail-item code, .scope-detail-field code { color: #7b8493; font-size: 11px; overflow-wrap: anywhere; }
+.summary-separator { padding: 0 4px; color: var(--kp-faint); }
+.summary-chevron { flex: none; font-size: 11px; color: var(--kp-muted); }
+.scope-summary { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; font-size: 13px; line-height: 1.65; vertical-align: middle; }
+.permission-details, .scope-details { max-height: min(480px, 65vh); overflow-y: auto; color: var(--kp-text-2); font-size: 13px; line-height: 1.65; }
+.detail-heading { display: flex; align-items: center; gap: 8px; color: var(--kp-text); font-size: 14px; font-weight: 600; padding-bottom: 10px; }
+.detail-heading .kp-muted { font-size: 12px; font-weight: 400; }
+.permission-detail-group + .permission-detail-group { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--kp-border); }
+.permission-detail-group > strong, .scope-detail-field > strong { display: block; margin-bottom: 5px; font-weight: 600; color: var(--kp-text); }
+.permission-detail-item { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; }
+.permission-detail-item code, .scope-detail-field code { color: var(--kp-muted); font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
 .scope-detail-field + .scope-detail-field { margin-top: 14px; }
 .scope-detail-field code { display: block; line-height: 1.8; }
 .perm-box { width: 100%; }
 .perm-box :deep(.el-table .cell) { padding: 0 6px; }
-.hint { font-size: 11.5px; line-height: 1.4; margin-top: 1px; }
+.hint { font-size: 12px; line-height: 1.5; margin-top: 2px; }
 .perm-sum { display: flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 12px; }
 .spacer { flex: 1; }
 </style>

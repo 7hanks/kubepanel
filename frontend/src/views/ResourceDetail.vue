@@ -1,9 +1,15 @@
 <template>
-  <div v-loading="loading">
-    <div class="kp-toolbar">
-      <el-button :icon="ArrowLeft" @click="$router.back()">返回</el-button>
-      <span style="font-size: 15px;font-weight:600">{{ resourceTitle(meta) }} / {{ name }}</span>
-      <el-tag disable-transitions :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
+  <div v-loading="loading" :class="{ 'deployment-detail-page': isDeployment }">
+    <div class="kp-toolbar" :class="{ 'deployment-detail-toolbar': isDeployment }">
+      <el-button :icon="ArrowLeft" @click="returnToList">返回</el-button>
+      <div v-if="isDeployment" class="deployment-detail-heading">
+        <span>部署详情</span>
+        <h1>{{ name }}</h1>
+      </div>
+      <template v-else>
+        <span style="font-size: 15px;font-weight:600">{{ resourceTitle(meta) }} / {{ name }}</span>
+        <el-tag disable-transitions :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
+      </template>
       <span class="spacer" />
       <el-button v-if="meta.kind === 'Pod' && canUpdateRes && canDeleteRes" type="warning" plain :loading="restarting" @click="doRestartPod">重启 Pod</el-button>
       <el-button v-if="meta.kind === 'Pod' && can('pod:logs')" type="primary" plain @click="goLogs">查看日志</el-button>
@@ -11,7 +17,7 @@
       <el-button v-if="['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.kind) && can('pod:files:read')" @click="filesVisible=true">文件浏览器</el-button>
       <el-button v-if="scalable && canUpdateRes" @click="doScale">扩缩容</el-button>
       <el-button v-if="restartable && canUpdateRes" @click="doRestart">重启</el-button>
-      <el-button v-if="canUpdateRes&&policy.edit!=='none'" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm">编辑</el-button>
+      <el-button v-if="canUpdateRes&&policy.edit!=='none'" :type="isDeployment ? 'primary' : undefined" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm">编辑</el-button>
       <el-button v-if="canDeleteRes" type="danger" plain @click="doDelete">删除</el-button>
     </div>
 
@@ -20,15 +26,20 @@
       <template #default>
         {{ loadError }}
         <el-button link type="primary" @click="load">重试</el-button>
-        <el-button link type="primary" @click="$router.back()">返回列表</el-button>
+        <el-button link type="primary" @click="returnToList">返回列表</el-button>
       </template>
     </el-alert>
 
-    <ResourceOperations v-if="!loadError && obj.metadata" :resource="obj" @changed="load" />
+    <ResourceOperations v-if="!isDeployment && !loadError && obj.metadata" :resource="obj" @changed="load" />
     <el-tabs v-if="!loadError" v-model="tab" type="border-card">
       <!-- 概览 -->
       <el-tab-pane label="概览" name="overview">
-        <StorageDetails v-if="isStorage&&obj.metadata" :resource="obj" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :events="events" :events-loading="eventsLoading" :events-error="eventsError"/>
+        <template v-if="isDeployment">
+          <DeploymentOverview v-if="obj.metadata" :resource="obj"
+            :cluster-name="store.currentCluster?.name || store.currentClusterId"
+            :events="events" :events-loading="eventsLoading" :events-error="eventsError" @show-events="tab='events'" />
+        </template>
+        <StorageDetails v-else-if="isStorage&&obj.metadata" :resource="obj" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :events="events" :events-loading="eventsLoading" :events-error="eventsError"/>
         <div v-else class="kp-card" style="border:0">
           <div class="kp-section-title">基本信息</div>
           <table class="kp-kv"><tbody>
@@ -84,6 +95,10 @@
         </div>
       </el-tab-pane>
 
+      <el-tab-pane v-if="isDeployment" label="发布历史" name="history" lazy>
+        <ResourceOperations v-if="obj.metadata" :resource="obj" history-only @changed="load" />
+      </el-tab-pane>
+
       <!-- 事件 -->
       <el-tab-pane label="事件" name="events">
         <el-table :data="events" size="small" border stripe v-loading="eventsLoading">
@@ -93,7 +108,7 @@
           <el-table-column prop="reason" label="原因" width="160" show-overflow-tooltip />
           <el-table-column prop="message" label="消息" min-width="300" show-overflow-tooltip />
           <el-table-column prop="count" label="次数" width="80" />
-          <el-table-column label="时间" width="170"><template #default="{ row: e }">{{ fmtTime(e.lastTimestamp || e.eventTime) }}</template></el-table-column>
+          <el-table-column label="时间" width="170"><template #default="{ row: e }">{{ fmtTime(eventTime(e)) }}</template></el-table-column>
         </el-table>
       </el-tab-pane>
 
@@ -101,7 +116,7 @@
       <el-tab-pane v-if="hasSelector" label="关联 Pod" name="pods">
         <el-table :data="childPods" size="small" border stripe v-loading="podsLoading" @row-dblclick="p => openPod(p)">
           <el-table-column prop="metadata.name" label="名称" min-width="220">
-            <template #default="{ row: p }"><el-link type="primary" :underline="false" @click="openPod(p)">{{ p.metadata.name }}</el-link></template>
+            <template #default="{ row: p }"><el-link type="primary" underline="never" @click="openPod(p)">{{ p.metadata.name }}</el-link></template>
           </el-table-column>
           <el-table-column label="状态" width="130">
             <template #default="{ row: p }"><el-tag disable-transitions :type="statusTag(phaseOf('Pod', p))" size="small">{{ phaseOf('Pod', p) }}</el-tag></template>
@@ -157,6 +172,7 @@ import { can, canResource, canUpdate, canDelete } from '../utils/perm'
 import { store } from '../store'
 import { relatedPods, createRequestGate, targetDescription } from '../utils/resource'
 import ResourceOperations from '../components/ResourceOperations.vue'
+import DeploymentOverview from '../components/DeploymentOverview.vue'
 import ContainerFilePicker from '../components/ContainerFilePicker.vue'
 import SimpleResourceDialog from '../components/SimpleResourceDialog.vue'
 import {resourceUiPolicy} from '../utils/resource-policy'
@@ -171,6 +187,7 @@ const router = useRouter()
 const meta = computed(() => metaFromRoute(route.params, store.discovery))
 const name = computed(() => route.params.name)
 const ns = computed(() => route.params.namespace)
+const isDeployment = computed(() => meta.value.group === 'apps' && meta.value.version === 'v1' && meta.value.plural === 'deployments')
 const scalable = computed(() => ['Deployment', 'StatefulSet', 'ReplicaSet'].includes(meta.value.kind))
 const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].includes(meta.value.kind))
 const isDataResource = computed(() => ['Secret', 'ConfigMap'].includes(meta.value.kind))
@@ -230,6 +247,13 @@ const decodedData = computed(() => {
 })
 
 function apiNs() { return nsPath(ns.value) }
+function returnToList() {
+  const { clusterId, group, version, plural } = route.params
+  const target = { name: 'resource-list', params: { clusterId, group, version, plural } }
+  const previous = router.options.history.state?.back
+  if (typeof previous === 'string' && router.resolve(previous).path === router.resolve(target).path) return router.back()
+  return router.push(target)
+}
 function goLogs() { router.push(cpath(`/pods/${encodeURIComponent(ns.value)}/${encodeURIComponent(name.value)}/logs`)) }
 function goTerminal() { router.push(cpath(`/pods/${encodeURIComponent(ns.value)}/${encodeURIComponent(name.value)}/terminal`)) }
 function openPod(p) { router.push(cpath(`/r/${CORE}/v1/pods/${encodeURIComponent(p.metadata.namespace)}/${encodeURIComponent(p.metadata.name)}`)) }
@@ -261,10 +285,11 @@ async function loadEvents(request) {
     if (targetNs) params.namespace = targetNs
     const data = await api.list('', 'v1', 'events', params)
     if (!gate.current(request)) return
-    events.value = (data.items || []).sort((a, b) => new Date(b.lastTimestamp || 0) - new Date(a.lastTimestamp || 0))
+    events.value = (data.items || []).sort((a, b) => (Date.parse(eventTime(b)) || 0) - (Date.parse(eventTime(a)) || 0))
   } catch (e) { if (gate.current(request)) {events.value = [];eventsError.value=e.message||'事件加载失败'} }
-  finally { eventsLoading.value = false }
+  finally { if (gate.current(request)) eventsLoading.value = false }
 }
+function eventTime(event) { return event.series?.lastObservedTime || event.lastTimestamp || event.eventTime || event.metadata?.creationTimestamp }
 
 async function listAll(group,version,plural,params) {
   let items=[],cursor=''
@@ -363,7 +388,22 @@ async function doDelete() {
   } catch (e) { if (e?.response) ElMessage.error(e.message) }
 }
 
+watch(() => route.path, () => { tab.value = 'overview' })
 watch(() => route.fullPath, load)
 onMounted(load)
 onUnmounted(()=>gate.invalidate())
 </script>
+
+<style scoped>
+.deployment-detail-toolbar { align-items: center; gap: 8px; margin-bottom: 16px; }
+.deployment-detail-toolbar .el-button { margin: 0; }
+.deployment-detail-heading { min-width: 0; margin-inline-start: 6px; }
+.deployment-detail-heading > span { color: var(--kp-muted); font-size: 12px; }
+.deployment-detail-heading h1 { margin: 2px 0 0; color: var(--kp-text); font-size: 23px; font-weight: 650; overflow-wrap: anywhere; }
+.deployment-detail-page :deep(.el-tabs--border-card) { border-radius: var(--kp-r); overflow: hidden; }
+.deployment-detail-page :deep(.el-tabs__content) { background: var(--kp-bg); }
+@media (max-width: 760px) {
+  .deployment-detail-toolbar .spacer { flex-basis: 100%; height: 0; }
+  .deployment-detail-heading h1 { font-size: 19px; }
+}
+</style>

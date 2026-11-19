@@ -58,7 +58,13 @@
           >
             <el-option v-for="c in store.clusters" :key="c.id" :label="c.name" :value="c.id" />
           </el-select>
-          <span class="kp-crumb">{{ title }}</span>
+          <nav class="kp-breadcrumb" aria-label="面包屑">
+            <span v-for="(crumb,index) in breadcrumbs" :key="index" class="kp-breadcrumb-item">
+              <span v-if="index" class="kp-breadcrumb-separator" aria-hidden="true">/</span>
+              <router-link v-if="crumb.to" :to="crumb.to" class="kp-breadcrumb-link" :title="crumb.label">{{crumb.label}}</router-link>
+              <span v-else :aria-current="index===breadcrumbs.length-1?'page':undefined" :title="crumb.label" class="kp-breadcrumb-text">{{crumb.label}}</span>
+            </span>
+          </nav>
           <el-tag disable-transitions v-if="store.cluster" type="info" size="small" effect="plain">{{ store.cluster.version }}</el-tag>
         </div>
 
@@ -185,6 +191,37 @@ const title = computed(() => {
   if (route.name === 'pod-terminal') return 'Web 终端'
   return '控制台'
 })
+const platformEntry = computed(() => {
+  void tick.value
+  if (can('cluster:list') || can('cluster:detail')) return route.params.clusterId
+    ? { name: 'cluster-management', params: { clusterId: route.params.clusterId } }
+    : { name: 'clusters' }
+  for (const [object, name] of [['registry', 'registries'], ['user', 'users'], ['monitor', 'monitor']]) {
+    if (can(`${object}:list`) || can(`${object}:detail`)) return { name }
+  }
+  return can('audit:list') ? { name: 'audit' } : null
+})
+const breadcrumbs = computed(() => {
+  void tick.value
+  const { clusterId, group, version, plural, namespace, name } = route.params
+  if (route.meta.platformPage) return [{ label: '平台', to: platformEntry.value }, { label: title.value }]
+  const resourcePage = ['resource-list', 'resource-detail', 'resource-create', 'resource-edit'].includes(route.name)
+  const podPage = ['pod-logs', 'pod-terminal'].includes(route.name)
+  if (!resourcePage && !podPage) return [{ label: title.value }]
+  const resourceParams = { clusterId, group: podPage ? '_core' : group, version: podPage ? 'v1' : version, plural: podPage ? 'pods' : plural }
+  const meta = metaFromRoute(resourceParams, store.discovery)
+  const listTarget = (!meta.verbs || meta.verbs.includes('list')) && canResource(meta, 'list', store.namespace, clusterId)
+    ? { name: 'resource-list', params: resourceParams } : null
+  const result = [{ label: resourceTitle(meta), ...(route.name !== 'resource-list' ? { to: listTarget } : {}) }]
+  if (route.name === 'resource-list') return result
+  if (route.name === 'resource-create') return [...result, { label: '新建' }]
+  const detailTarget = (!meta.verbs || meta.verbs.includes('get')) && canResource(meta, 'detail', namespace, clusterId)
+    ? { name: 'resource-detail', params: { ...resourceParams, namespace, name } } : null
+  result.push({ label: name, ...(route.name !== 'resource-detail' ? { to: detailTarget } : {}) })
+  if (route.name === 'resource-edit') result.push({ label: '编辑' })
+  if (podPage) result.push({ label: route.name === 'pod-logs' ? '日志' : '终端' })
+  return result
+})
 
 function toggleCollapse() {
   collapsed.value = !collapsed.value
@@ -259,6 +296,7 @@ watch(() => route.path, () => {
 </script>
 
 <style scoped>
+.kp-breadcrumb{display:flex;align-items:center;gap:7px;min-width:0;max-width:38vw;font-size:13px;line-height:1.5}.kp-breadcrumb-item{display:flex;align-items:center;gap:7px;min-width:0}.kp-breadcrumb-item:last-child{font-weight:600;color:var(--kp-text)}.kp-breadcrumb-link,.kp-breadcrumb-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.kp-breadcrumb-link{color:var(--kp-text-2);border-radius:3px}.kp-breadcrumb-link:hover{color:var(--kp-brand);text-decoration:underline}.kp-breadcrumb-link:focus-visible{outline:2px solid var(--kp-brand);outline-offset:2px}.kp-breadcrumb-separator{color:var(--kp-faint);flex:none}
 .kp-side-footer { padding: 8px; border-top: 1px solid var(--kp-border); flex-shrink: 0; }
 .kp-side.is-collapsed .kp-side-footer .kp-nav-item span { display: none; }
 .kp-header-action {
@@ -298,4 +336,5 @@ watch(() => route.path, () => {
   .kp-layout > .kp-side .kp-group-toggle .kp-group-chevron { display: none; }
   .kp-layout > .kp-side .kp-group-toggle.is-open { color: var(--kp-brand); background: var(--kp-side-active); }
 }
+@media(max-width:600px){.kp-header-left:first-child{flex-wrap:wrap}.kp-breadcrumb{flex:1 0 100%;max-width:100%;order:5;padding-top:2px}}
 </style>

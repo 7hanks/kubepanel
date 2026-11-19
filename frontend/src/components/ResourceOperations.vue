@@ -1,8 +1,8 @@
 <template>
-  <div v-if="supported" class="kp-card" style="margin-bottom:16px">
-    <div class="kp-section-title">运维操作 <span class="kp-muted" style="font-size:12px">{{ target }}</span></div>
+  <div v-if="supported" class="kp-card" :class="{ 'history-panel': historyOnly }" :style="{ marginBottom: historyOnly ? 0 : '16px' }">
+    <div v-if="!historyOnly" class="kp-section-title">运维操作 <span class="kp-muted" style="font-size:12px">{{ target }}</span></div>
     <div class="kp-toolbar">
-      <el-button v-if="workload" @click="loadHistory" :loading="busy">发布历史</el-button>
+      <el-button v-if="workload" @click="loadHistory" :loading="busy">{{ historyOnly ? '刷新历史' : '发布历史' }}</el-button>
       <template v-if="resource.kind === 'CronJob'">
         <el-button v-if="can('cluster:create')" @click="runCron">立即运行一次</el-button>
         <el-button v-if="can('cluster:update')" @click="suspendCron">{{ resource.spec?.suspend ? '恢复调度' : '暂停调度' }}</el-button>
@@ -27,14 +27,14 @@
   </div>
 </template>
 <script setup>
-import { computed, ref, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '../api'
 import { registerUnsavedGuard } from '../utils/navigation'
 import { can } from '../utils/perm'
 import { store } from '../store'
 import { targetDescription } from '../utils/resource'
-const props=defineProps({resource:{type:Object,required:true}})
+const props=defineProps({resource:{type:Object,required:true},historyOnly:Boolean})
 const emit=defineEmits(['changed'])
 const workload=computed(()=>['Deployment','StatefulSet','DaemonSet'].includes(props.resource.kind))
 const supported=computed(()=>workload.value || props.resource.kind==='CronJob' || (props.resource.kind==='Node' && can('node:maintain')))
@@ -42,6 +42,7 @@ const target=computed(()=>targetDescription(store.currentCluster?.name || store.
 const busy=ref(false),error=ref(''),history=ref(null),drainVisible=ref(false),drainData=ref(null),drainResult=ref(null)
 const removeContextGuard=registerUnsavedGuard(()=>!busy.value)
 onUnmounted(removeContextGuard)
+onMounted(() => { if (props.historyOnly) loadHistory() })
 const blockerText=items=>(items || []).map(x=>typeof x==='string' ? x : x.message || x.reason || JSON.stringify(x)).join('；')
 async function operation(fn) { if(busy.value)return; busy.value=true;error.value='';try{await fn()}catch(e){if(e!=='cancel' && e!=='close')error.value=e.message || '操作失败'}finally{busy.value=false} }
 async function confirm(message) { await ElMessageBox.confirm(`${target.value}\n${message}`,'确认变更',{type:'warning',confirmButtonText:'确认执行'}) }
@@ -53,3 +54,7 @@ function suspendCron(){return operation(async()=>{const suspend=!props.resource.
 function preflightDrain(){return operation(async()=>{drainData.value=await api.drainPreflight(props.resource.metadata.name);drainResult.value=null;drainVisible.value=true})}
 function performDrain(){return operation(async()=>{const check=await api.drain(props.resource.metadata.name,{dryRun:true,timeoutSeconds:30});if(!check.ok){drainResult.value=check;throw new Error(blockerText(check.blockers) || '服务端预检有阻塞，请检查逐项结果')}await confirm('确认维护节点并驱逐可驱逐 Pod？阻塞时不会绕过 PDB。');drainResult.value=await api.drain(props.resource.metadata.name,{dryRun:false,timeoutSeconds:30});ElMessage[drainResult.value.ok ? 'success' : 'warning'](drainResult.value.ok ? '节点 Drain 完成' : '部分 Pod 未完成驱逐，请查看逐项结果');emit('changed')})}
 </script>
+
+<style scoped>
+.history-panel .kp-toolbar { justify-content: flex-end; }
+</style>
