@@ -1,8 +1,11 @@
 <template>
-  <el-dialog :model-value="true" title="容器操作"
+  <el-dialog :model-value="true" title="容器操作" class="pod-picker-dialog"
     width="min(1080px, 94vw)" top="10vh" append-to-body :close-on-click-modal="false"
     @update:model-value="open => { if (!open) emit('close') }">
-    <p class="pod-picker-context">{{ target.namespace }} / {{ target.name }}</p>
+    <div class="pod-picker-context">
+      <span class="pod-picker-scope">命名空间 <strong>{{ target.namespace }}</strong></span>
+      <span v-if="target.kind==='Deployment'" class="pod-picker-workload">部署 <strong>{{ target.name }}</strong></span>
+    </div>
     <p v-if="loading" class="kp-muted" role="status">正在读取容器组…</p>
     <el-alert v-else-if="error" :title="error" type="error" show-icon :closable="false" />
     <template v-else>
@@ -10,18 +13,45 @@
       <div v-if="groups.length" class="pod-groups">
         <details v-for="({ pod, phase, containers }, index) in groups" :key="pod.metadata.uid" :open="index===0" class="pod-group">
           <summary class="pod-summary">
-            <span class="pod-identity"><strong>{{ pod.metadata.name }}</strong><span v-if="pod.spec?.nodeName">节点 {{ pod.spec.nodeName }}</span></span>
-            <el-tag :type="phase==='Running' ? 'success' : 'info'" size="small" effect="light">{{ phase }}</el-tag>
+            <span class="pod-icon" aria-hidden="true"><el-icon><Connection /></el-icon></span>
+            <span class="pod-summary-content">
+              <strong class="pod-name">{{ pod.metadata.name }}</strong>
+              <span v-if="pod.spec?.nodeName" class="pod-node">节点 {{ pod.spec.nodeName }}</span>
+            </span>
+            <span v-if="containers.length > 1" class="pod-container-count">{{ containers.length }} 个容器</span>
+            <el-tag class="pod-state" :type="statusType(phase)" :title="phase" size="small" effect="light">
+              {{ statusLabel(phase) }}
+            </el-tag>
           </summary>
           <ul v-if="containers.length" class="pod-container-list">
             <li v-for="container in containers" :key="container.key" class="pod-container-row">
-              <div class="pod-identity">
-                <strong>{{ container.name }} <span v-if="container.type==='Init'">初始化</span><span v-if="container.type==='Ephemeral'">临时</span></strong>
-                <code>{{ container.image }}</code>
-              </div>
-              <div class="pod-container-state">
-                <el-tag :type="container.running ? 'success' : 'info'" size="small" effect="light">{{ container.state }}</el-tag>
-                <span v-if="container.startedAt" class="kp-muted">启动于 {{ formatStartedAt(container.startedAt) }}</span>
+              <div class="pod-container-info">
+                <span class="pod-container-icon" aria-hidden="true"><el-icon><Box /></el-icon></span>
+                <div class="pod-container-content">
+                  <div class="pod-container-heading">
+                    <strong>{{ container.name }}</strong>
+                    <span v-if="container.type==='Init'" class="pod-container-kind">初始化</span>
+                    <span v-if="container.type==='Ephemeral'" class="pod-container-kind">临时</span>
+                    <el-tag class="pod-state" :type="statusType(container.state)" :title="container.state" size="small" effect="light">
+                      {{ statusLabel(container.state) }}
+                    </el-tag>
+                  </div>
+                  <div v-if="container.image" class="pod-image">
+                    <code>{{ container.image }}</code>
+                    <button type="button" class="pod-image-copy" title="复制镜像地址" :aria-label="`复制 ${container.name} 的镜像地址`"
+                      @click="copyImage(container.image)">
+                      <el-icon aria-hidden="true"><CopyDocument /></el-icon>
+                    </button>
+                  </div>
+                  <div v-if="container.startedAt || container.restartCount > 0" class="pod-runtime">
+                    <span v-if="container.startedAt"><el-icon aria-hidden="true"><Clock /></el-icon>
+                      启动于 <time :datetime="container.startedAt">{{ formatStartedAt(container.startedAt) }}</time>
+                    </span>
+                    <el-tag v-if="container.restartCount > 0" size="small" type="info" effect="plain">
+                      重启 {{ container.restartCount }} 次
+                    </el-tag>
+                  </div>
+                </div>
               </div>
               <div class="pod-container-actions">
                 <el-button v-if="can('pod:files:read')" size="small" :disabled="!running(pod,container)" @click="openFiles(pod,container)">文件浏览器</el-button>
@@ -53,7 +83,9 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, shallowReactive, shallowRef, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Box, Clock, Connection, CopyDocument } from '@element-plus/icons-vue'
 import api from '../api'
+import { copyText } from '../utils/clipboard'
 import { ownedPods, podContainers } from '../utils/container-targets'
 import { readResourcePages } from '../utils/resource'
 import { can } from '../utils/perm'
@@ -72,6 +104,26 @@ const batchTarget = shallowRef(null)
 const downloads = shallowReactive(new Map())
 let controller
 let logTailLines = '2000'
+
+const statusLabels = {
+  Running: '运行中',
+  Pending: '等待中',
+  Succeeded: '已完成',
+  Completed: '已完成',
+  Failed: '失败',
+  Terminating: '终止中',
+  Unknown: '未知',
+}
+
+function statusLabel(status) {
+  return Object.hasOwn(statusLabels, status) ? statusLabels[status] : status
+}
+
+function statusType(status) {
+  if (['Running', 'Succeeded', 'Completed'].includes(status)) return 'success'
+  if (['Failed', 'Error', 'OOMKilled', 'CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull'].includes(status)) return 'danger'
+  return ['Pending', 'Terminating'].includes(status) ? 'warning' : 'info'
+}
 
 const groups = computed(() => pods.value.map(pod => ({
   pod,
@@ -119,6 +171,14 @@ function running(pod, container) { return container.running&&!pod.metadata.delet
 function formatStartedAt(value) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', {hour12:false})
+}
+async function copyImage(image) {
+  try {
+    await copyText(image)
+    ElMessage.success('镜像地址已复制')
+  } catch (error) {
+    ElMessage.error(error.message)
+  }
 }
 function openFiles(pod, container) {
   if (!can('pod:files:read')||!running(pod,container)) return
@@ -177,22 +237,123 @@ onUnmounted(() => { controller?.abort(); for (const request of downloads.values(
 </script>
 
 <style scoped>
-.pod-picker-context{margin:0 0 16px;color:var(--kp-text-2);font-weight:600;overflow-wrap:anywhere}
-.pod-groups{display:grid;gap:10px;max-height:62vh;overflow:auto;margin-top:12px}
-.pod-group{border:1px solid var(--kp-border);border-radius:8px;overflow:hidden}
-.pod-summary{display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;list-style:none}
-.pod-summary::-webkit-details-marker{display:none}
-.pod-summary::before{content:'';border:solid var(--kp-muted);border-width:0 1.5px 1.5px 0;padding:3px;transform:rotate(-45deg);flex:none}
-.pod-group[open]>.pod-summary::before{transform:rotate(45deg)}
-.pod-summary:focus-visible{outline:2px solid var(--kp-brand);outline-offset:-2px}
-.pod-summary .pod-identity{flex:1}
-.pod-identity{display:grid;gap:3px;min-width:0;overflow-wrap:anywhere}
-.pod-identity span,.pod-identity code{color:var(--kp-muted);font-size:12px;font-weight:400}
-.pod-container-list{margin:0;padding:0;list-style:none}
-.pod-container-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(90px,auto) auto;align-items:center;gap:12px;padding:12px 16px 12px 35px;border-top:1px solid var(--kp-border);background:var(--kp-surface-2)}
-.pod-container-state{display:grid;justify-items:start;gap:5px;font-size:12px}
-.pod-container-actions{display:flex;flex-wrap:wrap;gap:6px}
-.pod-container-actions .el-button{margin:0}
-.pod-empty{padding:0 16px}
-@media(max-width:820px){.pod-container-row{grid-template-columns:minmax(0,1fr) auto;padding-left:16px}.pod-container-actions{grid-column:1/-1}}
+:global(.pod-picker-dialog .el-dialog__title) { font-size: 17px; font-weight: 650; }
+.pod-picker-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-bottom: 16px;
+  color: var(--kp-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.pod-picker-context strong { margin-inline-start: 5px; color: var(--kp-text); font-weight: 600; }
+.pod-picker-scope {
+  padding: 4px 9px;
+  border: 1px solid var(--kp-border);
+  border-radius: 6px;
+  background: var(--kp-surface-2);
+}
+.pod-groups { display: grid; gap: 10px; max-height: 62vh; overflow: auto; margin-top: 12px; }
+.pod-group { border: 1px solid var(--kp-border); border-radius: 10px; overflow: hidden; }
+.pod-summary { display: flex; align-items: center; gap: 10px; padding: 13px 16px; cursor: pointer; list-style: none; }
+.pod-summary::-webkit-details-marker { display: none; }
+.pod-summary::before {
+  content: '';
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border: solid var(--kp-muted);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(-45deg);
+}
+.pod-group[open] > .pod-summary::before { transform: translateY(-2px) rotate(45deg); }
+.pod-summary:hover { background: var(--kp-surface-2); }
+.pod-summary:focus-visible { outline: 2px solid var(--kp-brand); outline-offset: -2px; }
+.pod-icon, .pod-container-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--kp-border);
+  border-radius: 8px;
+  font-size: 17px;
+}
+.pod-icon { color: var(--kp-brand); background: var(--kp-brand-soft); }
+.pod-container-icon { color: var(--kp-muted); background: var(--kp-surface); }
+.pod-summary-content { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.pod-name, .pod-container-heading strong {
+  color: var(--kp-text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.pod-node, .pod-container-count, .pod-container-kind { color: var(--kp-muted); font-size: 13px; line-height: 1.5; }
+.pod-node { overflow-wrap: anywhere; }
+.pod-container-count { white-space: nowrap; }
+.pod-state { max-width: 100%; font-size: 12px; }
+.pod-container-list { margin: 0; padding: 0; list-style: none; }
+.pod-container-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 13px 16px 13px 32px;
+  border-top: 1px solid var(--kp-border);
+  background: var(--kp-surface-2);
+}
+.pod-container-info { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.pod-container-content { display: grid; gap: 5px; min-width: 0; }
+.pod-container-heading, .pod-runtime { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; }
+.pod-image {
+  display: flex;
+  align-items: center;
+  justify-self: start;
+  gap: 2px;
+  max-width: 100%;
+  min-width: 0;
+  padding-inline-start: 8px;
+  border: 1px solid var(--kp-border);
+  border-radius: 6px;
+  background: var(--kp-surface);
+}
+.pod-image code {
+  min-width: 0;
+  color: var(--kp-text-2);
+  font: 12px/1.5 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  overflow-wrap: anywhere;
+}
+.pod-image-copy {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  color: var(--kp-text-2);
+  background: transparent;
+  font-size: 15px;
+  cursor: pointer;
+}
+.pod-image-copy:hover { color: var(--kp-brand); background: var(--kp-brand-soft); }
+.pod-image-copy:focus-visible { outline: 2px solid var(--kp-brand); outline-offset: -2px; }
+.pod-runtime { color: var(--kp-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.pod-runtime > span:first-child { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.pod-container-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.pod-container-actions .el-button { margin: 0; }
+.pod-empty { padding: 0 16px; }
+@media (max-width: 950px) {
+  .pod-container-row { grid-template-columns: minmax(0, 1fr); gap: 10px; padding-inline-start: 16px; }
+  .pod-container-actions { justify-content: flex-start; }
+}
+@media (max-width: 520px) {
+  .pod-summary, .pod-container-row { padding-inline: 10px; }
+  .pod-container-count { display: none; }
+}
 </style>
