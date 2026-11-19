@@ -150,19 +150,19 @@ export const api = {
 // ---- SSE / WebSocket 地址（浏览器原生 API，不走 axios）----
 export function logsUrl(namespace, pod, params = {}) {
   const q = new URLSearchParams({
-    ...params,
     clusterId: localStorage.getItem('kp_cluster') || '',
+    ...params,
   })
   return `/api/v1/pods/${encodeURIComponent(namespace)}/${encodeURIComponent(pod)}/logs?${q}`
 }
 
-export function execWsUrl({ namespace, pod, container, shell, ticket }) {
+export function execWsUrl({ namespace, pod, container, shell, ticket, clusterId = localStorage.getItem('kp_cluster') || '' }) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const q = new URLSearchParams({
     namespace, pod, ticket,
     container: container || '',
     shell: shell || '/bin/sh',
-    clusterId: localStorage.getItem('kp_cluster') || '',
+    clusterId,
   })
   return `${proto}//${location.host}/api/v1/ws/exec?${q}`
 }

@@ -25,7 +25,7 @@
           <el-tab-pane v-if="storage" label="存储配置" name="storage"><StorageForm :model-value="draft" :original="original" :creating="creating" :disabled="busy" @change="touch" @validity="value=>setValidity('存储配置',value)"/></el-tab-pane>
           <el-tab-pane v-if="extensionComponent" :label="extensionLabel" name="configuration">
             <component :is="extensionComponent" :model-value="draft" :original="original" :creating="creating" :disabled="busy"
-              v-bind="formType==='advanced'?{clusterId:target.clusterId,active:activeTab==='configuration'}:{}"
+              v-bind="formType==='advanced'?{clusterId:target.clusterId,namespaceScope:store.namespace,active:activeTab==='configuration'}:{}"
               @change="touch" @validity="value=>setValidity('专用资源配置',value)"/>
           </el-tab-pane>
           <el-tab-pane v-if="workload&&meta.kind!=='Pod'" name="strategy">
@@ -157,7 +157,21 @@ const entryCount=computed(()=>Object.keys(entryMap.value).length)
 const contentBytes=computed(()=>Object.values(entryMap.value).reduce((sum,value)=>sum+new TextEncoder().encode(String(value??'')).length,0))
 function formatBytes(bytes){if(bytes<1024)return `${bytes} B`;if(bytes<1024*1024)return `${(bytes/1024).toFixed(1)} KB`;return `${(bytes/1024/1024).toFixed(2)} MB`}
 let generation=0,leavingAfterSave=false
-const removeGuard=registerUnsavedGuard(async()=>{if(leavingAfterSave)return true;if(busy.value)return false;if(!dirty.value)return true;try{await ElMessageBox.confirm('表单内容尚未保存，确定放弃修改？','未保存的修改',{type:'warning',confirmButtonText:'放弃修改'});draft.value=cloneResource(original.value);baseline.value=JSON.stringify(draft.value);touched.value=false;fieldErrors.value={};checked.value=null;formKey.value++;return true}catch{return false}})
+const removeGuard = registerUnsavedGuard(async reason => {
+ if (leavingAfterSave) return true
+ if (busy.value) return false
+ if (reason === 'namespace' || !dirty.value) return true
+ try {
+  await ElMessageBox.confirm('表单内容尚未保存，确定放弃修改？', '未保存的修改', {type:'warning',confirmButtonText:'放弃修改'})
+  draft.value = cloneResource(original.value)
+  baseline.value = JSON.stringify(draft.value)
+  touched.value = false
+  fieldErrors.value = {}
+  checked.value = null
+  formKey.value++
+  return true
+ } catch { return false }
+})
 function touch(){touched.value=true}
 function setValidity(key,value){if(fieldErrors.value[key]!==value)fieldErrors.value={...fieldErrors.value,[key]:value}}
 function setTemplateMetadata(key,value){const template=podTemplate(draft.value);if(template){template.metadata||={};template.metadata[key]=value}}
@@ -166,7 +180,8 @@ async function showError(message,source='local'){errorSource.value=source;error.
 async function load(){
  const epoch=++generation;loading.value=true;error.value='';loadFailed.value=false;checked.value=null;previewOpen.value=false;fieldErrors.value={};touched.value=false;draft.value=null
  const m={...meta.value},clusterId=store.currentClusterId,isCreate=creating.value
- const initialNamespace=store.namespace==='all'?(namespaces.value[0]||'default'):store.namespace
+ const defaultNamespace = namespaces.value.includes('default') ? 'default' : (namespaces.value[0] || 'default')
+ const initialNamespace = store.namespace === 'all' ? defaultNamespace : store.namespace
  target.value={meta:m,clusterId,creating:isCreate,namespace:nsPath(route.params.namespace),name:route.params.name,key:targetKey.value}
  try{
   if(uiMode.value!=='form'){loading.value=false;if(uiMode.value==='yaml')await router.replace(listPath());return}
@@ -177,7 +192,7 @@ async function load(){
   }
   const namespace=m.namespaced?(isCreate?initialNamespace:route.params.namespace):undefined
   if(!canResource(m,isCreate?'create':'update',namespace,clusterId)||!isCreate&&coreKind.value==='Secret'&&!can('secret:read'))return
-  const value=isCreate?newResourceDraft(m,initialNamespace):await api.get(m.group,m.version,m.plural,target.value.namespace,target.value.name)
+  const value=isCreate?newResourceDraft(m,initialNamespace):await api.get(m.group,m.version,m.plural,target.value.namespace,target.value.name,{params:{clusterId}})
   if(epoch!==generation)return
   value.metadata||={};if(coreKind.value==='Service')value.spec||={};if(workload.value&&podTemplate(value))podTemplate(value).metadata||={}
   original.value=cloneResource(value);draft.value=cloneResource(value);baseline.value=JSON.stringify(draft.value);activeTab.value=coreKind.value==='Service'&&!isCreate?'service-config':storage.value&&!isCreate?'storage':extensionLabel.value&&!isCreate?'configuration':'basic';templateSection.value='containers';formKey.value++
@@ -226,7 +241,23 @@ async function reread(){if(busy.value)return;if(dirty.value){try{await ElMessage
 function beforeUnload(event){if(dirty.value){event.preventDefault();event.returnValue=''}}
 function exportYaml(){const content=dump(draft.value,{noRefs:true,lineWidth:120});const url=URL.createObjectURL(new Blob([content],{type:'application/yaml;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=`${draft.value.metadata?.name||meta.value.kind}.yaml`;a.click();URL.revokeObjectURL(url)}
 watch(()=>[route.fullPath,store.currentClusterId],load)
-watch(()=>store.namespace,()=>{if(!dirty.value&&!busy.value)load()})
+watch(() => store.namespace, namespace => {
+ if (!creating.value || !meta.value.namespaced || uiMode.value !== 'form' || busy.value) return
+ if (target.value?.key !== targetKey.value) return
+ if (!draft.value) { load(); return }
+ if (namespace === 'all' || namespace === draft.value.metadata.namespace) return
+ const clean = !dirty.value
+ draft.value.metadata.namespace = namespace
+ if (clean) {
+  original.value = cloneResource(draft.value)
+  baseline.value = JSON.stringify(draft.value)
+  touched.value = false
+ }
+})
+watch(() => draft.value?.metadata?.namespace, () => {
+ checked.value = null
+ previewOpen.value = false
+}, { flush: 'sync' })
 watch([()=>JSON.stringify(draft.value),fieldErrors],()=>{if(errorSource.value==='local')error.value=''}, {flush:'sync'})
 onMounted(()=>{load();window.addEventListener('beforeunload',beforeUnload)})
 onUnmounted(()=>{generation++;removeGuard();window.removeEventListener('beforeunload',beforeUnload)})

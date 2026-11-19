@@ -33,6 +33,7 @@ const route = useRoute()
 const router = useRouter()
 const namespace = route.params.namespace
 const name = route.params.name
+const clusterId = String(route.params.clusterId || localStorage.getItem('kp_cluster') || '')
 
 const host = ref(null)
 const containers = ref([])
@@ -90,7 +91,7 @@ async function connect() {
   if (disposed) return
   if (!can('pod:exec')) return ElMessage.error('没有容器终端权限')
   if (!container.value) return ElMessage.warning('请先选择容器')
-  const target={namespace,pod:name,container:container.value,shell:shell.value,clusterId:String(route.params.clusterId || localStorage.getItem('kp_cluster') || '')}
+  const target={namespace,pod:name,container:container.value,shell:shell.value,clusterId}
   const key=JSON.stringify(target)
   if (status.value==='connecting' && connectionTarget===key) return
   makeTerm()
@@ -167,7 +168,7 @@ onMounted(async () => {
   makeTerm()
   term.write('\x1b[36mKubePanel Web Terminal\x1b[0m\r\n正在准备容器连接…\r\n\r\n')
   try {
-    const pod = await api.get('', 'v1', 'pods', namespace, name)
+    const pod = await api.get('', 'v1', 'pods', namespace, name, { params: { clusterId } })
     if (disposed) return
     if(route.query.uid && route.query.uid!==pod.metadata?.uid)throw new Error('Pod 已重新创建，请重新选择容器')
     containers.value = [...(pod.spec?.containers || []),...(pod.spec?.initContainers || []),...(pod.spec?.ephemeralContainers || [])].map(c => c.name)

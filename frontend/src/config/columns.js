@@ -259,6 +259,7 @@ const KIND_COLS = {
 
 export function columnsFor(kind, namespaced) {
   const mid = KIND_COLS[kind] || [{ key: 'status', label: '状态', width: 130, tag: true }]
+  if (kind === 'Pod' && namespaced) return [NS, NAME, ...mid, AGE]
   return [NAME, ...(namespaced ? [NS] : []), ...mid, AGE]
 }
 

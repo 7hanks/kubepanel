@@ -57,4 +57,23 @@ export function createRequestGate() {
  let id=0
  return {next:()=>++id,current:value=>value===id,invalidate:()=>++id}
 }
+
+export async function readResourcePages(fetchPage, signal) {
+ const items = []
+ const seen = new Set()
+ let cursor
+ for (let page = 0; page < 25; page++) {
+  signal.throwIfAborted()
+  const result = await fetchPage(cursor)
+  signal.throwIfAborted()
+  if (!Array.isArray(result?.items)) throw new Error('资源列表格式不正确')
+  items.push(...result.items)
+  cursor = result.metadata?.continue
+  if (!cursor) return { items, incomplete: false }
+  if (seen.has(cursor)) throw new Error('分页游标重复')
+  seen.add(cursor)
+ }
+ return { items, incomplete: true }
+}
+
 export function targetDescription(cluster, namespace, kind, name) { return `集群 ${cluster} · ${namespace || '集群级'} · ${kind}/${name || '(新建)'}` }

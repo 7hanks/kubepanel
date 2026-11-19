@@ -77,8 +77,9 @@
           <template #default="{ row }">
             <div class="kp-list-actions">
               <ResourceActionButton @click="viewYaml(row)">YAML</ResourceActionButton>
-              <ResourceActionButton v-if="canUpdateRes&&policy.edit!=='none'" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm(row)">编辑</ResourceActionButton>
-              <el-tooltip v-if="meta.kind==='Pod'&&can('cluster:update')" :content="podScaleAvailability(row)||'调整所属工作负载的副本数'" :disabled="!podScaleAvailability(row)"><span><ResourceActionButton class="resource-scale-button" :disabled="!!podScaleAvailability(row)" @click="openPodScale(row)">扩缩容</ResourceActionButton></span></el-tooltip>
+              <ResourceActionButton v-if="showPodLogs" :disabled="!canOpenPodView('logs', row.namespace)" @click="openRowPodAction('logs', row)">日志</ResourceActionButton>
+              <ResourceActionButton v-if="showPodTerminal" :disabled="!canOpenPodView('terminal', row.namespace)" @click="openRowPodAction('terminal', row)">终端</ResourceActionButton>
+              <ResourceActionButton v-if="!showPodActions&&canEditRes" :disabled="meta.kind==='Secret'&&!can('secret:read')" @click="editForm(row)">编辑</ResourceActionButton>
               <!-- teleport 到 body 避免被表格 overflow/fixed 列裁剪；右对齐，接近视口底部时由 popper flip 自动上翻 -->
               <el-dropdown
                 trigger="click" placement="bottom-end" :teleported="true" popper-class="kp-row-actions"
@@ -88,11 +89,10 @@
                 <ResourceActionButton aria-label="更多操作" title="更多操作"><el-icon aria-hidden="true"><MoreFilled /></el-icon></ResourceActionButton>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <!-- 更多操作按独立权限展示；YAML 与表单编辑保留在行内 -->
-                    <el-dropdown-item v-if="meta.kind==='Pod'&&can('pod:logs')" command="logs">日志</el-dropdown-item>
-                    <el-dropdown-item v-if="meta.kind==='Pod'&&can('pod:exec')" command="terminal">终端</el-dropdown-item>
+                    <el-dropdown-item v-if="showPodActions&&canEditRes" command="edit">编辑</el-dropdown-item>
                     <el-dropdown-item v-if="fileSupported&&can('pod:files:read')" command="files">文件浏览器</el-dropdown-item>
-                    <el-dropdown-item v-if="deploymentImages" command="updateImages" :disabled="!canUpdateImages(row)">调整镜像版本</el-dropdown-item>
+                    <el-dropdown-item v-if="isDeployment" command="updateImages" :disabled="!canUpdateImages(row)">调整镜像版本</el-dropdown-item>
+                    <el-dropdown-item v-if="isPod&&can('cluster:update')" command="scalePod" :disabled="!!podScaleAvailability(row)" :title="podScaleAvailability(row)">扩缩容</el-dropdown-item>
                     <el-dropdown-item v-if="scalable" command="scale" :disabled="!canUpdateRes">扩缩容</el-dropdown-item>
                     <el-dropdown-item v-if="restartable" command="restart" :disabled="!canUpdateRes">重启工作负载</el-dropdown-item>
                     <el-dropdown-item v-if="meta.kind === 'Node'" command="cordon" :disabled="!can('node:maintain') || !canUpdateRes">
@@ -125,6 +125,8 @@
     <PodScaleDialog v-model="podScaleVisible" :target="podScaleTarget" :context-key="bulkContextKey" @saved="load"/>
     <DeploymentImageDialog v-if="imageTarget" :target="imageTarget" :context-key="bulkContextKey"
       @close="imageTarget=null" @saved="imageTarget=null; load()" />
+    <WorkloadPodPicker v-if="workloadPodTarget" :target="workloadPodTarget" :terminal="workloadPodTarget.mode==='terminal'"
+      :context-key="bulkContextKey" @close="workloadPodTarget=null" @select="openWorkloadPod" />
     <ContainerFilePicker v-model="filesVisible" :resource="filesResource" />
     <BulkPodRestartDialog v-model="bulkRestartVisible" :targets="bulkRestartTargets" :cluster-id="store.currentClusterId" :cluster-name="store.currentCluster?.name" :context-key="bulkContextKey" :can-restart="canRestartTarget" @submitted="load" />
     </div>
@@ -166,6 +168,7 @@ import SimpleResourceDialog from '../components/SimpleResourceDialog.vue'
 import {resourceUiPolicy} from '../utils/resource-policy'
 import PodScaleDialog from '../components/PodScaleDialog.vue'
 import DeploymentImageDialog from '../components/DeploymentImageDialog.vue'
+import WorkloadPodPicker from '../components/WorkloadPodPicker.vue'
 import {resourceTitle,filterResourceRows,servicePortLabel,podScaleAvailability} from '../utils/resource-ui'
 
 const route = useRoute()
@@ -175,10 +178,15 @@ const policy=computed(()=>resourceUiPolicy(meta.value)),simpleVisible=ref(false)
 const columns = computed(() => columnsFor(meta.value.kind, meta.value.namespaced))
 const scalable = computed(() => ['Deployment', 'StatefulSet', 'ReplicaSet'].includes(meta.value.kind))
 const restartable = computed(() => ['Deployment', 'StatefulSet', 'DaemonSet'].includes(meta.value.kind))
-const deploymentImages = computed(() => meta.value.group === 'apps' && meta.value.version === 'v1' && meta.value.plural === 'deployments')
+const isDeployment = computed(() => meta.value.group === 'apps' && meta.value.version === 'v1' && meta.value.plural === 'deployments')
+const isPod = computed(() => !meta.value.group && meta.value.version === 'v1' && meta.value.plural === 'pods')
+const showPodActions = computed(() => isPod.value || isDeployment.value)
+const showPodLogs = computed(() => showPodActions.value && can('pod:logs'))
+const showPodTerminal = computed(() => showPodActions.value && can('pod:exec'))
 const imageTarget = shallowRef(null)
+const workloadPodTarget = shallowRef(null)
 function canUpdateImages(row) {
-  return deploymentImages.value && (!meta.value.verbs || meta.value.verbs.includes('patch'))
+  return isDeployment.value && (!meta.value.verbs || meta.value.verbs.includes('patch'))
     && canResource(meta.value, 'update', row.namespace, store.currentClusterId)
 }
 function openImageUpdate(row) {
@@ -191,7 +199,9 @@ function openImageUpdate(row) {
 const fileSupported=computed(()=>['Pod','Deployment','StatefulSet','DaemonSet','ReplicaSet','Job','CronJob'].includes(meta.value.kind))
 const filesVisible=ref(false),filesResource=shallowRef(null)
 function openFiles(row){if(!can('pod:files:read'))return;const m=meta.value;filesResource.value={...row._raw,kind:m.kind,apiVersion:m.group?`${m.group}/${m.version}`:m.version};filesVisible.value=true}
-const actionWidth = computed(() => meta.value.kind==='Pod'&&can('cluster:update')?230:canUpdateRes.value?200:135)
+const actionWidth = computed(() => showPodActions.value
+  ? 132 + 56 * (Number(showPodLogs.value) + Number(showPodTerminal.value))
+  : canUpdateRes.value ? 200 : 135)
 const createdRange=ref([]),serviceType=ref(''),compactRows=ref(true),podScaleVisible=ref(false),podScaleTarget=shallowRef(null)
 const serviceTypes=['ClusterIP','NodePort','LoadBalancer','ExternalName']
 function openPodScale(row){if(!can('cluster:update')||podScaleAvailability(row))return;const md=row._raw?.metadata;if(!md?.uid)return ElMessage.warning('缺少 Pod UID，请刷新后重试');podScaleTarget.value={clusterId:store.currentClusterId,namespace:md.namespace,name:md.name,uid:md.uid};podScaleVisible.value=true}
@@ -203,6 +213,7 @@ const actionBusy=ref(false)
 const removeContextGuard=registerUnsavedGuard(()=>{if(saving.value || scaleSaving.value || actionBusy.value){ElMessage.warning('操作进行中，请稍后切换上下文');return false}return true})
 const canCreateRes = computed(() => policy.value.create!=='none'&&(!meta.value.verbs||meta.value.verbs.includes('create'))&&canResource(meta.value,'create',store.namespace,store.currentClusterId))
 const canUpdateRes = computed(() => canResource(meta.value,'update',store.namespace))
+const canEditRes = computed(() => canUpdateRes.value && policy.value.edit !== 'none')
 const canDeleteRes = computed(() => canResource(meta.value,'delete',store.namespace))
 const canBulkRestart = computed(() => meta.value.kind === 'Pod' && canUpdateRes.value && canDeleteRes.value)
 const bulkRestartVisible=ref(false),bulkRestartTargets=shallowRef([])
@@ -318,8 +329,37 @@ function detailPath(row) {
   return cpath(`/r/${m.group || '_core'}/${m.version}/${m.plural}/${encodeURIComponent(nsPath(row.namespace))}/${encodeURIComponent(row.name)}`)
 }
 function openDetail(row) { router.push(detailPath(row)) }
-function goLogs(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/logs`)) }
-function goTerminal(row) { router.push(cpath(`/pods/${encodeURIComponent(row.namespace)}/${encodeURIComponent(row.name)}/terminal`)) }
+const podMeta = { group: '', plural: 'pods', namespaced: true }
+const replicaSetMeta = { group: 'apps', plural: 'replicasets', namespaced: true }
+function canOpenPodView(mode, namespace, clusterId = store.currentClusterId) {
+  return can(mode === 'terminal' ? 'pod:exec' : 'pod:logs') && canResource(podMeta, 'detail', namespace, clusterId)
+    && (!isDeployment.value || canResource(replicaSetMeta, 'list', namespace, clusterId))
+}
+function openPodView(mode, { clusterId, namespace, name, uid, container }) {
+  if (clusterId !== store.currentClusterId || !canOpenPodView(mode, namespace, clusterId)) return
+  return router.push({
+    name: mode === 'terminal' ? 'pod-terminal' : 'pod-logs',
+    params: { clusterId, namespace, name },
+    query: { uid, ...(container ? { container } : {}) },
+  })
+}
+function openRowPodAction(mode, row) {
+  if (!showPodActions.value) return
+  const { uid, name, namespace } = row._raw?.metadata || {}
+  const clusterId = route.params.clusterId
+  if (clusterId !== store.currentClusterId || route.path !== listPath) return
+  if (!uid || !name || !namespace || !clusterId) return ElMessage.warning('资源信息不完整，请刷新列表后重试')
+  if (!canOpenPodView(mode, namespace, clusterId)) return ElMessage.warning('当前账号没有访问该容器的权限')
+  const selected = { uid, name, namespace, clusterId }
+  if (isPod.value) return openPodView(mode, selected)
+  workloadPodTarget.value = Object.freeze({ ...selected, mode, context: bulkContextKey.value })
+}
+function openWorkloadPod(pod) {
+  const selected = workloadPodTarget.value
+  workloadPodTarget.value = null
+  if (selected?.context !== bulkContextKey.value || pod.namespace !== selected.namespace) return
+  return openPodView(selected.mode, { ...pod, clusterId: selected.clusterId })
+}
 
 function openCreate(mode) {
   if (!canCreateRes.value) return
@@ -408,8 +448,8 @@ async function saveScale(replicas) {
 async function onCommand(cmd, row) {
   if(cmd==='updateImages')return openImageUpdate(row)
   if(cmd==='files')return openFiles(row)
-  if(cmd==='logs'&&can('pod:logs'))return goLogs(row)
-  if(cmd==='terminal'&&can('pod:exec'))return goTerminal(row)
+  if(cmd==='edit')return editForm(row)
+  if(cmd==='scalePod')return openPodScale(row)
   const m = meta.value
   const ns = nsPath(row.namespace)
   if (cmd==='cordon' ? !can('node:maintain') || !canUpdateRes.value : !writable.value) return ElMessage.warning('当前账号只有查看权限，不能执行该操作')
@@ -535,7 +575,7 @@ onUnmounted(() => { yamlReadEpoch++;yamlReadController?.abort();clearTimeout(que
 .resource-filter-grid :deep(.el-select),.resource-filter-grid :deep(.el-input-number) { width:100%; }
 @media (max-width:700px) { .resource-toolbar { flex-wrap:wrap; } .resource-search { flex:1; } .resource-filter-grid { grid-template-columns:minmax(0,1fr); } }
 
-.resource-page-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}.resource-heading-title{display:flex;align-items:center;gap:12px}.resource-heading-title h1{font-size:22px;color:#304d73;letter-spacing:.01em;margin:0;font-weight:650}.resource-scope{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--kp-muted)}.resource-scope>.el-icon{font-size:15px}.resource-scope-divider{padding:0 8px;color:var(--kp-faint)}.resource-query-card{display:flex;align-items:center;gap:28px;flex-wrap:wrap;padding:18px 22px;background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;box-shadow:0 2px 5px rgba(22,40,70,.025);margin-bottom:18px}.resource-query-field{display:flex;align-items:center;gap:14px;min-width:250px;flex:1}.resource-query-field>label{font-size:13px;color:var(--kp-text-2);white-space:nowrap}.resource-query-field>.el-input{flex:1}.resource-query-date{flex:1.2;min-width:330px}.resource-query-date :deep(.el-date-editor){width:100%;min-width:0}.resource-query-actions{display:flex;gap:8px;margin-left:auto}.resource-query-actions .el-button+.el-button{margin:0}.resource-table-panel{background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;padding:18px 18px 2px;box-shadow:0 2px 5px rgba(22,40,70,.025)}.resource-type-tabs{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--kp-border)}.resource-type-tabs>button{display:flex;align-items:center;gap:9px;background:transparent;border:1px solid transparent;color:var(--kp-text-2);font:inherit;font-size:13px;padding:8px 13px;border-radius:8px;cursor:pointer}.resource-type-tabs>button>span{font-size:12px;background:var(--kp-surface-2);padding:1px 7px;border-radius:5px}.resource-type-tabs>button.active{background:var(--kp-side-active);border-color:#dce7f6;color:var(--kp-brand);font-weight:600}.resource-type-tabs>button.active>span{background:var(--kp-surface)}.resource-table-panel>.kp-card{border-radius:8px;box-shadow:none;border:0}.pod-list-summary{display:flex;gap:16px;font-size:12px;color:var(--kp-muted);white-space:nowrap}.pod-list-summary>span{display:flex;align-items:center;gap:6px}.pod-list-summary strong{color:var(--kp-text);font-weight:600}.summary-dot{display:inline-block;width:6px;height:6px;border-radius:50%}.summary-dot.running{background:#16a36b}.summary-dot.warning{background:#d68b24}.resource-name-cell{display:flex;align-items:flex-start;flex-direction:column;gap:4px}.resource-port-chips{display:flex;flex-direction:column;align-items:flex-start;gap:6px;white-space:normal}.resource-port-chips>span{display:inline-block;background:var(--kp-success-bg);color:var(--el-color-success);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;padding:3px 7px;border-radius:5px;white-space:normal;overflow-wrap:anywhere;line-height:1.5}.service-type-tag{font-weight:600;letter-spacing:.01em}.resource-image-cell{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0;font-size:inherit;line-height:inherit}.resource-image-cell>span{max-width:100%;white-space:normal;overflow-wrap:anywhere;background:var(--kp-success-bg);border:1px solid transparent;border-radius:4px;padding:2px 7px;color:var(--el-color-success)}.resource-table-panel :deep(.resource-ports-column .cell){white-space:normal;overflow:visible}.resource-scale-button{inline-size:5.5em!important}.resource-toolbar{gap:9px;margin-bottom:16px}.resource-toolbar>.el-button+.el-button{margin:0}.resource-table-panel :deep(.el-table th.el-table__cell){background:#f7f9fc}.resource-table-panel :deep(.el-table--small td.el-table__cell){padding:8px 0}.resource-table-panel :deep(.el-table:not(.el-table--small) td.el-table__cell){padding:14px 0}
+.resource-page-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}.resource-heading-title{display:flex;align-items:center;gap:12px}.resource-heading-title h1{font-size:22px;color:#304d73;letter-spacing:.01em;margin:0;font-weight:650}.resource-scope{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--kp-muted)}.resource-scope>.el-icon{font-size:15px}.resource-scope-divider{padding:0 8px;color:var(--kp-faint)}.resource-query-card{display:flex;align-items:center;gap:28px;flex-wrap:wrap;padding:18px 22px;background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;box-shadow:0 2px 5px rgba(22,40,70,.025);margin-bottom:18px}.resource-query-field{display:flex;align-items:center;gap:14px;min-width:250px;flex:1}.resource-query-field>label{font-size:13px;color:var(--kp-text-2);white-space:nowrap}.resource-query-field>.el-input{flex:1}.resource-query-date{flex:1.2;min-width:330px}.resource-query-date :deep(.el-date-editor){width:100%;min-width:0}.resource-query-actions{display:flex;gap:8px;margin-left:auto}.resource-query-actions .el-button+.el-button{margin:0}.resource-table-panel{background:var(--kp-surface);border:1px solid var(--kp-border);border-radius:12px;padding:18px 18px 2px;box-shadow:0 2px 5px rgba(22,40,70,.025)}.resource-type-tabs{display:flex;gap:8px;flex-wrap:wrap;padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--kp-border)}.resource-type-tabs>button{display:flex;align-items:center;gap:9px;background:transparent;border:1px solid transparent;color:var(--kp-text-2);font:inherit;font-size:13px;padding:8px 13px;border-radius:8px;cursor:pointer}.resource-type-tabs>button>span{font-size:12px;background:var(--kp-surface-2);padding:1px 7px;border-radius:5px}.resource-type-tabs>button.active{background:var(--kp-side-active);border-color:#dce7f6;color:var(--kp-brand);font-weight:600}.resource-type-tabs>button.active>span{background:var(--kp-surface)}.resource-table-panel>.kp-card{border-radius:8px;box-shadow:none;border:0}.pod-list-summary{display:flex;gap:16px;font-size:12px;color:var(--kp-muted);white-space:nowrap}.pod-list-summary>span{display:flex;align-items:center;gap:6px}.pod-list-summary strong{color:var(--kp-text);font-weight:600}.summary-dot{display:inline-block;width:6px;height:6px;border-radius:50%}.summary-dot.running{background:#16a36b}.summary-dot.warning{background:#d68b24}.resource-name-cell{display:flex;align-items:flex-start;flex-direction:column;gap:4px}.resource-port-chips{display:flex;flex-direction:column;align-items:flex-start;gap:6px;white-space:normal}.resource-port-chips>span{display:inline-block;background:var(--kp-success-bg);color:var(--el-color-success);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;padding:3px 7px;border-radius:5px;white-space:normal;overflow-wrap:anywhere;line-height:1.5}.service-type-tag{font-weight:600;letter-spacing:.01em}.resource-image-cell{display:flex;flex-wrap:wrap;align-items:center;gap:5px;min-width:0;font-size:inherit;line-height:inherit}.resource-image-cell>span{max-width:100%;white-space:normal;overflow-wrap:anywhere;background:var(--kp-success-bg);border:1px solid transparent;border-radius:4px;padding:2px 7px;color:var(--el-color-success)}.resource-table-panel :deep(.resource-ports-column .cell){white-space:normal;overflow:visible}.resource-toolbar{gap:9px;margin-bottom:16px}.resource-toolbar>.el-button+.el-button{margin:0}.resource-table-panel :deep(.el-table th.el-table__cell){background:#f7f9fc}.resource-table-panel :deep(.el-table--small td.el-table__cell){padding:8px 0}.resource-table-panel :deep(.el-table:not(.el-table--small) td.el-table__cell){padding:14px 0}
 @media(max-width:1000px){.resource-query-card{gap:16px}.resource-query-field{min-width:220px}.resource-query-date{min-width:280px}.resource-query-actions{margin-left:0}.pod-list-summary{display:none}}
 @media(max-width:700px){.resource-page-heading{margin-bottom:14px;gap:10px}.resource-heading-title h1{font-size:19px}.resource-scope{font-size:12px}.resource-query-card{padding:14px;gap:12px}.resource-query-field,.resource-query-date{min-width:0;flex:1 1 100%}.resource-query-field>label{width:56px;flex:none}.resource-query-actions{justify-content:flex-end;width:100%}.resource-table-panel{padding:12px 10px 2px}.resource-toolbar{flex-wrap:wrap}.resource-type-tabs{gap:3px}.resource-type-tabs>button{font-size:11px;padding:7px 8px}.resource-type-tabs>button>span{padding:0 5px}.resource-count{display:none}}
 </style>

@@ -4,12 +4,13 @@ import fs from 'node:fs'
 import {parse,compileScript} from '@vue/compiler-sfc'
 import {computed,ref,reactive,watch,effectScope,nextTick} from 'vue'
 import {advancedDraftFields,validateAdvancedResource} from '../src/utils/advanced-resource-form.js'
+import {readResourcePages} from '../src/utils/resource.js'
 
 function fixture(body,creating=false,disabled=false,options={}){
  const scope=effectScope(),events=[],props=reactive({modelValue:body,creating,disabled,clusterId:'c-a',active:true,...options.props})
  const {descriptor}=parse(fs.readFileSync(new URL('../src/components/AdvancedResourceForm.vue',import.meta.url),'utf8'))
  const source=compileScript(descriptor,{id:'advanced-test'}).content.replace(/^import[\s\S]*?from\s+['"][^'"]+['"]\s*\r?\n/gm,'').replace('export default','return')
- const bindings={computed,ref,watch,validateAdvancedResource,KeyValueFields:{},Plus:{},Delete:{},
+ const bindings={computed,ref,watch,validateAdvancedResource,readResourcePages,KeyValueFields:{},Plus:{},Delete:{},
   api:options.api||{list:async()=>({items:[]})},store:options.store||{discovery:[]},
   canResource:options.canResource||(()=>true)}
  const component=Function(...Object.keys(bindings),source)(...Object.values(bindings))
@@ -32,7 +33,7 @@ test('HPA target options load paged workload names scoped to the selected cluste
  }}})
  try {
   await flush()
-  assert.deepEqual(view.state.targetNames.value,['api','worker'])
+  assert.deepEqual(view.state.targetOptions.value.map(option=>option.name),['api','worker'])
   assert.deepEqual(requests.map(([group,version,plural,params])=>[group,version,plural,params.clusterId,params.namespace,params.continue]),[
    ['apps','v1','deployments','c-a','team',undefined],
    ['apps','v1','deployments','c-a','team','page-2'],
@@ -59,11 +60,11 @@ test('a stale target lookup cannot override a new namespace or type and the old 
   requests[1].resolve({items:[workload('cache','prod')]})
   requests[0].resolve({items:[workload('previous','team')]})
   await flush()
-  assert.deepEqual(view.state.targetNames.value,['cache'])
+  assert.deepEqual(view.state.targetOptions.value.map(option=>option.name),['cache'])
  }finally{view.destroy()}
 })
 
-test('HPA target list reuses cluster discovery and skips unauthorized or all-namespace requests', async()=>{
+test('HPA target list reuses cluster discovery and keeps existing autoscalers in their own namespace', async()=>{
  const body=hpa()
  body.metadata.namespace='all'
  body.spec.scaleTargetRef={kind:'Scalable',apiVersion:'example.org/v1',name:'existing'}
@@ -71,7 +72,7 @@ test('HPA target list reuses cluster discovery and skips unauthorized or all-nam
  const scope=ref(false)
  const requests=[]
  const view=fixture(body,false,false,{
-  canResource:()=>scope.value,store:{discovery:[meta]},
+  canResource:()=>scope.value,store:{discovery:[meta]},props:{namespaceScope:'all'},
   api:{list:async(group,version,plural,params)=>{requests.push([group,version,plural,params.namespace]);return {items:[]}}},
  })
  try{
@@ -84,6 +85,26 @@ test('HPA target list reuses cluster discovery and skips unauthorized or all-nam
   await flush()
   assert.deepEqual(requests,[['example.org','v1','scalables','team']])
   assert.equal(body.spec.scaleTargetRef.name,'existing')
+ }finally{view.destroy()}
+})
+test('new HPA all-namespace lookup disambiguates names and adopts the selected target namespace',async()=>{
+ const body=hpa(),requests=[]
+ body.metadata.namespace='team'
+ body.spec.scaleTargetRef.name='web'
+ const view=fixture(body,true,false,{
+  props:{namespaceScope:'all'},
+  canResource:(_meta,action,namespace)=>action!=='create'||namespace!=='outside',
+  api:{list:async (_group,_version,_plural,params)=>{requests.push(params);return {items:[workload('web','team'),workload('web','prod'),workload('web','outside')]}}},
+ })
+ try{
+  await flush()
+  assert.equal(requests[0].namespace,undefined)
+  assert.deepEqual(view.state.targetOptions.value.map(option=>option.value),['prod/web','team/web'])
+  view.state.selectTarget('prod/web')
+  await flush()
+  assert.equal(body.metadata.namespace,'prod')
+  assert.equal(body.spec.scaleTargetRef.name,'web')
+  assert.equal(requests.length,1)
  }finally{view.destroy()}
 })
 test('HPA plain controls preserve custom metrics and behavior while editing CPU/memory targets',()=>{

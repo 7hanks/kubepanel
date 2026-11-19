@@ -64,7 +64,7 @@
 
         <div class="kp-header-left">
           <span class="kp-header-label">命名空间</span>
-          <el-select :model-value="store.namespace" size="small" style="width:150px" filterable @change="changeNs">
+          <el-select :model-value="store.namespace" size="small" style="width:150px" filterable aria-label="选择命名空间" @change="changeNs">
             <el-option label="全部命名空间" value="all" />
             <el-option v-for="ns in store.namespaces" :key="ns" :label="ns" :value="ns" />
           </el-select>
@@ -208,7 +208,7 @@ function switchCluster(id) {
   }
   return router.push({ name: route.name || 'overview', params: { clusterId: id } })
 }
-async function changeNs(ns) { if (await confirmContextChange()) store.setNamespace(ns) }
+async function changeNs(ns) { if (ns !== store.namespace && await confirmContextChange('namespace')) store.setNamespace(ns) }
 
 /** 改完密码旧 token 仍然有效，但一律要求重新登录，避免“改了却没生效”的困惑 */
 function afterPasswordChanged() {

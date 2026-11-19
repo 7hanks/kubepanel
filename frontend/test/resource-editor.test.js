@@ -73,6 +73,29 @@ test('switching form tabs and background namespace updates do not discard or dir
   view.state.draft.value.data.key='unsaved';view.store.namespace='other';await nextTick();assert.equal(view.state.draft.value.data.key,'unsaved')
  }finally{view.destroy()}
 })
+test('changing the create form namespace preserves the active tab and invalidates the previous preflight',async()=>{
+ const hpa={kind:'HorizontalPodAutoscaler',group:'autoscaling',version:'v2',plural:'horizontalpodautoscalers',namespaced:true}
+ const view=fixture({creating:true,resourceMeta:hpa})
+ try{
+  await view.state.load()
+  const draft=view.state.draft.value
+  draft.metadata.name='web-hpa'
+  draft.spec.scaleTargetRef.name='web'
+  draft.spec.maxReplicas=7
+  view.state.activeTab.value='configuration'
+  await view.state.check()
+  assert.equal(view.state.canSave.value,true)
+  assert.equal(await view.guards[0]('namespace'),true)
+  view.store.namespace='other'
+  await nextTick()
+  assert.equal(view.state.activeTab.value,'configuration')
+  assert.equal(view.state.draft.value,draft)
+  assert.equal(draft.metadata.namespace,'other')
+  assert.equal(draft.metadata.name,'web-hpa')
+  assert.equal(draft.spec.maxReplicas,7)
+  assert.equal(view.state.canSave.value,false)
+ }finally{view.destroy()}
+})
 test('a locally invalid preflight clears an earlier successful check even when the draft is reverted',async()=>{
  const view=fixture();try{
   await view.state.load();await view.state.check();assert.equal(view.state.canSave.value,true)

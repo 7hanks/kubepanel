@@ -7,12 +7,13 @@
         <el-form-item label="目标 API 版本" required><el-input :model-value="targetRef.apiVersion || ''" aria-label="扩缩容目标 API 版本" placeholder="例如 apps/v1" @update:model-value="value => setTargetRef('apiVersion', value)" /></el-form-item>
         <el-form-item label="目标名称" required>
           <div class="target-picker">
-            <el-select :model-value="targetRef.name || ''" filterable allow-create clearable
+            <el-select :model-value="targetValue" filterable :allow-create="manualTargetAllowed" clearable
               default-first-option :reserve-keyword="false" :loading="targetLoading"
-              aria-label="扩缩容目标名称" placeholder="选择工作负载，或输入名称后按 Enter"
-              :no-data-text="targetEmptyText" @update:model-value="value => setTargetRef('name', value)">
-              <el-option v-for="name in targetNames" :key="name" :label="name" :value="name" />
+              aria-label="扩缩容目标名称" :placeholder="manualTargetAllowed ? '选择工作负载，或输入名称后按 Enter' : '搜索命名空间或工作负载名称'"
+              :no-data-text="targetEmptyText" @update:model-value="selectTarget">
+              <el-option v-for="option in targetOptions" :key="option.value" :label="option.label" :value="option.value" />
             </el-select>
+            <div v-if="allTargetNamespaces" class="target-picker-note">当前命名空间 {{ targetNamespace }}。选择工作负载后会带入它的命名空间。</div>
             <div v-if="targetMessage" class="target-picker-note">
               <span role="status">{{ targetMessage }}</span>
               <el-button v-if="targetFailed" link type="primary" @click="targetReload++">重试</el-button>
@@ -103,6 +104,7 @@ import {validateAdvancedResource} from '../utils/advanced-resource-form'
 import api from '../api'
 import {store} from '../store'
 import {canResource} from '../utils/perm'
+import {readResourcePages} from '../utils/resource'
 import KeyValueFields from './KeyValueFields.vue'
 
 const props=defineProps({
@@ -110,6 +112,7 @@ const props=defineProps({
   creating:Boolean,
   disabled:Boolean,
   clusterId:String,
+  namespaceScope:String,
   active:{type:Boolean,default:true},
 })
 const emit=defineEmits(['change','validity'])
@@ -123,12 +126,15 @@ const workloadTargets = {
   ReplicationController: { group:'', version:'v1', plural:'replicationcontrollers' },
 }
 const targetKinds=Object.keys(workloadTargets),protocols=['TCP','UDP','SCTP'],limitTypes=['Container','Pod','PersistentVolumeClaim']
-const targetNames = ref([])
+const targetOptions = ref([])
 const targetLoading = ref(false)
 const targetFailed = ref(false)
 const targetMessage = ref('')
 const targetReload = ref(0)
 const targetNamespace = computed(() => props.modelValue.metadata?.namespace || '')
+const allTargetNamespaces = computed(() => props.creating && props.namespaceScope === 'all')
+const queryNamespace = computed(() => allTargetNamespaces.value ? undefined : targetNamespace.value)
+const hpaMeta = { group: 'autoscaling', plural: 'horizontalpodautoscalers', namespaced: true }
 const gvkVersion = ({ group, version }) => group ? `${group}/${version}` : version
 const targetResource = computed(() => {
   const { kind: targetKind, apiVersion } = targetRef.value
@@ -140,14 +146,19 @@ const targetResource = computed(() => {
   return builtin && gvkVersion(builtin) === apiVersion ? { ...builtin, namespaced: true } : null
 })
 const canReadTargets = computed(() => !!(props.clusterId && targetResource.value
-  && targetNamespace.value !== 'all' && /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/.test(targetNamespace.value)
-  && canResource(targetResource.value, 'list', targetNamespace.value, props.clusterId)))
+  && (allTargetNamespaces.value || (queryNamespace.value !== 'all' && /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/.test(queryNamespace.value)))
+  && canResource(targetResource.value, 'list', queryNamespace.value, props.clusterId)))
+const targetValue = computed(() => {
+  const name = targetRef.value.name || ''
+  return allTargetNamespaces.value && name ? `${targetNamespace.value}/${name}` : name
+})
+const manualTargetAllowed = computed(() => !allTargetNamespaces.value || (!targetLoading.value && !targetOptions.value.length))
 const targetEmptyText = computed(() => canReadTargets.value && !targetFailed.value
-  ? '此命名空间没有符合类型的工作负载' : '可手动输入目标名称')
+  ? '没有匹配的工作负载' : '可手动输入目标名称')
 
-watch([kind, () => props.active, () => props.clusterId, targetNamespace, targetResource, canReadTargets, targetReload],
+watch([kind, () => props.active, () => props.clusterId, queryNamespace, targetResource, canReadTargets, targetReload],
   async ([resourceKind, active, clusterId, namespace, resource, allowed], _, onCleanup) => {
-    targetNames.value = []
+    targetOptions.value = []
     targetLoading.value = false
     targetFailed.value = false
     targetMessage.value = ''
@@ -155,26 +166,23 @@ watch([kind, () => props.active, () => props.clusterId, targetNamespace, targetR
     const controller = new AbortController()
     onCleanup(() => controller.abort())
     const current = () => !controller.signal.aborted && props.active && props.clusterId === clusterId
-      && targetNamespace.value === namespace && targetResource.value === resource && canReadTargets.value
+      && queryNamespace.value === namespace && targetResource.value === resource && canReadTargets.value
     targetLoading.value = true
     try {
-      const names = new Set()
-      const cursors = new Set()
-      let cursor
-      do {
-        const page = await api.list(resource.group, resource.version, resource.plural,
-          { namespace, clusterId, limit: 200, continue: cursor }, { signal: controller.signal, silent: true })
-        if (!current()) return
-        if (!Array.isArray(page?.items)) throw new Error('工作负载列表格式不正确')
-        for (const { metadata } of page.items) {
-          if (metadata?.namespace === namespace && metadata.name && !metadata.deletionTimestamp) names.add(metadata.name)
-        }
-        cursor = page.metadata?.continue
-        if (cursor && cursors.has(cursor)) throw new Error('分页游标重复')
-        if (cursor) cursors.add(cursor)
-      } while (cursor && cursors.size < 25)
-      targetNames.value = [...names].sort((a, b) => a.localeCompare(b))
-      if (cursor) targetMessage.value = '已加载前 5000 条工作负载，可手动输入其他名称。'
+      const { items, incomplete } = await readResourcePages(cursor => api.list(resource.group, resource.version, resource.plural,
+        { namespace, clusterId, limit: 200, continue: cursor }, { signal: controller.signal, silent: true }), controller.signal)
+      if (!current()) return
+      const options = new Map()
+      for (const { metadata } of items) {
+        const { name, namespace: workloadNamespace, deletionTimestamp } = metadata || {}
+        if (!name || !workloadNamespace || deletionTimestamp) continue
+        if (namespace ? workloadNamespace !== namespace : !canResource(hpaMeta, 'create', workloadNamespace, clusterId)) continue
+        const value = namespace ? name : `${workloadNamespace}/${name}`
+        const label = namespace ? name : `${workloadNamespace} / ${name}`
+        options.set(value, { name, namespace: workloadNamespace, value, label })
+      }
+      targetOptions.value = [...options.values()].sort((a, b) => a.label.localeCompare(b.label))
+      if (incomplete) targetMessage.value = namespace ? '已加载部分工作负载，可手动输入其他名称。' : '已加载部分工作负载，可切换到目标命名空间继续查找。'
     } catch {
       if (current()) {
         targetFailed.value = true
@@ -208,6 +216,19 @@ function setTargetRef(key, value) {
   target[key] = value || ''
   if (key === 'apiVersion') target.name = ''
   changed()
+}
+function selectTarget(value) {
+  if (props.disabled) return
+  const option = targetOptions.value.find(item => item.value === value)
+  if (option && allTargetNamespaces.value) {
+    if (!canResource(hpaMeta, 'create', option.namespace, props.clusterId)) return
+    props.modelValue.metadata.namespace = option.namespace
+  }
+  if (!option && typeof value === 'string' && value.includes('/')) {
+    targetMessage.value = '请从列表选择工作负载，手动输入时只填写名称。'
+    return
+  }
+  setTargetRef('name', option?.name || value)
 }
 function setTargetKind(value) {
   if (props.disabled || value === targetRef.value.kind) return

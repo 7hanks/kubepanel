@@ -40,6 +40,7 @@ import api, { logsUrl } from '../api'
 const route = useRoute()
 const namespace = route.params.namespace
 const name = route.params.name
+const clusterId = route.params.clusterId
 
 const containers = ref([])
 const container = ref('')
@@ -71,6 +72,7 @@ function reconnect() {
   closeSource()
   lines.value = []
   const params = {
+    clusterId,
     container: container.value,
     tailLines: tailLines.value,
     timestamps: timestamps.value ? 1 : 0,
@@ -110,7 +112,7 @@ watch([container, tailLines, timestamps, previous], () => { if (container.value)
 
 onMounted(async () => {
   try {
-    const pod = await api.get('', 'v1', 'pods', namespace, name)
+    const pod = await api.get('', 'v1', 'pods', namespace, name, { params: { clusterId } })
     if(route.query.uid && route.query.uid!==pod.metadata?.uid)throw new Error('Pod 已重新创建，请重新选择容器')
     containers.value = [
       ...(pod.spec?.initContainers || []).map(c => c.name),
